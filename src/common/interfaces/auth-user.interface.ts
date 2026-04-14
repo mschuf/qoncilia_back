@@ -1,5 +1,4 @@
 import { Role } from "../enums/role.enum";
-import { PublicUserCompany } from "../../users/interfaces/public-user.interface";
 
 export interface AuthUser {
   id: number;
@@ -13,5 +12,4 @@ export interface AuthUser {
   isAdmin: boolean;
   isSuperAdmin: boolean;
   role: Role;
-  empresa: PublicUserCompany;
 }

@@ -1,4 +1,4 @@
-﻿import {
+import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
@@ -9,7 +9,6 @@ import { ConfigService } from "@nestjs/config";
 import { InjectRepository } from "@nestjs/typeorm";
 import { hash } from "bcryptjs";
 import { QueryFailedError, Repository } from "typeorm";
-import { Company } from "../companies/entities/company.entity";
 import { Role } from "../common/enums/role.enum";
 import { AuthUser } from "../common/interfaces/auth-user.interface";
 import {
@@ -30,8 +29,6 @@ export class UsersService {
   constructor(
     @InjectRepository(User)
     private readonly userRepository: Repository<User>,
-    @InjectRepository(Company)
-    private readonly companyRepository: Repository<Company>,
     configService: ConfigService
   ) {
     this.bcryptRounds = Number(configService.get<string>("BCRYPT_ROUNDS", "12"));
@@ -39,7 +36,6 @@ export class UsersService {
 
   async registerInactiveUser(payload: RegisterDto): Promise<PublicUser> {
     ensureStrongPassword(payload.password);
-    const empresa = await this.requireActiveCompany(payload.empresaId);
 
     const user = this.userRepository.create({
       usrNombre: this.normalizeOptional(payload.usrNombre),
@@ -51,14 +47,12 @@ export class UsersService {
       passwordHash: await hash(payload.password, this.bcryptRounds),
       activo: false,
       isAdmin: false,
-      isSuperAdmin: false,
-      empresa
+      isSuperAdmin: false
     });
 
     try {
       const created = await this.userRepository.save(user);
-      const persisted = await this.requireUser(created.id);
-      return this.toPublicUser(persisted);
+      return this.toPublicUser(created);
     } catch (error) {
       this.handleDatabaseError(error);
     }
@@ -71,7 +65,6 @@ export class UsersService {
       isAdmin: payload.isAdmin,
       isSuperAdmin: payload.isSuperAdmin
     });
-    const empresa = await this.requireActiveCompany(payload.empresaId);
 
     this.enforceActorCanAssignRole(actor, desiredFlags);
 
@@ -84,14 +77,12 @@ export class UsersService {
       usrLegajo: this.normalizeRequired(payload.usrLegajo, "usrLegajo"),
       passwordHash: await hash(payload.password, this.bcryptRounds),
       activo: payload.activo ?? true,
-      ...desiredFlags,
-      empresa
+      ...desiredFlags
     });
 
     try {
       const created = await this.userRepository.save(user);
-      const persisted = await this.requireUser(created.id);
-      return this.toPublicUser(persisted);
+      return this.toPublicUser(created);
     } catch (error) {
       this.handleDatabaseError(error);
     }
@@ -99,9 +90,6 @@ export class UsersService {
 
   async listUsers(): Promise<PublicUser[]> {
     const users = await this.userRepository.find({
-      relations: {
-        empresa: true
-      },
       order: { id: "ASC" }
     });
 
@@ -129,17 +117,13 @@ export class UsersService {
     if (payload.usrLegajo !== undefined) {
       user.usrLegajo = this.normalizeRequired(payload.usrLegajo, "usrLegajo");
     }
-    if (payload.empresaId !== undefined) {
-      user.empresa = await this.requireActiveCompany(payload.empresaId);
-    }
     if (payload.activo !== undefined) user.activo = payload.activo;
 
     user.isAdmin = resolvedFlags.isAdmin;
     user.isSuperAdmin = resolvedFlags.isSuperAdmin;
 
     try {
-      await this.userRepository.save(user);
-      const updated = await this.requireUser(id);
+      const updated = await this.userRepository.save(user);
       return this.toPublicUser(updated);
     } catch (error) {
       this.handleDatabaseError(error);
@@ -158,12 +142,7 @@ export class UsersService {
   }
 
   async findById(id: number): Promise<User | null> {
-    return this.userRepository.findOne({
-      where: { id },
-      relations: {
-        empresa: true
-      }
-    });
+    return this.userRepository.findOne({ where: { id } });
   }
 
   async findForAuth(identifier: string): Promise<User | null> {
@@ -171,17 +150,12 @@ export class UsersService {
 
     return this.userRepository
       .createQueryBuilder("user")
-      .leftJoinAndSelect("user.empresa", "empresa")
       .where("LOWER(user.usr_login) = :identifier", { identifier: normalizedIdentifier })
       .orWhere("LOWER(user.usr_email) = :identifier", { identifier: normalizedIdentifier })
       .getOne();
   }
 
   toPublicUser(user: User): PublicUser {
-    if (!user.empresa) {
-      throw new BadRequestException("El usuario no tiene una empresa asignada.");
-    }
-
     return {
       id: user.id,
       usrNombre: user.usrNombre,
@@ -193,12 +167,7 @@ export class UsersService {
       activo: user.activo,
       isAdmin: user.isAdmin,
       isSuperAdmin: user.isSuperAdmin,
-      role: resolveRoleFromFlags(user),
-      empresa: {
-        id: user.empresa.id,
-        nombre: user.empresa.nombre,
-        ruc: user.empresa.ruc
-      }
+      role: resolveRoleFromFlags(user)
     };
   }
 
@@ -209,18 +178,6 @@ export class UsersService {
     }
 
     return user;
-  }
-
-  private async requireActiveCompany(id: number): Promise<Company> {
-    const company = await this.companyRepository.findOne({
-      where: { id, activo: true }
-    });
-
-    if (!company) {
-      throw new NotFoundException("Empresa no encontrada o inactiva.");
-    }
-
-    return company;
   }
 
   private normalizeOptional(value?: string): string | null {
@@ -291,10 +248,10 @@ export class UsersService {
     if (error instanceof QueryFailedError) {
       const driverError = (error as QueryFailedError & { driverError?: { code?: string; detail?: string } })
         .driverError;
-      const code = driverError?.code;
-      const detail = String(driverError?.detail ?? "").toLowerCase();
 
-      if (code === "23505") {
+      if (driverError?.code === "23505") {
+        const detail = String(driverError.detail ?? "").toLowerCase();
+
         if (detail.includes("usr_email")) {
           throw new ConflictException("El email ya existe.");
         }
@@ -309,10 +266,6 @@ export class UsersService {
         }
 
         throw new ConflictException("Ya existe un usuario con esos datos unicos.");
-      }
-
-      if (code === "23503" && detail.includes("emp_id")) {
-        throw new BadRequestException("Empresa invalida.");
       }
     }
 

@@ -1,11 +1,5 @@
 import { Role } from "../../common/enums/role.enum";
 
-export interface PublicUserCompany {
-  id: number;
-  nombre: string;
-  ruc: string | null;
-}
-
 export interface PublicUser {
   id: number;
   usrNombre: string | null;
@@ -18,5 +12,4 @@ export interface PublicUser {
   isAdmin: boolean;
   isSuperAdmin: boolean;
   role: Role;
-  empresa: PublicUserCompany;
 }

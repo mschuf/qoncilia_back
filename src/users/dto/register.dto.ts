@@ -1,9 +1,7 @@
 import { Transform } from "class-transformer";
 import {
-  IsInt,
   IsEmail,
   IsNotEmpty,
-  IsPositive,
   IsOptional,
   IsString,
   Matches,
@@ -62,14 +60,7 @@ export class RegisterDto {
   @MaxLength(128)
   @Matches(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z\d]).+$/, {
     message:
-      "La contraseña debe tener mínimo 6 caracteres, mayúscula, minúscula, número y símbolo."
+      "La contrasena debe tener minimo 6 caracteres, mayuscula, minuscula, numero y simbolo."
   })
   password!: string;
-
-  @Transform(({ value }: { value: unknown }) =>
-    typeof value === "string" ? Number(value) : value
-  )
-  @IsInt()
-  @IsPositive()
-  empresaId!: number;
 }

@@ -1,14 +1,5 @@
 import { Transform } from "class-transformer";
-import {
-  IsBoolean,
-  IsEmail,
-  IsInt,
-  IsOptional,
-  IsPositive,
-  IsString,
-  Matches,
-  MaxLength
-} from "class-validator";
+import { IsBoolean, IsEmail, IsOptional, IsString, Matches, MaxLength } from "class-validator";
 
 const emptyToUndefined = ({ value }: { value: unknown }) => {
   if (typeof value === "string" && value.trim() === "") {
@@ -76,12 +67,4 @@ export class UpdateUserDto {
   @IsOptional()
   @IsBoolean()
   isSuperAdmin?: boolean;
-
-  @Transform(({ value }: { value: unknown }) =>
-    typeof value === "string" ? Number(value) : value
-  )
-  @IsOptional()
-  @IsInt()
-  @IsPositive()
-  empresaId?: number;
 }

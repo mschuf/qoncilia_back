@@ -2,15 +2,16 @@ import { Type } from "class-transformer";
 import {
   IsArray,
   IsBoolean,
-  IsEmail,
   IsNotEmpty,
+  IsNumber,
   IsOptional,
   IsString,
   MaxLength,
+  Min,
   ValidateNested
 } from "class-validator";
 import { Transform } from "class-transformer";
-import { CreateCompanyBankDto } from "./create-company-bank.dto";
+import { LayoutMappingDto } from "./layout-mapping.dto";
 
 const emptyToUndefined = ({ value }: { value: unknown }) => {
   if (typeof value === "string" && value.trim() === "") {
@@ -27,44 +28,49 @@ const toBoolean = ({ value }: { value: unknown }) => {
   return value;
 };
 
-export class CreateCompanyDto {
+const toNumber = ({ value }: { value: unknown }) => {
+  if (typeof value === "number") return value;
+  if (typeof value === "string" && value.trim() !== "") return Number(value);
+  return value;
+};
+
+export class CreateLayoutDto {
   @IsNotEmpty()
   @IsString()
-  @MaxLength(160)
-  nombre!: string;
-
-  @Transform(emptyToUndefined)
-  @IsOptional()
-  @IsString()
-  @MaxLength(30)
-  ruc?: string;
-
-  @Transform(emptyToUndefined)
-  @IsOptional()
-  @IsEmail()
-  @MaxLength(160)
-  email?: string;
-
-  @Transform(emptyToUndefined)
-  @IsOptional()
-  @IsString()
-  @MaxLength(40)
-  telefono?: string;
+  @MaxLength(120)
+  name!: string;
 
   @Transform(emptyToUndefined)
   @IsOptional()
   @IsString()
   @MaxLength(255)
-  direccion?: string;
+  description?: string;
+
+  @Transform(emptyToUndefined)
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  systemLabel?: string;
+
+  @Transform(emptyToUndefined)
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  bankLabel?: string;
+
+  @Transform(toNumber)
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  autoMatchThreshold?: number;
 
   @Transform(toBoolean)
   @IsOptional()
   @IsBoolean()
-  activo?: boolean;
+  active?: boolean;
 
-  @IsOptional()
   @IsArray()
   @ValidateNested({ each: true })
-  @Type(() => CreateCompanyBankDto)
-  bancos?: CreateCompanyBankDto[];
+  @Type(() => LayoutMappingDto)
+  mappings!: LayoutMappingDto[];
 }

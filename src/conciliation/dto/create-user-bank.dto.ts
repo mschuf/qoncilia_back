@@ -1,5 +1,5 @@
 import { Transform } from "class-transformer";
-import { IsBoolean, IsOptional, IsString, MaxLength } from "class-validator";
+import { IsBoolean, IsNotEmpty, IsOptional, IsString, MaxLength } from "class-validator";
 
 const emptyToUndefined = ({ value }: { value: unknown }) => {
   if (typeof value === "string" && value.trim() === "") {
@@ -16,45 +16,37 @@ const toBoolean = ({ value }: { value: unknown }) => {
   return value;
 };
 
-export class UpdateCompanyBankDto {
+export class CreateUserBankDto {
+  @IsNotEmpty()
+  @IsString()
+  @MaxLength(120)
+  bankName!: string;
+
   @Transform(emptyToUndefined)
   @IsOptional()
   @IsString()
   @MaxLength(120)
-  bancoNombre?: string;
+  alias?: string;
 
-  @Transform(emptyToUndefined)
-  @IsOptional()
+  @IsNotEmpty()
   @IsString()
-  @MaxLength(40)
-  tipoCuenta?: string;
-
-  @Transform(emptyToUndefined)
-  @IsOptional()
-  @IsString()
-  @MaxLength(10)
-  moneda?: string;
+  @MaxLength(20)
+  currency!: string;
 
   @Transform(emptyToUndefined)
   @IsOptional()
   @IsString()
   @MaxLength(80)
-  numeroCuenta?: string;
+  accountNumber?: string;
 
   @Transform(emptyToUndefined)
   @IsOptional()
   @IsString()
-  @MaxLength(160)
-  titular?: string;
-
-  @Transform(emptyToUndefined)
-  @IsOptional()
-  @IsString()
-  @MaxLength(120)
-  sucursal?: string;
+  @MaxLength(255)
+  description?: string;
 
   @Transform(toBoolean)
   @IsOptional()
   @IsBoolean()
-  activo?: boolean;
+  active?: boolean;
 }

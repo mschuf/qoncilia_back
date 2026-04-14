@@ -2,12 +2,11 @@ import {
   Column,
   CreateDateColumn,
   Entity,
-  JoinColumn,
-  ManyToOne,
+  OneToMany,
   PrimaryGeneratedColumn,
   UpdateDateColumn
 } from "typeorm";
-import { Company } from "../../companies/entities/company.entity";
+import { UserBank } from "../../conciliation/entities/user-bank.entity";
 
 @Entity({ name: "usuarios" })
 export class User {
@@ -44,9 +43,8 @@ export class User {
   @Column({ name: "usr_is_super_admin", type: "boolean", default: false })
   isSuperAdmin!: boolean;
 
-  @ManyToOne(() => Company, (company) => company.usuarios, { nullable: false })
-  @JoinColumn({ name: "emp_id", referencedColumnName: "id" })
-  empresa!: Company;
+  @OneToMany(() => UserBank, (userBank) => userBank.user)
+  bancos!: UserBank[];
 
   @CreateDateColumn({ name: "usr_created_at", type: "timestamptz" })
   createdAt!: Date;
