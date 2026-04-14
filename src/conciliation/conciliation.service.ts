@@ -89,7 +89,8 @@ export class ConciliationService {
       relations: {
         user: true,
         layouts: {
-          mappings: true
+          mappings: true,
+          userBank: true
         }
       }
     });
@@ -1173,7 +1174,7 @@ export class ConciliationService {
   private toPublicUserBankWithLayouts(entity: UserBank): PublicUserBankWithLayouts {
     return {
       ...this.toPublicUserBank(entity),
-      layouts: (entity.layouts ?? []).map((layout) => this.toPublicLayout(layout))
+      layouts: (entity.layouts ?? []).map((layout) => this.toPublicLayout(layout, entity.id))
     };
   }
 
@@ -1197,10 +1198,18 @@ export class ConciliationService {
     };
   }
 
-  private toPublicLayout(entity: ReconciliationLayout): PublicLayout {
+  private toPublicLayout(
+    entity: ReconciliationLayout,
+    fallbackUserBankId?: number
+  ): PublicLayout {
+    const resolvedUserBankId = entity.userBank?.id ?? fallbackUserBankId;
+    if (!resolvedUserBankId) {
+      throw new BadRequestException("No se pudo resolver el banco asociado del layout.");
+    }
+
     return {
       id: entity.id,
-      userBankId: entity.userBank.id,
+      userBankId: resolvedUserBankId,
       name: entity.name,
       description: entity.description,
       systemLabel: entity.systemLabel,

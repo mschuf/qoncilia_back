@@ -1,5 +1,9 @@
 -- Script opcional.
 -- Reemplazar <<USER_LOGIN>> por el login del usuario admin al que queres asignar bancos/layouts.
+-- Si dejas <<USER_LOGIN>> sin reemplazar, el script intenta usar automaticamente:
+--   1) un superadmin/admin activo
+--   2) cualquier usuario activo
+--   3) el primer usuario disponible
 -- Este seed usa como referencia:
 --   - Extracto de cuenta Conti Gs.xlsx
 --   - Extracto de cuenta Familiar Gs.xlsx
@@ -12,7 +16,9 @@
 
 DO $$
 DECLARE
+  requested_login TEXT := '<<USER_LOGIN>>';
   target_user_id INTEGER;
+  target_user_login TEXT;
   familiar_bank_id INTEGER;
   sudameris_bank_id INTEGER;
   conti_bank_id INTEGER;
@@ -20,15 +26,37 @@ DECLARE
   sudameris_layout_id INTEGER;
   conti_layout_id INTEGER;
 BEGIN
-  SELECT usr_id
-  INTO target_user_id
-  FROM public.usuarios
-  WHERE LOWER(usr_login) = LOWER('<<USER_LOGIN>>')
-  LIMIT 1;
+  IF requested_login IS NOT NULL
+     AND btrim(requested_login) <> ''
+     AND requested_login <> '<<USER_LOGIN>>' THEN
+    SELECT usr_id, usr_login
+    INTO target_user_id, target_user_login
+    FROM public.usuarios
+    WHERE LOWER(usr_login) = LOWER(requested_login)
+    ORDER BY usr_id ASC
+    LIMIT 1;
+  END IF;
 
   IF target_user_id IS NULL THEN
-    RAISE EXCEPTION 'No existe el usuario <<USER_LOGIN>>.';
+    SELECT usr_id, usr_login
+    INTO target_user_id, target_user_login
+    FROM public.usuarios
+    ORDER BY
+      CASE
+        WHEN usr_activo = TRUE AND usr_is_super_admin = TRUE THEN 1
+        WHEN usr_activo = TRUE AND usr_is_admin = TRUE THEN 2
+        WHEN usr_activo = TRUE THEN 3
+        ELSE 4
+      END,
+      usr_id ASC
+    LIMIT 1;
   END IF;
+
+  IF target_user_id IS NULL THEN
+    RAISE EXCEPTION 'No existe ningun usuario en public.usuarios para aplicar el seed.';
+  END IF;
+
+  RAISE NOTICE 'Seed de layouts aplicado sobre usr_id=% usr_login=%', target_user_id, target_user_login;
 
   INSERT INTO public.usuarios_bancos (
     usr_id,
