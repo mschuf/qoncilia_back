@@ -12,14 +12,15 @@ export class AuthService {
   constructor(
     private readonly usersService: UsersService,
     private readonly jwtService: JwtService,
-    private readonly configService: ConfigService
+    private readonly configService: ConfigService,
   ) {}
 
   async register(payload: RegisterDto) {
     const user = await this.usersService.registerInactiveUser(payload);
     return {
-      message: "Usuario registrado. Queda inactivo hasta aprobacion de admin/super admin.",
-      user
+      message:
+        "Usuario registrado. Queda inactivo hasta aprobacion de admin/super admin.",
+      user,
     };
   }
 
@@ -29,22 +30,22 @@ export class AuthService {
       throw new UnauthorizedException("Credenciales invalidas.");
     }
 
-    if (!user.activo) {
-      throw new UnauthorizedException({
-        code: "USER_INACTIVE",
-        message: "Usuario inactivo. Contacta a un administrador."
-      });
-    }
-
     const passwordValid = await compare(payload.password, user.passwordHash);
     if (!passwordValid) {
       throw new UnauthorizedException("Credenciales invalidas.");
     }
 
+    if (!user.activo) {
+      throw new UnauthorizedException({
+        code: "USER_INACTIVE",
+        message: "Usuario inactivo. Contacta a un administrador.",
+      });
+    }
+
     const publicUser = await this.usersService.toPublicUserWithModules(user);
     const jwtPayload: JwtPayload = {
       sub: user.id,
-      role: publicUser.role
+      role: publicUser.role,
     };
 
     const accessToken = await this.jwtService.signAsync(jwtPayload);
@@ -54,7 +55,7 @@ export class AuthService {
     return {
       accessToken,
       expiresIn,
-      user: publicUser
+      user: publicUser,
     };
   }
 
@@ -88,7 +89,7 @@ export class AuthService {
     if (!user.activo) {
       throw new UnauthorizedException({
         code: "USER_INACTIVE",
-        message: "Usuario inactivo."
+        message: "Usuario inactivo.",
       });
     }
 

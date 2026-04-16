@@ -22,7 +22,7 @@ import { UsersModule } from "./users/users.module";
         entities: [User],
         autoLoadEntities: true,
         synchronize: false,
-        logging: false
+        logging: true
       })
     }),
     AccessControlModule,

@@ -8,7 +8,7 @@ import {
 import { ConfigService } from "@nestjs/config";
 import { InjectRepository } from "@nestjs/typeorm";
 import { hash } from "bcryptjs";
-import { QueryFailedError, Repository } from "typeorm";
+import { QueryFailedError, Raw, Repository } from "typeorm";
 import { CompanyRoleModule } from "../access-control/entities/company-role-module.entity";
 import { Company } from "../access-control/entities/company.entity";
 import { UserRole } from "../access-control/entities/user-role.entity";
@@ -182,13 +182,20 @@ export class UsersService {
   async findForAuth(identifier: string): Promise<User | null> {
     const normalizedIdentifier = identifier.trim().toLowerCase();
 
-    return this.userRepository
-      .createQueryBuilder("user")
-      .leftJoinAndSelect("user.company", "company")
-      .leftJoinAndSelect("user.role", "role")
-      .where("LOWER(user.usr_login) = :identifier", { identifier: normalizedIdentifier })
-      .orWhere("LOWER(user.usr_email) = :identifier", { identifier: normalizedIdentifier })
-      .getOne();
+    const lowerMatch = Raw((alias) => `LOWER(${alias}) = :identifier`, {
+      identifier: normalizedIdentifier,
+    });
+
+    return this.userRepository.findOne({
+      where: [
+        { usrLogin: lowerMatch },
+        { usrEmail: lowerMatch },
+      ],
+      relations: {
+        company: true,
+        role: true,
+      },
+    });
   }
 
   async toPublicUserWithModules(user: User): Promise<PublicUser> {
