@@ -13,9 +13,12 @@ import {
 } from "@nestjs/common";
 import { FileFieldsInterceptor } from "@nestjs/platform-express";
 import { CurrentUser } from "../common/decorators/current-user.decorator";
+import { RequiredModule } from "../common/decorators/required-module.decorator";
 import { Roles } from "../common/decorators/roles.decorator";
+import { AppModuleCode } from "../common/enums/app-module-code.enum";
 import { Role } from "../common/enums/role.enum";
 import { JwtAuthGuard } from "../common/guards/jwt-auth.guard";
+import { ModuleAccessGuard } from "../common/guards/module-access.guard";
 import { RolesGuard } from "../common/guards/roles.guard";
 import { AuthUser } from "../common/interfaces/auth-user.interface";
 import { ConciliationKpiQueryDto } from "./dto/conciliation-kpi-query.dto";
@@ -39,18 +42,20 @@ type UploadedFilesMap = {
 };
 
 @Controller("conciliation")
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(JwtAuthGuard, RolesGuard, ModuleAccessGuard)
 export class ConciliationController {
   constructor(private readonly conciliationService: ConciliationService) {}
 
   @Get("catalog")
-  @Roles(Role.ADMIN, Role.SUPERADMIN)
+  @Roles(Role.ADMIN, Role.IS_SUPER_ADMIN, Role.GESTOR_COBRANZA, Role.GESTOR_PAGOS)
+  @RequiredModule(AppModuleCode.CONCILIATION)
   listCatalog(@CurrentUser() actor: AuthUser, @Query() query: ConciliationKpiQueryDto) {
     return this.conciliationService.listCatalog(actor, query.userId);
   }
 
   @Post("users/:userId/banks")
-  @Roles(Role.SUPERADMIN)
+  @Roles(Role.IS_SUPER_ADMIN)
+  @RequiredModule(AppModuleCode.LAYOUT_MANAGEMENT)
   createUserBank(
     @Param("userId", ParseIntPipe) userId: number,
     @Body() body: CreateUserBankDto,
@@ -60,7 +65,8 @@ export class ConciliationController {
   }
 
   @Patch("users/:userId/banks/:bankId")
-  @Roles(Role.SUPERADMIN)
+  @Roles(Role.IS_SUPER_ADMIN)
+  @RequiredModule(AppModuleCode.LAYOUT_MANAGEMENT)
   updateUserBank(
     @Param("userId", ParseIntPipe) userId: number,
     @Param("bankId", ParseIntPipe) bankId: number,
@@ -71,7 +77,8 @@ export class ConciliationController {
   }
 
   @Post("users/:userId/banks/:bankId/layouts")
-  @Roles(Role.SUPERADMIN)
+  @Roles(Role.IS_SUPER_ADMIN)
+  @RequiredModule(AppModuleCode.LAYOUT_MANAGEMENT)
   createLayout(
     @Param("userId", ParseIntPipe) userId: number,
     @Param("bankId", ParseIntPipe) bankId: number,
@@ -82,7 +89,8 @@ export class ConciliationController {
   }
 
   @Patch("users/:userId/banks/:bankId/layouts/:layoutId")
-  @Roles(Role.SUPERADMIN)
+  @Roles(Role.IS_SUPER_ADMIN)
+  @RequiredModule(AppModuleCode.LAYOUT_MANAGEMENT)
   updateLayout(
     @Param("userId", ParseIntPipe) userId: number,
     @Param("bankId", ParseIntPipe) bankId: number,
@@ -94,7 +102,8 @@ export class ConciliationController {
   }
 
   @Post("preview")
-  @Roles(Role.ADMIN, Role.SUPERADMIN)
+  @Roles(Role.ADMIN, Role.IS_SUPER_ADMIN, Role.GESTOR_COBRANZA, Role.GESTOR_PAGOS)
+  @RequiredModule(AppModuleCode.CONCILIATION)
   @UseInterceptors(
     FileFieldsInterceptor(
       [
@@ -122,25 +131,29 @@ export class ConciliationController {
   }
 
   @Post("reconciliations")
-  @Roles(Role.ADMIN, Role.SUPERADMIN)
+  @Roles(Role.ADMIN, Role.IS_SUPER_ADMIN, Role.GESTOR_COBRANZA, Role.GESTOR_PAGOS)
+  @RequiredModule(AppModuleCode.CONCILIATION)
   saveReconciliation(@Body() body: SaveReconciliationDto, @CurrentUser() actor: AuthUser) {
     return this.conciliationService.saveReconciliation(actor, body);
   }
 
   @Get("reconciliations")
-  @Roles(Role.ADMIN, Role.SUPERADMIN)
+  @Roles(Role.ADMIN, Role.IS_SUPER_ADMIN, Role.GESTOR_COBRANZA, Role.GESTOR_PAGOS)
+  @RequiredModule(AppModuleCode.CONCILIATION)
   listReconciliations(@CurrentUser() actor: AuthUser, @Query() query: ListReconciliationsQueryDto) {
     return this.conciliationService.listReconciliations(actor, query);
   }
 
   @Get("reconciliations/:id")
-  @Roles(Role.ADMIN, Role.SUPERADMIN)
+  @Roles(Role.ADMIN, Role.IS_SUPER_ADMIN, Role.GESTOR_COBRANZA, Role.GESTOR_PAGOS)
+  @RequiredModule(AppModuleCode.CONCILIATION)
   getReconciliation(@Param("id", ParseIntPipe) id: number, @CurrentUser() actor: AuthUser) {
     return this.conciliationService.getReconciliation(actor, id);
   }
 
   @Get("kpis")
-  @Roles(Role.ADMIN, Role.SUPERADMIN)
+  @Roles(Role.ADMIN, Role.IS_SUPER_ADMIN, Role.GESTOR_COBRANZA, Role.GESTOR_PAGOS)
+  @RequiredModule(AppModuleCode.CONCILIATION)
   getKpis(@CurrentUser() actor: AuthUser, @Query() query: ConciliationKpiQueryDto) {
     return this.conciliationService.getKpis(actor, query.userId);
   }

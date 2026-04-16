@@ -595,7 +595,7 @@ export class ConciliationService {
       throw new NotFoundException("Conciliacion no encontrada.");
     }
 
-    if (actor.role !== Role.SUPERADMIN && reconciliation.user.id !== actor.id) {
+    if (actor.role !== Role.IS_SUPER_ADMIN && reconciliation.user.id !== actor.id) {
       throw new ForbiddenException("No tenes permisos para ver esta conciliacion.");
     }
 
@@ -749,7 +749,7 @@ export class ConciliationService {
       throw new NotFoundException("Layout no encontrado para el banco seleccionado.");
     }
 
-    if (actor.role !== Role.SUPERADMIN && layout.userBank.user.id !== actor.id) {
+    if (actor.role !== Role.IS_SUPER_ADMIN && layout.userBank.user.id !== actor.id) {
       throw new ForbiddenException("No tenes permisos sobre este banco/layout.");
     }
 
@@ -1338,7 +1338,7 @@ export class ConciliationService {
   }
 
   private resolveScopedUserId(actor: AuthUser, requestedUserId?: number): number | undefined {
-    if (actor.role === Role.SUPERADMIN) {
+    if (actor.role === Role.IS_SUPER_ADMIN) {
       return requestedUserId;
     }
 
@@ -1350,8 +1350,8 @@ export class ConciliationService {
   }
 
   private ensureSuperadmin(actor: AuthUser) {
-    if (actor.role !== Role.SUPERADMIN) {
-      throw new ForbiddenException("Solo el superadmin puede administrar bancos y layouts.");
+    if (actor.role !== Role.IS_SUPER_ADMIN) {
+      throw new ForbiddenException("Solo el super admin puede administrar bancos y layouts.");
     }
   }
 

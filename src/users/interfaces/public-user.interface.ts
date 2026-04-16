@@ -9,7 +9,12 @@ export interface PublicUser {
   usrLogin: string;
   usrLegajo: string;
   activo: boolean;
-  isAdmin: boolean;
-  isSuperAdmin: boolean;
+  roleId: number;
+  roleCode: Role;
+  roleName: string;
+  companyId: number;
+  companyCode: string;
+  companyName: string;
+  enabledModules: string[];
   role: Role;
 }

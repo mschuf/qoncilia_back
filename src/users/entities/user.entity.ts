@@ -2,10 +2,14 @@ import {
   Column,
   CreateDateColumn,
   Entity,
+  JoinColumn,
+  ManyToOne,
   OneToMany,
   PrimaryGeneratedColumn,
   UpdateDateColumn
 } from "typeorm";
+import { Company } from "../../access-control/entities/company.entity";
+import { UserRole } from "../../access-control/entities/user-role.entity";
 import { UserBank } from "../../conciliation/entities/user-bank.entity";
 
 @Entity({ name: "usuarios" })
@@ -37,11 +41,13 @@ export class User {
   @Column({ name: "usr_activo", type: "boolean", default: false })
   activo!: boolean;
 
-  @Column({ name: "usr_is_admin", type: "boolean", default: false })
-  isAdmin!: boolean;
+  @ManyToOne(() => Company, (company) => company.users, { nullable: false, onDelete: "RESTRICT" })
+  @JoinColumn({ name: "emp_id", referencedColumnName: "id" })
+  company!: Company;
 
-  @Column({ name: "usr_is_super_admin", type: "boolean", default: false })
-  isSuperAdmin!: boolean;
+  @ManyToOne(() => UserRole, (role) => role.users, { nullable: false, onDelete: "RESTRICT" })
+  @JoinColumn({ name: "rol_id", referencedColumnName: "id" })
+  role!: UserRole;
 
   @OneToMany(() => UserBank, (userBank) => userBank.user)
   bancos!: UserBank[];

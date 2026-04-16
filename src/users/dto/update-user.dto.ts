@@ -1,5 +1,16 @@
 import { Transform } from "class-transformer";
-import { IsBoolean, IsEmail, IsOptional, IsString, Matches, MaxLength } from "class-validator";
+import {
+  IsBoolean,
+  IsEmail,
+  IsEnum,
+  IsInt,
+  IsOptional,
+  IsString,
+  Matches,
+  MaxLength,
+  Min
+} from "class-validator";
+import { Role } from "../../common/enums/role.enum";
 
 const emptyToUndefined = ({ value }: { value: unknown }) => {
   if (typeof value === "string" && value.trim() === "") {
@@ -16,7 +27,26 @@ const toBoolean = ({ value }: { value: unknown }) => {
   return value;
 };
 
+const toInteger = ({ value }: { value: unknown }) => {
+  if (typeof value === "number") return value;
+  if (typeof value === "string" && value.trim() !== "") {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : value;
+  }
+  return value;
+};
+
 export class UpdateUserDto {
+  @Transform(toInteger)
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  companyId?: number;
+
+  @IsOptional()
+  @IsEnum(Role)
+  roleCode?: Role;
+
   @Transform(emptyToUndefined)
   @IsOptional()
   @IsString()
@@ -57,14 +87,4 @@ export class UpdateUserDto {
   @IsOptional()
   @IsBoolean()
   activo?: boolean;
-
-  @Transform(toBoolean)
-  @IsOptional()
-  @IsBoolean()
-  isAdmin?: boolean;
-
-  @Transform(toBoolean)
-  @IsOptional()
-  @IsBoolean()
-  isSuperAdmin?: boolean;
 }

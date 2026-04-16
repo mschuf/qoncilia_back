@@ -1,20 +1,9 @@
 import { Role } from "../enums/role.enum";
 
-type RoleFlags = {
-  activo: boolean;
-  isAdmin: boolean;
-  isSuperAdmin: boolean;
-};
-
-export function resolveRoleFromFlags({ activo, isAdmin, isSuperAdmin }: RoleFlags): Role {
-  if (activo && isSuperAdmin) {
-    return Role.SUPERADMIN;
-  }
-
-  if (activo && isAdmin) {
-    return Role.ADMIN;
-  }
-
-  return Role.GESTOR;
+export function isSuperAdminRole(roleCode: Role | string | null | undefined): boolean {
+  return roleCode === Role.IS_SUPER_ADMIN;
 }
 
+export function isGestorRole(roleCode: Role | string | null | undefined): boolean {
+  return roleCode === Role.GESTOR_COBRANZA || roleCode === Role.GESTOR_PAGOS;
+}

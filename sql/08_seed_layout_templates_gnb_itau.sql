@@ -44,12 +44,7 @@ BEGIN
     INTO target_user_id, target_user_login
     FROM public.usuarios
     ORDER BY
-      CASE
-        WHEN usr_activo = TRUE AND usr_is_super_admin = TRUE THEN 1
-        WHEN usr_activo = TRUE AND usr_is_admin = TRUE THEN 2
-        WHEN usr_activo = TRUE THEN 3
-        ELSE 4
-      END,
+      CASE WHEN usr_activo = TRUE THEN 1 ELSE 2 END,
       usr_id ASC
     LIMIT 1;
   END IF;

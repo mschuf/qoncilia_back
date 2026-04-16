@@ -18,7 +18,7 @@ export class AuthService {
   async register(payload: RegisterDto) {
     const user = await this.usersService.registerInactiveUser(payload);
     return {
-      message: "Usuario registrado. Queda inactivo hasta aprobación de admin/superadmin.",
+      message: "Usuario registrado. Queda inactivo hasta aprobacion de admin/super admin.",
       user
     };
   }
@@ -41,7 +41,7 @@ export class AuthService {
       throw new UnauthorizedException("Credenciales invalidas.");
     }
 
-    const publicUser = this.usersService.toPublicUser(user);
+    const publicUser = await this.usersService.toPublicUserWithModules(user);
     const jwtPayload: JwtPayload = {
       sub: user.id,
       role: publicUser.role
@@ -66,11 +66,16 @@ export class AuthService {
     const unit = match[2];
 
     switch (unit) {
-      case "s": return num;
-      case "m": return num * 60;
-      case "h": return num * 3600;
-      case "d": return num * 86400;
-      default: return 900;
+      case "s":
+        return num;
+      case "m":
+        return num * 60;
+      case "h":
+        return num * 3600;
+      case "d":
+        return num * 86400;
+      default:
+        return 900;
     }
   }
 
@@ -87,7 +92,6 @@ export class AuthService {
       });
     }
 
-    return this.usersService.toPublicUser(user);
+    return this.usersService.toPublicUserWithModules(user);
   }
 }
-

@@ -1,6 +1,7 @@
 import { Module } from "@nestjs/common";
 import { ConfigModule, ConfigService } from "@nestjs/config";
 import { TypeOrmModule } from "@nestjs/typeorm";
+import { AccessControlModule } from "./access-control/access-control.module";
 import { AuthModule } from "./auth/auth.module";
 import { ConciliationModule } from "./conciliation/conciliation.module";
 import { User } from "./users/entities/user.entity";
@@ -24,6 +25,7 @@ import { UsersModule } from "./users/users.module";
         logging: false
       })
     }),
+    AccessControlModule,
     UsersModule,
     AuthModule,
     ConciliationModule

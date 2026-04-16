@@ -14,15 +14,4 @@ export class CreateUserDto extends RegisterDto {
   @IsOptional()
   @IsBoolean()
   activo?: boolean;
-
-  @Transform(toBoolean)
-  @IsOptional()
-  @IsBoolean()
-  isAdmin?: boolean;
-
-  @Transform(toBoolean)
-  @IsOptional()
-  @IsBoolean()
-  isSuperAdmin?: boolean;
 }
-

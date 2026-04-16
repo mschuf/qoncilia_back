@@ -31,7 +31,6 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       });
     }
 
-    return this.usersService.toPublicUser(user);
+    return this.usersService.toPublicUserWithModules(user);
   }
 }
-

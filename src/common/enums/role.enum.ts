@@ -1,6 +1,6 @@
 export enum Role {
-  GESTOR = "gestor",
+  GESTOR_COBRANZA = "gestor_cobranza",
+  GESTOR_PAGOS = "gestor_pagos",
   ADMIN = "admin",
-  SUPERADMIN = "superadmin"
+  IS_SUPER_ADMIN = "is_super_admin"
 }
-

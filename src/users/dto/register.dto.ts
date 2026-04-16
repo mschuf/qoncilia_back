@@ -1,19 +1,32 @@
 import { Transform } from "class-transformer";
 import {
+  IsEnum,
   IsEmail,
+  IsInt,
   IsNotEmpty,
   IsOptional,
   IsString,
   Matches,
   MaxLength,
+  Min,
   MinLength
 } from "class-validator";
+import { Role } from "../../common/enums/role.enum";
 
 const emptyToUndefined = ({ value }: { value: unknown }) => {
   if (typeof value === "string" && value.trim() === "") {
     return undefined;
   }
 
+  return value;
+};
+
+const toInteger = ({ value }: { value: unknown }) => {
+  if (typeof value === "number") return value;
+  if (typeof value === "string" && value.trim() !== "") {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : value;
+  }
   return value;
 };
 
@@ -63,4 +76,15 @@ export class RegisterDto {
       "La contrasena debe tener minimo 6 caracteres, mayuscula, minuscula, numero y simbolo."
   })
   password!: string;
+
+  @Transform(toInteger)
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  companyId?: number;
+
+  @Transform(emptyToUndefined)
+  @IsOptional()
+  @IsEnum(Role)
+  roleCode?: Role;
 }

@@ -8,6 +8,9 @@
 6. `06_create_conciliation_tables.sql`
 7. `07_seed_layout_templates_paraguay.sql` (opcional)
 8. `08_seed_layout_templates_gnb_itau.sql` (opcional)
+9. `09_rbac_empresas_roles_modulos.sql` (obligatorio para el nuevo modelo)
+10. `10_seed_superadmin_template_rbac.sql` (opcional, solo si necesitas crear superadmin por SQL)
+11. `11_create_usuarios_roles_table.sql` (recomendado para tabla puente usuario<->rol)
 
 ## Notas
 
@@ -15,5 +18,13 @@
 - El paso `06` crea el modelo nuevo `usuario -> bancos -> layouts -> conciliaciones`.
 - El paso `08` agrega templates para `GNB` e `Itau`, incluyendo 3 layouts para GNB
   (`GNB`, `GNB-443`, `GNB3`).
+- El paso `09` crea tablas de `roles`, `empresas`, `modulos` y la matriz
+  `empresas_roles_modulos`, y migra `usuarios` para requerir empresa + rol.
+  Tambien elimina columnas legacy de permisos (`usr_is_admin`, `usr_is_super_admin`) y
+  usa unicamente `rol_id`/`rol_codigo` para autorizacion.
+- El paso `10` es el template de superadmin para el modelo RBAC nuevo.
+- El paso `11` crea `usuarios_roles` como tabla puente para asignaciones de rol por usuario
+  (incluye una marca de rol principal) y sincroniza automaticamente con `usuarios.rol_id`
+  para mantener compatibilidad con el backend actual.
 - En los mappings podes usar columnas alternativas con separador `|`.
   Ejemplo: `E|F` toma la primera columna con dato en esa fila, util para extractos con Debito/Credito separados.
