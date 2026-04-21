@@ -19,17 +19,17 @@ import { UsersService } from "./users.service";
 export class UsersController {
   constructor(private readonly usersService: UsersService) {}
 
-  @Get()
+  @Get("list")
   listUsers(@CurrentUser() actor: AuthUser) {
     return this.usersService.listUsers(actor);
   }
 
-  @Post()
+  @Post("create")
   createUser(@Body() body: CreateUserDto, @CurrentUser() actor: AuthUser) {
     return this.usersService.createFromAbm(body, actor);
   }
 
-  @Patch(":id")
+  @Patch("update/:id")
   updateUser(
     @Param("id", ParseIntPipe) id: number,
     @Body() body: UpdateUserDto,
