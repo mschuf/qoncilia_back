@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   ParseIntPipe,
@@ -81,6 +82,16 @@ export class ConciliationController {
     return this.conciliationService.updateTemplateLayout(templateLayoutId, body, actor);
   }
 
+  @Delete("template-layouts/:templateLayoutId")
+  @Roles(Role.IS_SUPER_ADMIN)
+  @RequiredModule(AppModuleCode.LAYOUT_MANAGEMENT)
+  deleteTemplateLayout(
+    @Param("templateLayoutId", ParseIntPipe) templateLayoutId: number,
+    @CurrentUser() actor: AuthUser
+  ) {
+    return this.conciliationService.deleteTemplateLayout(templateLayoutId, actor);
+  }
+
   @Post("users/:userId/banks")
   @Roles(Role.IS_SUPER_ADMIN)
   @RequiredModule(AppModuleCode.LAYOUT_MANAGEMENT)
@@ -146,6 +157,18 @@ export class ConciliationController {
     @CurrentUser() actor: AuthUser
   ) {
     return this.conciliationService.updateLayout(userId, bankId, layoutId, body, actor);
+  }
+
+  @Delete("users/:userId/banks/:bankId/layouts/:layoutId")
+  @Roles(Role.IS_SUPER_ADMIN)
+  @RequiredModule(AppModuleCode.LAYOUT_MANAGEMENT)
+  deleteLayout(
+    @Param("userId", ParseIntPipe) userId: number,
+    @Param("bankId", ParseIntPipe) bankId: number,
+    @Param("layoutId", ParseIntPipe) layoutId: number,
+    @CurrentUser() actor: AuthUser
+  ) {
+    return this.conciliationService.deleteLayout(userId, bankId, layoutId, actor);
   }
 
   @Post("preview")

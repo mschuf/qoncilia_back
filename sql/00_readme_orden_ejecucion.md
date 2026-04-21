@@ -12,6 +12,7 @@
 10. `10_seed_superadmin_template_rbac.sql` (opcional, solo si necesitas crear superadmin por SQL)
 11. `11_create_usuarios_roles_table.sql` (recomendado para tabla puente usuario<->rol)
 12. `12_create_template_layout_and_incremental_updates.sql` (recomendado para templates reutilizables e importaciones incrementales)
+13. `13_seed_default_templates_from_existing_layouts.sql` (opcional, copia como templates los layouts que ya existen en tu base)
 
 ## Notas
 
@@ -30,5 +31,7 @@
 - El paso `12` agrega `template_layout`, sus mappings, la referencia opcional desde
   `conciliacion_layouts` hacia el template usado y el contador `con_update_count`
   para poder actualizar conciliaciones existentes sin duplicar lineas.
+- El paso `13` toma los layouts actuales de `conciliacion_layouts` y sus mappings,
+  y los inserta en `template_layout`/`template_layout_mapping` de forma idempotente.
 - En los mappings podes usar columnas alternativas con separador `|`.
   Ejemplo: `E|F` toma la primera columna con dato en esa fila, util para extractos con Debito/Credito separados.

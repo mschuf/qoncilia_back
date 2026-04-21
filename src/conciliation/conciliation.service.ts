@@ -368,6 +368,27 @@ export class ConciliationService {
     });
   }
 
+  async deleteTemplateLayout(
+    templateLayoutId: number,
+    actor: AuthUser
+  ): Promise<{ message: string }> {
+    this.ensureSuperadmin(actor);
+
+    const template = await this.templateLayoutRepository.findOne({
+      where: { id: templateLayoutId }
+    });
+
+    if (!template) {
+      throw new NotFoundException("Template layout no encontrado.");
+    }
+
+    await this.templateLayoutRepository.delete(templateLayoutId);
+
+    return {
+      message: "Template layout eliminado."
+    };
+  }
+
   async createLayout(
     userId: number,
     bankId: number,
@@ -677,6 +698,71 @@ export class ConciliationService {
       }
 
       return this.toPublicLayout(updated);
+    });
+  }
+
+  async deleteLayout(
+    userId: number,
+    bankId: number,
+    layoutId: number,
+    actor: AuthUser
+  ): Promise<{ message: string }> {
+    this.ensureSuperadmin(actor);
+
+    return this.layoutRepository.manager.transaction(async (manager) => {
+      const layoutRepository = manager.getRepository(ReconciliationLayout);
+      const reconciliationRepository = manager.getRepository(Reconciliation);
+
+      const layout = await layoutRepository.findOne({
+        where: { id: layoutId, userBank: { id: bankId, user: { id: userId } } },
+        relations: {
+          userBank: true
+        }
+      });
+
+      if (!layout) {
+        throw new NotFoundException("Layout no encontrado.");
+      }
+
+      const linkedReconciliations = await reconciliationRepository.count({
+        where: {
+          layout: {
+            id: layoutId
+          }
+        }
+      });
+
+      if (linkedReconciliations > 0) {
+        throw new ConflictException(
+          "No se puede eliminar el layout porque ya tiene conciliaciones guardadas."
+        );
+      }
+
+      const wasActive = layout.active;
+
+      await layoutRepository.delete(layoutId);
+
+      if (wasActive) {
+        const nextLayout = await layoutRepository.findOne({
+          where: {
+            userBank: {
+              id: bankId
+            }
+          },
+          order: {
+            id: "ASC"
+          }
+        });
+
+        if (nextLayout) {
+          nextLayout.active = true;
+          await layoutRepository.save(nextLayout);
+        }
+      }
+
+      return {
+        message: "Layout eliminado."
+      };
     });
   }
 
