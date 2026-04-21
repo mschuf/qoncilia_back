@@ -6,22 +6,33 @@ import {
   NotFoundException
 } from "@nestjs/common";
 import { InjectRepository } from "@nestjs/typeorm";
-import { QueryFailedError, Repository } from "typeorm";
+import {
+  EntityManager,
+  ObjectLiteral,
+  QueryFailedError,
+  Repository,
+  SelectQueryBuilder
+} from "typeorm";
 import * as XLSX from "xlsx";
 import { Role } from "../common/enums/role.enum";
 import { AuthUser } from "../common/interfaces/auth-user.interface";
 import { User } from "../users/entities/user.entity";
+import { ApplyTemplateLayoutDto } from "./dto/apply-template-layout.dto";
 import { CreateLayoutDto } from "./dto/create-layout.dto";
+import { CreateTemplateLayoutDto } from "./dto/create-template-layout.dto";
 import { CreateUserBankDto } from "./dto/create-user-bank.dto";
 import { ListReconciliationsQueryDto } from "./dto/list-reconciliations-query.dto";
 import { PreviewReconciliationDto } from "./dto/preview-reconciliation.dto";
 import { SaveReconciliationDto } from "./dto/save-reconciliation.dto";
 import { UpdateLayoutDto } from "./dto/update-layout.dto";
+import { UpdateTemplateLayoutDto } from "./dto/update-template-layout.dto";
 import { UpdateUserBankDto } from "./dto/update-user-bank.dto";
 import { ReconciliationLayoutMapping } from "./entities/reconciliation-layout-mapping.entity";
 import { ReconciliationLayout } from "./entities/reconciliation-layout.entity";
 import { ReconciliationMatch } from "./entities/reconciliation-match.entity";
 import { Reconciliation } from "./entities/reconciliation.entity";
+import { TemplateLayoutMapping } from "./entities/template-layout-mapping.entity";
+import { TemplateLayout } from "./entities/template-layout.entity";
 import { UserBank } from "./entities/user-bank.entity";
 import {
   CompareOperator,
@@ -34,6 +45,8 @@ import {
   PublicLayoutMapping,
   PublicReconciliationDetail,
   PublicReconciliationSummary,
+  PublicTemplateLayout,
+  ReconciliationSnapshot,
   PublicUserBank,
   PublicUserBankSummary,
   PublicUserBankWithLayouts
@@ -64,6 +77,16 @@ type InternalPreviewMetrics = {
   matchPercentage: number;
 };
 
+type AccessibleUserScope = {
+  userId?: number;
+  companyId?: number;
+};
+
+type RowMergeResult = {
+  rows: ConciliationPreviewRow[];
+  canonicalByRowId: Map<string, ConciliationPreviewRow>;
+};
+
 @Injectable()
 export class ConciliationService {
   constructor(
@@ -71,6 +94,10 @@ export class ConciliationService {
     private readonly userRepository: Repository<User>,
     @InjectRepository(UserBank)
     private readonly userBankRepository: Repository<UserBank>,
+    @InjectRepository(TemplateLayout)
+    private readonly templateLayoutRepository: Repository<TemplateLayout>,
+    @InjectRepository(TemplateLayoutMapping)
+    private readonly templateLayoutMappingRepository: Repository<TemplateLayoutMapping>,
     @InjectRepository(ReconciliationLayout)
     private readonly layoutRepository: Repository<ReconciliationLayout>,
     @InjectRepository(ReconciliationLayoutMapping)
@@ -82,18 +109,18 @@ export class ConciliationService {
   ) {}
 
   async listCatalog(actor: AuthUser, requestedUserId?: number): Promise<PublicUserBankWithLayouts[]> {
-    const resolvedUserId = this.resolveScopedUserId(actor, requestedUserId);
+    const scope = await this.resolveAccessibleUserScope(actor, requestedUserId);
+    const queryBuilder = this.userBankRepository
+      .createQueryBuilder("userBank")
+      .leftJoinAndSelect("userBank.user", "user")
+      .leftJoinAndSelect("user.company", "company")
+      .leftJoinAndSelect("userBank.layouts", "layout")
+      .leftJoinAndSelect("layout.mappings", "mapping")
+      .leftJoinAndSelect("layout.templateLayout", "templateLayout");
 
-    const banks = await this.userBankRepository.find({
-      where: resolvedUserId ? { user: { id: resolvedUserId } } : {},
-      relations: {
-        user: true,
-        layouts: {
-          mappings: true,
-          userBank: true
-        }
-      }
-    });
+    this.applyUserScopeToQuery(queryBuilder, scope, "user", "company");
+
+    const banks = await queryBuilder.getMany();
 
     return banks
       .sort((left, right) => {
@@ -104,6 +131,21 @@ export class ConciliationService {
         return left.id - right.id;
       })
       .map((bank) => this.toPublicUserBankWithLayouts(bank));
+  }
+
+  async listTemplateLayouts(actor: AuthUser): Promise<PublicTemplateLayout[]> {
+    this.ensureSuperadmin(actor);
+
+    const templates = await this.templateLayoutRepository.find({
+      relations: {
+        mappings: true
+      },
+      order: {
+        id: "ASC"
+      }
+    });
+
+    return templates.map((template) => this.toPublicTemplateLayout(template));
   }
 
   async createUserBank(
@@ -163,6 +205,167 @@ export class ConciliationService {
     } catch (error) {
       this.handleDatabaseError(error);
     }
+  }
+
+  async createTemplateLayout(
+    payload: CreateTemplateLayoutDto,
+    actor: AuthUser
+  ): Promise<PublicTemplateLayout> {
+    this.ensureSuperadmin(actor);
+    this.ensureMappings(payload.mappings);
+
+    return this.templateLayoutRepository.manager.transaction(async (manager) => {
+      const templateRepository = manager.getRepository(TemplateLayout);
+      const mappingRepository = manager.getRepository(TemplateLayoutMapping);
+
+      const template = await templateRepository.save(
+        templateRepository.create({
+          name: this.normalizeRequired(payload.name, "name"),
+          description: this.normalizeOptional(payload.description),
+          referenceBankName: this.normalizeOptional(payload.referenceBankName),
+          systemLabel: this.normalizeRequired(
+            payload.systemLabel ?? "Sistema / ERP",
+            "systemLabel"
+          ),
+          bankLabel: this.normalizeRequired(payload.bankLabel ?? "Banco", "bankLabel"),
+          autoMatchThreshold: this.normalizeThreshold(payload.autoMatchThreshold),
+          active: payload.active ?? true
+        })
+      );
+
+      await mappingRepository.save(
+        payload.mappings.map((item, index) =>
+          mappingRepository.create({
+            templateLayout: template,
+            fieldKey: this.normalizeRequired(item.fieldKey, "fieldKey"),
+            label: this.normalizeRequired(item.label, "label"),
+            sortOrder: item.sortOrder ?? index,
+            active: item.active ?? true,
+            required: item.required ?? false,
+            compareOperator: item.compareOperator ?? "equals",
+            weight: item.weight ?? 1,
+            tolerance: item.tolerance ?? null,
+            systemSheet: this.normalizeOptional(item.systemSheet),
+            systemColumn: this.normalizeColumn(item.systemColumn),
+            systemStartRow: item.systemStartRow ?? null,
+            systemEndRow: item.systemEndRow ?? null,
+            systemDataType: item.systemDataType ?? "text",
+            bankSheet: this.normalizeOptional(item.bankSheet),
+            bankColumn: this.normalizeColumn(item.bankColumn),
+            bankStartRow: item.bankStartRow ?? null,
+            bankEndRow: item.bankEndRow ?? null,
+            bankDataType: item.bankDataType ?? "text"
+          })
+        )
+      );
+
+      const persisted = await templateRepository.findOne({
+        where: { id: template.id },
+        relations: {
+          mappings: true
+        }
+      });
+
+      if (!persisted) {
+        throw new NotFoundException("Template layout no encontrado luego de crear.");
+      }
+
+      return this.toPublicTemplateLayout(persisted);
+    });
+  }
+
+  async updateTemplateLayout(
+    templateLayoutId: number,
+    payload: UpdateTemplateLayoutDto,
+    actor: AuthUser
+  ): Promise<PublicTemplateLayout> {
+    this.ensureSuperadmin(actor);
+
+    return this.templateLayoutRepository.manager.transaction(async (manager) => {
+      const templateRepository = manager.getRepository(TemplateLayout);
+      const mappingRepository = manager.getRepository(TemplateLayoutMapping);
+
+      const template = await templateRepository.findOne({
+        where: { id: templateLayoutId },
+        relations: {
+          mappings: true
+        }
+      });
+
+      if (!template) {
+        throw new NotFoundException("Template layout no encontrado.");
+      }
+
+      if (payload.name !== undefined) template.name = this.normalizeRequired(payload.name, "name");
+      if (payload.description !== undefined) {
+        template.description = this.normalizeOptional(payload.description);
+      }
+      if (payload.referenceBankName !== undefined) {
+        template.referenceBankName = this.normalizeOptional(payload.referenceBankName);
+      }
+      if (payload.systemLabel !== undefined) {
+        template.systemLabel = this.normalizeRequired(payload.systemLabel, "systemLabel");
+      }
+      if (payload.bankLabel !== undefined) {
+        template.bankLabel = this.normalizeRequired(payload.bankLabel, "bankLabel");
+      }
+      if (payload.autoMatchThreshold !== undefined) {
+        template.autoMatchThreshold = this.normalizeThreshold(payload.autoMatchThreshold);
+      }
+      if (payload.active !== undefined) template.active = payload.active;
+
+      await templateRepository.save(template);
+
+      if (payload.mappings !== undefined) {
+        this.ensureMappings(payload.mappings);
+
+        await mappingRepository
+          .createQueryBuilder()
+          .delete()
+          .from(TemplateLayoutMapping)
+          .where("tpl_id = :templateLayoutId", { templateLayoutId })
+          .execute();
+
+        await mappingRepository.save(
+          payload.mappings.map((item, index) =>
+            mappingRepository.create({
+              templateLayout: template,
+              fieldKey: this.normalizeRequired(item.fieldKey, "fieldKey"),
+              label: this.normalizeRequired(item.label, "label"),
+              sortOrder: item.sortOrder ?? index,
+              active: item.active ?? true,
+              required: item.required ?? false,
+              compareOperator: item.compareOperator ?? "equals",
+              weight: item.weight ?? 1,
+              tolerance: item.tolerance ?? null,
+              systemSheet: this.normalizeOptional(item.systemSheet),
+              systemColumn: this.normalizeColumn(item.systemColumn),
+              systemStartRow: item.systemStartRow ?? null,
+              systemEndRow: item.systemEndRow ?? null,
+              systemDataType: item.systemDataType ?? "text",
+              bankSheet: this.normalizeOptional(item.bankSheet),
+              bankColumn: this.normalizeColumn(item.bankColumn),
+              bankStartRow: item.bankStartRow ?? null,
+              bankEndRow: item.bankEndRow ?? null,
+              bankDataType: item.bankDataType ?? "text"
+            })
+          )
+        );
+      }
+
+      const persisted = await templateRepository.findOne({
+        where: { id: templateLayoutId },
+        relations: {
+          mappings: true
+        }
+      });
+
+      if (!persisted) {
+        throw new NotFoundException("Template layout no encontrado luego de actualizar.");
+      }
+
+      return this.toPublicTemplateLayout(persisted);
+    });
   }
 
   async createLayout(
@@ -244,12 +447,126 @@ export class ConciliationService {
         where: { id: createdLayout.id },
         relations: {
           userBank: true,
-          mappings: true
+          mappings: true,
+          templateLayout: true
         }
       });
 
       if (!persisted) {
         throw new NotFoundException("Layout no encontrado luego de crear.");
+      }
+
+      return this.toPublicLayout(persisted);
+    });
+  }
+
+  async applyTemplateLayoutToBank(
+    userId: number,
+    bankId: number,
+    templateLayoutId: number,
+    payload: ApplyTemplateLayoutDto,
+    actor: AuthUser
+  ): Promise<PublicLayout> {
+    this.ensureSuperadmin(actor);
+
+    return this.layoutRepository.manager.transaction(async (manager) => {
+      const bankRepository = manager.getRepository(UserBank);
+      const templateRepository = manager.getRepository(TemplateLayout);
+      const layoutRepository = manager.getRepository(ReconciliationLayout);
+      const mappingRepository = manager.getRepository(ReconciliationLayoutMapping);
+
+      const userBank = await bankRepository.findOne({
+        where: { id: bankId, user: { id: userId } },
+        relations: {
+          user: true,
+          layouts: true
+        }
+      });
+
+      if (!userBank) {
+        throw new NotFoundException("Banco asignado no encontrado.");
+      }
+
+      const template = await templateRepository.findOne({
+        where: { id: templateLayoutId },
+        relations: {
+          mappings: true
+        }
+      });
+
+      if (!template) {
+        throw new NotFoundException("Template layout no encontrado.");
+      }
+
+      const shouldActivate = payload.active ?? template.active ?? (userBank.layouts?.length ?? 0) === 0;
+
+      if (shouldActivate) {
+        await layoutRepository
+          .createQueryBuilder()
+          .update(ReconciliationLayout)
+          .set({ active: false })
+          .where("ubk_id = :bankId", { bankId: userBank.id })
+          .execute();
+      }
+
+      const createdLayout = await layoutRepository.save(
+        layoutRepository.create({
+          userBank,
+          templateLayout: template,
+          name: this.normalizeRequired(payload.name ?? template.name, "name"),
+          description: this.normalizeOptional(payload.description ?? template.description),
+          systemLabel: this.normalizeRequired(
+            payload.systemLabel ?? template.systemLabel,
+            "systemLabel"
+          ),
+          bankLabel: this.normalizeRequired(
+            payload.bankLabel ?? userBank.alias ?? userBank.bankName ?? template.bankLabel,
+            "bankLabel"
+          ),
+          autoMatchThreshold: this.normalizeThreshold(
+            payload.autoMatchThreshold ?? template.autoMatchThreshold
+          ),
+          active: shouldActivate
+        })
+      );
+
+      await mappingRepository.save(
+        this.sortTemplateMappings(template.mappings ?? []).map((item, index) =>
+          mappingRepository.create({
+            layout: createdLayout,
+            fieldKey: this.normalizeRequired(item.fieldKey, "fieldKey"),
+            label: this.normalizeRequired(item.label, "label"),
+            sortOrder: item.sortOrder ?? index,
+            active: item.active ?? true,
+            required: item.required ?? false,
+            compareOperator: item.compareOperator ?? "equals",
+            weight: item.weight ?? 1,
+            tolerance: item.tolerance ?? null,
+            systemSheet: this.normalizeOptional(item.systemSheet),
+            systemColumn: this.normalizeColumn(item.systemColumn),
+            systemStartRow: item.systemStartRow ?? null,
+            systemEndRow: item.systemEndRow ?? null,
+            systemDataType: item.systemDataType ?? "text",
+            bankSheet: this.normalizeOptional(item.bankSheet),
+            bankColumn: this.normalizeColumn(item.bankColumn),
+            bankStartRow: item.bankStartRow ?? null,
+            bankEndRow: item.bankEndRow ?? null,
+            bankDataType: item.bankDataType ?? "text"
+          })
+        )
+      );
+
+      const persisted = await layoutRepository.findOne({
+        where: { id: createdLayout.id },
+        relations: {
+          userBank: true,
+          mappings: true,
+          templateLayout: true
+        }
+      });
+
+      if (!persisted) {
+        throw new NotFoundException("Layout no encontrado luego de copiar template.");
       }
 
       return this.toPublicLayout(persisted);
@@ -350,7 +667,8 @@ export class ConciliationService {
         where: { id: layoutId },
         relations: {
           userBank: true,
-          mappings: true
+          mappings: true,
+          templateLayout: true
         }
       });
 
@@ -417,30 +735,33 @@ export class ConciliationService {
       payload.userBankId,
       payload.layoutId
     );
+    const autoMatches = this.coercePreviewMatches(payload.autoMatches);
+    const manualMatches = this.coercePreviewMatches(payload.manualMatches);
 
-    const systemRowMap = new Map(payload.systemRows.map((row) => [row.rowId, row]));
-    const bankRowMap = new Map(payload.bankRows.map((row) => [row.rowId, row]));
-    const metrics = this.buildMetrics(
-      payload.systemRows.length,
-      payload.bankRows.length,
-      payload.autoMatches.length,
-      payload.manualMatches.length
-    );
-
-    const matchedSystemIds = new Set<string>();
-    const matchedBankIds = new Set<string>();
-
-    for (const match of [...payload.autoMatches, ...payload.manualMatches]) {
-      matchedSystemIds.add(match.systemRowId);
-      matchedBankIds.add(match.bankRowId);
+    if (payload.reconciliationId) {
+      return this.updateExistingReconciliation(
+        actor,
+        {
+          ...payload,
+          autoMatches,
+          manualMatches
+        },
+        userBank,
+        layout
+      );
     }
 
-    const unmatchedSystemRows = payload.systemRows.filter((row) => !matchedSystemIds.has(row.rowId));
-    const unmatchedBankRows = payload.bankRows.filter((row) => !matchedBankIds.has(row.rowId));
+    const snapshot = this.buildSnapshot(
+      userBank,
+      layout,
+      payload.systemRows,
+      payload.bankRows,
+      autoMatches,
+      manualMatches
+    );
 
     return this.reconciliationRepository.manager.transaction(async (manager) => {
       const reconciliationRepository = manager.getRepository(Reconciliation);
-      const reconciliationMatchRepository = manager.getRepository(ReconciliationMatch);
       const userRepository = manager.getRepository(User);
 
       const persistedActor = await userRepository.findOne({ where: { id: actor.id } });
@@ -456,118 +777,27 @@ export class ConciliationService {
           name:
             this.normalizeOptional(payload.name) ??
             `Conciliacion ${userBank.alias ?? userBank.bankName} ${this.formatTodayTag()}`,
-          status: payload.manualMatches.length > 0 ? "saved_with_manual_matches" : "saved",
+          status: snapshot.manualMatches.length > 0 ? "saved_with_manual_matches" : "saved",
+          updateCount: 0,
           systemFileName: this.normalizeOptional(payload.systemFileName),
           bankFileName: this.normalizeOptional(payload.bankFileName),
-          totalSystemRows: payload.systemRows.length,
-          totalBankRows: payload.bankRows.length,
-          autoMatches: payload.autoMatches.length,
-          manualMatches: payload.manualMatches.length,
-          unmatchedSystem: metrics.unmatchedSystem,
-          unmatchedBank: metrics.unmatchedBank,
-          matchPercentage: metrics.matchPercentage,
-          summarySnapshot: {
-            userBank: this.toPublicUserBankSummary(userBank),
-            layout: this.toPublicLayout(layout),
-            systemRows: payload.systemRows,
-            bankRows: payload.bankRows,
-            autoMatches: payload.autoMatches,
-            manualMatches: payload.manualMatches,
-            unmatchedSystemRows,
-            unmatchedBankRows,
-            metrics
-          }
+          totalSystemRows: snapshot.metrics.totalSystemRows,
+          totalBankRows: snapshot.metrics.totalBankRows,
+          autoMatches: snapshot.metrics.autoMatches,
+          manualMatches: snapshot.metrics.manualMatches,
+          unmatchedSystem: snapshot.metrics.unmatchedSystem,
+          unmatchedBank: snapshot.metrics.unmatchedBank,
+          matchPercentage: snapshot.metrics.matchPercentage,
+          summarySnapshot: snapshot as unknown as Record<string, unknown>
         })
       );
 
-      const matches: ReconciliationMatch[] = [];
-
-      for (const match of payload.autoMatches) {
-        matches.push(
-          reconciliationMatchRepository.create({
-            reconciliation,
-            status: "auto",
-            systemRowId: match.systemRowId,
-            bankRowId: match.bankRowId,
-            systemRowNumber: match.systemRowNumber,
-            bankRowNumber: match.bankRowNumber,
-            score: match.score,
-            details: this.toJsonRecord({ ruleResults: match.ruleResults }),
-            systemPayload: this.toJsonRecord(systemRowMap.get(match.systemRowId) ?? null),
-            bankPayload: this.toJsonRecord(bankRowMap.get(match.bankRowId) ?? null)
-          })
-        );
-      }
-
-      for (const match of payload.manualMatches) {
-        matches.push(
-          reconciliationMatchRepository.create({
-            reconciliation,
-            status: "manual",
-            systemRowId: match.systemRowId,
-            bankRowId: match.bankRowId,
-            systemRowNumber: match.systemRowNumber,
-            bankRowNumber: match.bankRowNumber,
-            score: match.score,
-            details: this.toJsonRecord({ ruleResults: match.ruleResults }),
-            systemPayload: this.toJsonRecord(systemRowMap.get(match.systemRowId) ?? null),
-            bankPayload: this.toJsonRecord(bankRowMap.get(match.bankRowId) ?? null)
-          })
-        );
-      }
-
-      for (const row of unmatchedSystemRows) {
-        matches.push(
-          reconciliationMatchRepository.create({
-            reconciliation,
-            status: "unmatched_system",
-            systemRowId: row.rowId,
-            bankRowId: null,
-            systemRowNumber: row.rowNumber,
-            bankRowNumber: null,
-            score: 0,
-            details: null,
-            systemPayload: this.toJsonRecord(row),
-            bankPayload: null
-          })
-        );
-      }
-
-      for (const row of unmatchedBankRows) {
-        matches.push(
-          reconciliationMatchRepository.create({
-            reconciliation,
-            status: "unmatched_bank",
-            systemRowId: null,
-            bankRowId: row.rowId,
-            systemRowNumber: null,
-            bankRowNumber: row.rowNumber,
-            score: 0,
-            details: null,
-            systemPayload: null,
-            bankPayload: this.toJsonRecord(row)
-          })
-        );
-      }
-
-      if (matches.length > 0) {
-        await reconciliationMatchRepository.save(matches);
-      }
-
-      const persisted = await reconciliationRepository.findOne({
-        where: { id: reconciliation.id },
-        relations: {
-          user: true,
-          userBank: true,
-          layout: true
-        }
-      });
-
-      if (!persisted) {
-        throw new NotFoundException("No se pudo recuperar la conciliacion guardada.");
-      }
-
-      return this.toPublicReconciliationDetail(persisted);
+      await this.replaceReconciliationMatches(manager, reconciliation, snapshot);
+      return this.requirePersistedReconciliation(
+        manager,
+        reconciliation.id,
+        "No se pudo recuperar la conciliacion guardada."
+      );
     });
   }
 
@@ -575,7 +805,7 @@ export class ConciliationService {
     actor: AuthUser,
     query: ListReconciliationsQueryDto
   ): Promise<PublicReconciliationSummary[]> {
-    const reconciliations = await this.buildReconciliationQuery(actor, query).getMany();
+    const reconciliations = await (await this.buildReconciliationQuery(actor, query)).getMany();
     return reconciliations.map((item) => this.toPublicReconciliationSummary(item));
   }
 
@@ -583,11 +813,17 @@ export class ConciliationService {
     const reconciliation = await this.reconciliationRepository.findOne({
       where: { id },
       relations: {
-        user: true,
-        userBank: {
-          user: true
+        user: {
+          company: true
         },
-        layout: true
+        userBank: {
+          user: {
+            company: true
+          }
+        },
+        layout: {
+          templateLayout: true
+        }
       }
     });
 
@@ -595,9 +831,7 @@ export class ConciliationService {
       throw new NotFoundException("Conciliacion no encontrada.");
     }
 
-    if (actor.role !== Role.IS_SUPER_ADMIN && reconciliation.user.id !== actor.id) {
-      throw new ForbiddenException("No tenes permisos para ver esta conciliacion.");
-    }
+    this.ensureActorCanAccessTargetUser(actor, reconciliation.user);
 
     return this.toPublicReconciliationDetail(reconciliation);
   }
@@ -606,7 +840,7 @@ export class ConciliationService {
     const query = new ListReconciliationsQueryDto();
     query.userId = requestedUserId;
 
-    const reconciliations = await this.buildReconciliationQuery(actor, query).getMany();
+    const reconciliations = await (await this.buildReconciliationQuery(actor, query)).getMany();
     const totals = reconciliations.reduce(
       (accumulator, item) => {
         accumulator.totalReconciliations += 1;
@@ -689,18 +923,21 @@ export class ConciliationService {
     };
   }
 
-  private buildReconciliationQuery(actor: AuthUser, query: ListReconciliationsQueryDto) {
-    const scopedUserId = this.resolveScopedUserId(actor, query.userId);
+  private async buildReconciliationQuery(
+    actor: AuthUser,
+    query: ListReconciliationsQueryDto
+  ): Promise<SelectQueryBuilder<Reconciliation>> {
+    const scope = await this.resolveAccessibleUserScope(actor, query.userId);
     const queryBuilder = this.reconciliationRepository
       .createQueryBuilder("reconciliation")
       .leftJoinAndSelect("reconciliation.user", "user")
+      .leftJoinAndSelect("user.company", "company")
       .leftJoinAndSelect("reconciliation.userBank", "userBank")
       .leftJoinAndSelect("reconciliation.layout", "layout")
+      .leftJoinAndSelect("layout.templateLayout", "templateLayout")
       .orderBy("reconciliation.createdAt", "DESC");
 
-    if (scopedUserId) {
-      queryBuilder.andWhere("user.id = :userId", { userId: scopedUserId });
-    }
+    this.applyUserScopeToQuery(queryBuilder, scope, "user", "company");
 
     if (query.userBankId) {
       queryBuilder.andWhere("userBank.id = :userBankId", { userBankId: query.userBankId });
@@ -739,9 +976,12 @@ export class ConciliationService {
       },
       relations: {
         userBank: {
-          user: true
+          user: {
+            company: true
+          }
         },
-        mappings: true
+        mappings: true,
+        templateLayout: true
       }
     });
 
@@ -749,9 +989,7 @@ export class ConciliationService {
       throw new NotFoundException("Layout no encontrado para el banco seleccionado.");
     }
 
-    if (actor.role !== Role.IS_SUPER_ADMIN && layout.userBank.user.id !== actor.id) {
-      throw new ForbiddenException("No tenes permisos sobre este banco/layout.");
-    }
+    this.ensureActorCanAccessTargetUser(actor, layout.userBank.user);
 
     return {
       userBank: layout.userBank,
@@ -759,17 +997,477 @@ export class ConciliationService {
     };
   }
 
+  private async updateExistingReconciliation(
+    actor: AuthUser,
+    payload: SaveReconciliationDto & {
+      autoMatches: ConciliationPreviewMatch[];
+      manualMatches: ConciliationPreviewMatch[];
+    },
+    userBank: UserBank,
+    layout: ReconciliationLayout
+  ): Promise<PublicReconciliationDetail> {
+    return this.reconciliationRepository.manager.transaction(async (manager) => {
+      const reconciliationRepository = manager.getRepository(Reconciliation);
+
+      const reconciliation = await reconciliationRepository.findOne({
+        where: { id: payload.reconciliationId },
+        relations: {
+          user: {
+            company: true
+          },
+          userBank: {
+            user: {
+              company: true
+            }
+          },
+          layout: {
+            mappings: true,
+            templateLayout: true
+          }
+        }
+      });
+
+      if (!reconciliation) {
+        throw new NotFoundException("Conciliacion a actualizar no encontrada.");
+      }
+
+      this.ensureActorCanAccessTargetUser(actor, reconciliation.user);
+
+      if (reconciliation.userBank.id !== userBank.id || reconciliation.layout.id !== layout.id) {
+        throw new BadRequestException(
+          "La conciliacion seleccionada no corresponde al banco/layout actual."
+        );
+      }
+
+      const previousSnapshot = this.readSnapshot(reconciliation);
+      const mergedSystemRows = this.mergePreviewRows(
+        layout.mappings,
+        previousSnapshot.systemRows,
+        payload.systemRows
+      );
+      const mergedBankRows = this.mergePreviewRows(
+        layout.mappings,
+        previousSnapshot.bankRows,
+        payload.bankRows
+      );
+      const mergedManualMatches = this.mergeManualMatches(
+        layout.mappings,
+        mergedSystemRows,
+        mergedBankRows,
+        [...previousSnapshot.manualMatches, ...payload.manualMatches]
+      );
+      const lockedSystemIds = new Set(mergedManualMatches.map((item) => item.systemRowId));
+      const lockedBankIds = new Set(mergedManualMatches.map((item) => item.bankRowId));
+      const mergedAutoMatches = this.buildAutoMatches(
+        layout,
+        mergedSystemRows.rows,
+        mergedBankRows.rows,
+        lockedSystemIds,
+        lockedBankIds
+      );
+      const snapshot = this.buildSnapshot(
+        userBank,
+        layout,
+        mergedSystemRows.rows,
+        mergedBankRows.rows,
+        mergedAutoMatches,
+        mergedManualMatches
+      );
+
+      reconciliation.userBank = userBank;
+      reconciliation.layout = layout;
+      reconciliation.name = this.normalizeOptional(payload.name) ?? reconciliation.name;
+      reconciliation.status =
+        snapshot.manualMatches.length > 0 ? "updated_with_manual_matches" : "updated";
+      reconciliation.systemFileName =
+        this.normalizeOptional(payload.systemFileName) ?? reconciliation.systemFileName;
+      reconciliation.bankFileName =
+        this.normalizeOptional(payload.bankFileName) ?? reconciliation.bankFileName;
+      reconciliation.totalSystemRows = snapshot.metrics.totalSystemRows;
+      reconciliation.totalBankRows = snapshot.metrics.totalBankRows;
+      reconciliation.autoMatches = snapshot.metrics.autoMatches;
+      reconciliation.manualMatches = snapshot.metrics.manualMatches;
+      reconciliation.unmatchedSystem = snapshot.metrics.unmatchedSystem;
+      reconciliation.unmatchedBank = snapshot.metrics.unmatchedBank;
+      reconciliation.matchPercentage = snapshot.metrics.matchPercentage;
+      reconciliation.updateCount = (reconciliation.updateCount ?? 0) + 1;
+      reconciliation.summarySnapshot = snapshot as unknown as Record<string, unknown>;
+
+      await reconciliationRepository.save(reconciliation);
+      await this.replaceReconciliationMatches(manager, reconciliation, snapshot);
+
+      return this.requirePersistedReconciliation(
+        manager,
+        reconciliation.id,
+        "No se pudo recuperar la conciliacion actualizada."
+      );
+    });
+  }
+
+  private readSnapshot(reconciliation: Reconciliation): ReconciliationSnapshot {
+    const snapshot = reconciliation.summarySnapshot as ReconciliationSnapshot | null;
+    if (
+      !snapshot ||
+      !Array.isArray(snapshot.systemRows) ||
+      !Array.isArray(snapshot.bankRows) ||
+      !Array.isArray(snapshot.autoMatches) ||
+      !Array.isArray(snapshot.manualMatches)
+    ) {
+      throw new BadRequestException(
+        "La conciliacion seleccionada no tiene un snapshot reutilizable para actualizar."
+      );
+    }
+
+    return snapshot;
+  }
+
+  private coercePreviewMatches(
+    matches: SaveReconciliationDto["autoMatches"] | SaveReconciliationDto["manualMatches"]
+  ): ConciliationPreviewMatch[] {
+    return matches.map((match) => ({
+      systemRowId: match.systemRowId,
+      bankRowId: match.bankRowId,
+      systemRowNumber: match.systemRowNumber,
+      bankRowNumber: match.bankRowNumber,
+      score: match.score,
+      status: match.status,
+      ruleResults: match.ruleResults.map((rule) => ({
+        fieldKey: rule.fieldKey,
+        label: rule.label,
+        passed: rule.passed,
+        compareOperator: rule.compareOperator as CompareOperator,
+        systemValue: rule.systemValue ?? null,
+        bankValue: rule.bankValue ?? null
+      }))
+    }));
+  }
+
+  private buildSnapshot(
+    userBank: UserBank,
+    layout: ReconciliationLayout,
+    systemRows: ConciliationPreviewRow[],
+    bankRows: ConciliationPreviewRow[],
+    autoMatches: ConciliationPreviewMatch[],
+    manualMatches: ConciliationPreviewMatch[]
+  ): ReconciliationSnapshot {
+    const matchedSystemIds = new Set<string>();
+    const matchedBankIds = new Set<string>();
+
+    for (const match of [...autoMatches, ...manualMatches]) {
+      matchedSystemIds.add(match.systemRowId);
+      matchedBankIds.add(match.bankRowId);
+    }
+
+    const sortedSystemRows = this.sortPreviewRows(systemRows);
+    const sortedBankRows = this.sortPreviewRows(bankRows);
+    const unmatchedSystemRows = sortedSystemRows.filter((row) => !matchedSystemIds.has(row.rowId));
+    const unmatchedBankRows = sortedBankRows.filter((row) => !matchedBankIds.has(row.rowId));
+    const metrics = this.buildMetrics(
+      sortedSystemRows.length,
+      sortedBankRows.length,
+      autoMatches.length,
+      manualMatches.length
+    );
+
+    return {
+      userBank: this.toPublicUserBankSummary(userBank),
+      layout: this.toPublicLayout(layout),
+      systemRows: sortedSystemRows,
+      bankRows: sortedBankRows,
+      autoMatches: this.sortPreviewMatches(autoMatches),
+      manualMatches: this.sortPreviewMatches(manualMatches),
+      unmatchedSystemRows,
+      unmatchedBankRows,
+      metrics
+    };
+  }
+
+  private mergePreviewRows(
+    mappings: ReconciliationLayoutMapping[],
+    existingRows: ConciliationPreviewRow[],
+    incomingRows: ConciliationPreviewRow[]
+  ): RowMergeResult {
+    const rows = [...existingRows];
+    const canonicalByRowId = new Map<string, ConciliationPreviewRow>();
+    const buckets = new Map<string, ConciliationPreviewRow[]>();
+    const reusedCountBySignature = new Map<string, number>();
+
+    for (const row of existingRows) {
+      canonicalByRowId.set(row.rowId, row);
+      const signature = this.buildRowSignature(mappings, row);
+      const bucket = buckets.get(signature) ?? [];
+      bucket.push(row);
+      buckets.set(signature, bucket);
+    }
+
+    for (const row of incomingRows) {
+      const signature = this.buildRowSignature(mappings, row);
+      const bucket = buckets.get(signature) ?? [];
+      const reusedCount = reusedCountBySignature.get(signature) ?? 0;
+      const existingCanonical = reusedCount < bucket.length ? bucket[reusedCount] : undefined;
+
+      if (existingCanonical) {
+        canonicalByRowId.set(row.rowId, existingCanonical);
+        reusedCountBySignature.set(signature, reusedCount + 1);
+        continue;
+      }
+
+      canonicalByRowId.set(row.rowId, row);
+      bucket.push(row);
+      buckets.set(signature, bucket);
+      reusedCountBySignature.set(signature, reusedCount + 1);
+      rows.push(row);
+    }
+
+    return {
+      rows: this.sortPreviewRows(rows),
+      canonicalByRowId
+    };
+  }
+
+  private mergeManualMatches(
+    mappings: ReconciliationLayoutMapping[],
+    systemRows: RowMergeResult,
+    bankRows: RowMergeResult,
+    matches: ConciliationPreviewMatch[]
+  ): ConciliationPreviewMatch[] {
+    const uniqueMatches = new Map<string, ConciliationPreviewMatch>();
+
+    for (const match of matches) {
+      const systemRow = systemRows.canonicalByRowId.get(match.systemRowId);
+      const bankRow = bankRows.canonicalByRowId.get(match.bankRowId);
+
+      if (!systemRow || !bankRow) {
+        continue;
+      }
+
+      const pairKey = `${systemRow.rowId}::${bankRow.rowId}`;
+
+      if (uniqueMatches.has(pairKey)) {
+        continue;
+      }
+
+      const evaluation = this.evaluateMatch(
+        this.sortMappings(mappings).filter((item) => item.active),
+        systemRow,
+        bankRow
+      );
+
+      uniqueMatches.set(pairKey, {
+        systemRowId: systemRow.rowId,
+        bankRowId: bankRow.rowId,
+        systemRowNumber: systemRow.rowNumber,
+        bankRowNumber: bankRow.rowNumber,
+        score: this.roundNumber(evaluation.score),
+        status: "manual",
+        ruleResults: evaluation.ruleResults
+      });
+    }
+
+    return this.sortPreviewMatches([...uniqueMatches.values()]);
+  }
+
+  private async replaceReconciliationMatches(
+    manager: EntityManager,
+    reconciliation: Reconciliation,
+    snapshot: ReconciliationSnapshot
+  ): Promise<void> {
+    const reconciliationMatchRepository = manager.getRepository(ReconciliationMatch);
+    const systemRowMap = new Map(snapshot.systemRows.map((row) => [row.rowId, row]));
+    const bankRowMap = new Map(snapshot.bankRows.map((row) => [row.rowId, row]));
+
+    await reconciliationMatchRepository
+      .createQueryBuilder()
+      .delete()
+      .from(ReconciliationMatch)
+      .where("con_id = :reconciliationId", { reconciliationId: reconciliation.id })
+      .execute();
+
+    const matches: ReconciliationMatch[] = [];
+
+    for (const match of snapshot.autoMatches) {
+      matches.push(
+        reconciliationMatchRepository.create({
+          reconciliation,
+          status: "auto",
+          systemRowId: match.systemRowId,
+          bankRowId: match.bankRowId,
+          systemRowNumber: match.systemRowNumber,
+          bankRowNumber: match.bankRowNumber,
+          score: match.score,
+          details: this.toJsonRecord({ ruleResults: match.ruleResults }),
+          systemPayload: this.toJsonRecord(systemRowMap.get(match.systemRowId) ?? null),
+          bankPayload: this.toJsonRecord(bankRowMap.get(match.bankRowId) ?? null)
+        })
+      );
+    }
+
+    for (const match of snapshot.manualMatches) {
+      matches.push(
+        reconciliationMatchRepository.create({
+          reconciliation,
+          status: "manual",
+          systemRowId: match.systemRowId,
+          bankRowId: match.bankRowId,
+          systemRowNumber: match.systemRowNumber,
+          bankRowNumber: match.bankRowNumber,
+          score: match.score,
+          details: this.toJsonRecord({ ruleResults: match.ruleResults }),
+          systemPayload: this.toJsonRecord(systemRowMap.get(match.systemRowId) ?? null),
+          bankPayload: this.toJsonRecord(bankRowMap.get(match.bankRowId) ?? null)
+        })
+      );
+    }
+
+    for (const row of snapshot.unmatchedSystemRows) {
+      matches.push(
+        reconciliationMatchRepository.create({
+          reconciliation,
+          status: "unmatched_system",
+          systemRowId: row.rowId,
+          bankRowId: null,
+          systemRowNumber: row.rowNumber,
+          bankRowNumber: null,
+          score: 0,
+          details: null,
+          systemPayload: this.toJsonRecord(row),
+          bankPayload: null
+        })
+      );
+    }
+
+    for (const row of snapshot.unmatchedBankRows) {
+      matches.push(
+        reconciliationMatchRepository.create({
+          reconciliation,
+          status: "unmatched_bank",
+          systemRowId: null,
+          bankRowId: row.rowId,
+          systemRowNumber: null,
+          bankRowNumber: row.rowNumber,
+          score: 0,
+          details: null,
+          systemPayload: null,
+          bankPayload: this.toJsonRecord(row)
+        })
+      );
+    }
+
+    if (matches.length > 0) {
+      await reconciliationMatchRepository.save(matches);
+    }
+  }
+
+  private async requirePersistedReconciliation(
+    manager: EntityManager,
+    reconciliationId: number,
+    errorMessage: string
+  ): Promise<PublicReconciliationDetail> {
+    const persisted = await manager.getRepository(Reconciliation).findOne({
+      where: { id: reconciliationId },
+      relations: {
+        user: {
+          company: true
+        },
+        userBank: {
+          user: {
+            company: true
+          }
+        },
+        layout: {
+          templateLayout: true
+        }
+      }
+    });
+
+    if (!persisted) {
+      throw new NotFoundException(errorMessage);
+    }
+
+    return this.toPublicReconciliationDetail(persisted);
+  }
+
+  private async resolveAccessibleUserScope(
+    actor: AuthUser,
+    requestedUserId?: number
+  ): Promise<AccessibleUserScope> {
+    if (actor.role === Role.IS_SUPER_ADMIN) {
+      return requestedUserId ? { userId: requestedUserId } : {};
+    }
+
+    if (actor.role === Role.ADMIN) {
+      if (!requestedUserId) {
+        return { companyId: actor.companyId };
+      }
+
+      const targetUser = await this.requireUser(requestedUserId);
+      if (targetUser.company.id !== actor.companyId) {
+        throw new ForbiddenException("No podes consultar datos de usuarios de otra empresa.");
+      }
+
+      return { userId: targetUser.id };
+    }
+
+    if (requestedUserId && requestedUserId !== actor.id) {
+      throw new ForbiddenException("No podes consultar datos de otro usuario.");
+    }
+
+    return { userId: actor.id };
+  }
+
+  private applyUserScopeToQuery<T extends ObjectLiteral>(
+    queryBuilder: SelectQueryBuilder<T>,
+    scope: AccessibleUserScope,
+    userAlias: string,
+    companyAlias: string
+  ): void {
+    if (scope.userId) {
+      queryBuilder.andWhere(`${userAlias}.id = :userId`, { userId: scope.userId });
+      return;
+    }
+
+    if (scope.companyId) {
+      queryBuilder.andWhere(`${companyAlias}.id = :companyId`, { companyId: scope.companyId });
+    }
+  }
+
+  private ensureActorCanAccessTargetUser(actor: AuthUser, targetUser: User): void {
+    if (actor.role === Role.IS_SUPER_ADMIN) {
+      return;
+    }
+
+    if (actor.role === Role.ADMIN && targetUser.company.id === actor.companyId) {
+      return;
+    }
+
+    if (targetUser.id === actor.id) {
+      return;
+    }
+
+    throw new ForbiddenException("No tenes permisos para ver datos de este usuario.");
+  }
+
   private buildAutoMatches(
     layout: ReconciliationLayout,
     systemRows: ConciliationPreviewRow[],
-    bankRows: ConciliationPreviewRow[]
+    bankRows: ConciliationPreviewRow[],
+    excludedSystemIds: Set<string> = new Set<string>(),
+    excludedBankIds: Set<string> = new Set<string>()
   ): ConciliationPreviewMatch[] {
     const mappings = this.sortMappings(layout.mappings).filter((item) => item.active);
     const threshold = this.normalizeThreshold(layout.autoMatchThreshold);
     const candidates: Array<ConciliationPreviewMatch & { passedRules: number }> = [];
 
     for (const systemRow of systemRows) {
+      if (excludedSystemIds.has(systemRow.rowId)) {
+        continue;
+      }
+
       for (const bankRow of bankRows) {
+        if (excludedBankIds.has(bankRow.rowId)) {
+          continue;
+        }
+
         const evaluation = this.evaluateMatch(mappings, systemRow, bankRow);
         if (!evaluation.requiredPassed) continue;
         if (evaluation.score < threshold) continue;
@@ -796,8 +1494,8 @@ export class ConciliationService {
       return left.bankRowNumber - right.bankRowNumber;
     });
 
-    const matchedSystemIds = new Set<string>();
-    const matchedBankIds = new Set<string>();
+    const matchedSystemIds = new Set<string>(excludedSystemIds);
+    const matchedBankIds = new Set<string>(excludedBankIds);
     const matches: ConciliationPreviewMatch[] = [];
 
     for (const candidate of candidates) {
@@ -1171,6 +1869,40 @@ export class ConciliationService {
     };
   }
 
+  private buildRowSignature(
+    mappings: ReconciliationLayoutMapping[],
+    row: ConciliationPreviewRow
+  ): string {
+    const orderedKeys = this.sortMappings(mappings)
+      .filter((mapping) => mapping.active)
+      .map((mapping) => mapping.fieldKey);
+    const values = orderedKeys.map((fieldKey) => [fieldKey, row.normalized[fieldKey] ?? null]);
+    return JSON.stringify(values);
+  }
+
+  private sortPreviewRows(rows: ConciliationPreviewRow[]): ConciliationPreviewRow[] {
+    return [...rows].sort((left, right) => {
+      if (left.rowNumber !== right.rowNumber) return left.rowNumber - right.rowNumber;
+      return left.rowId.localeCompare(right.rowId);
+    });
+  }
+
+  private sortPreviewMatches(matches: ConciliationPreviewMatch[]): ConciliationPreviewMatch[] {
+    return [...matches].sort((left, right) => {
+      if (left.systemRowNumber !== right.systemRowNumber) {
+        return left.systemRowNumber - right.systemRowNumber;
+      }
+      if (left.bankRowNumber !== right.bankRowNumber) {
+        return left.bankRowNumber - right.bankRowNumber;
+      }
+      const byStatus = left.status.localeCompare(right.status);
+      if (byStatus !== 0) return byStatus;
+      return `${left.systemRowId}:${left.bankRowId}`.localeCompare(
+        `${right.systemRowId}:${right.bankRowId}`
+      );
+    });
+  }
+
   private toPublicUserBankWithLayouts(entity: UserBank): PublicUserBankWithLayouts {
     return {
       ...this.toPublicUserBank(entity),
@@ -1210,6 +1942,7 @@ export class ConciliationService {
     return {
       id: entity.id,
       userBankId: resolvedUserBankId,
+      templateLayoutId: entity.templateLayout?.id ?? null,
       name: entity.name,
       description: entity.description,
       systemLabel: entity.systemLabel,
@@ -1222,7 +1955,25 @@ export class ConciliationService {
     };
   }
 
-  private toPublicLayoutMapping(entity: ReconciliationLayoutMapping): PublicLayoutMapping {
+  private toPublicTemplateLayout(entity: TemplateLayout): PublicTemplateLayout {
+    return {
+      id: entity.id,
+      name: entity.name,
+      description: entity.description,
+      referenceBankName: entity.referenceBankName,
+      systemLabel: entity.systemLabel,
+      bankLabel: entity.bankLabel,
+      autoMatchThreshold: entity.autoMatchThreshold,
+      active: entity.active,
+      mappings: this.sortTemplateMappings(entity.mappings ?? []).map((mapping) =>
+        this.toPublicLayoutMapping(mapping)
+      )
+    };
+  }
+
+  private toPublicLayoutMapping(
+    entity: ReconciliationLayoutMapping | TemplateLayoutMapping
+  ): PublicLayoutMapping {
     return {
       id: entity.id,
       fieldKey: entity.fieldKey,
@@ -1251,6 +2002,7 @@ export class ConciliationService {
       id: entity.id,
       name: entity.name,
       status: entity.status,
+      updateCount: entity.updateCount ?? 0,
       userId: entity.user.id,
       userLogin: entity.user.usrLogin,
       userBankId: entity.userBank.id,
@@ -1275,11 +2027,18 @@ export class ConciliationService {
   private toPublicReconciliationDetail(entity: Reconciliation): PublicReconciliationDetail {
     return {
       ...this.toPublicReconciliationSummary(entity),
-      summarySnapshot: entity.summarySnapshot
+      summarySnapshot: (entity.summarySnapshot as ReconciliationSnapshot | null) ?? null
     };
   }
 
   private sortMappings(mappings: ReconciliationLayoutMapping[]): ReconciliationLayoutMapping[] {
+    return [...mappings].sort((left, right) => {
+      if (left.sortOrder !== right.sortOrder) return left.sortOrder - right.sortOrder;
+      return left.id - right.id;
+    });
+  }
+
+  private sortTemplateMappings(mappings: TemplateLayoutMapping[]): TemplateLayoutMapping[] {
     return [...mappings].sort((left, right) => {
       if (left.sortOrder !== right.sortOrder) return left.sortOrder - right.sortOrder;
       return left.id - right.id;
@@ -1337,18 +2096,6 @@ export class ConciliationService {
     }
   }
 
-  private resolveScopedUserId(actor: AuthUser, requestedUserId?: number): number | undefined {
-    if (actor.role === Role.IS_SUPER_ADMIN) {
-      return requestedUserId;
-    }
-
-    if (requestedUserId && requestedUserId !== actor.id) {
-      throw new ForbiddenException("No podes consultar datos de otro usuario.");
-    }
-
-    return actor.id;
-  }
-
   private ensureSuperadmin(actor: AuthUser) {
     if (actor.role !== Role.IS_SUPER_ADMIN) {
       throw new ForbiddenException("Solo el super admin puede administrar bancos y layouts.");
@@ -1356,7 +2103,13 @@ export class ConciliationService {
   }
 
   private async requireUser(id: number): Promise<User> {
-    const user = await this.userRepository.findOne({ where: { id } });
+    const user = await this.userRepository.findOne({
+      where: { id },
+      relations: {
+        company: true,
+        role: true
+      }
+    });
     if (!user) {
       throw new NotFoundException("Usuario no encontrado.");
     }
@@ -1373,9 +2126,12 @@ export class ConciliationService {
         }
       },
       relations: {
-        user: true,
+        user: {
+          company: true
+        },
         layouts: {
-          mappings: true
+          mappings: true,
+          templateLayout: true
         }
       }
     });
@@ -1435,6 +2191,14 @@ export class ConciliationService {
 
         if (detail.includes("lmp_field_key") || constraint.includes("layout_mappings")) {
           throw new ConflictException("El layout no puede repetir fieldKey.");
+        }
+
+        if (detail.includes("tpm_field_key") || constraint.includes("template_layout_mapping")) {
+          throw new ConflictException("El template layout no puede repetir fieldKey.");
+        }
+
+        if (constraint.includes("uq_template_layout_name")) {
+          throw new ConflictException("Ya existe un template layout con ese nombre.");
         }
 
         if (constraint.includes("uq_conciliacion_layouts_active")) {

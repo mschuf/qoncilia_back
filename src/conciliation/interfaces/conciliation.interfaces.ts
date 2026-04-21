@@ -48,8 +48,21 @@ export interface PublicLayoutMapping {
 export interface PublicLayout {
   id: number;
   userBankId: number;
+  templateLayoutId: number | null;
   name: string;
   description: string | null;
+  systemLabel: string;
+  bankLabel: string;
+  autoMatchThreshold: number;
+  active: boolean;
+  mappings: PublicLayoutMapping[];
+}
+
+export interface PublicTemplateLayout {
+  id: number;
+  name: string;
+  description: string | null;
+  referenceBankName: string | null;
   systemLabel: string;
   bankLabel: string;
   autoMatchThreshold: number;
@@ -113,6 +126,7 @@ export interface PublicReconciliationSummary {
   id: number;
   name: string;
   status: string;
+  updateCount: number;
   userId: number;
   userLogin: string;
   userBankId: number;
@@ -133,8 +147,28 @@ export interface PublicReconciliationSummary {
   updatedAt: Date;
 }
 
+export interface ReconciliationSnapshot {
+  userBank: PublicUserBankSummary;
+  layout: PublicLayout;
+  systemRows: ConciliationPreviewRow[];
+  bankRows: ConciliationPreviewRow[];
+  autoMatches: ConciliationPreviewMatch[];
+  manualMatches: ConciliationPreviewMatch[];
+  unmatchedSystemRows: ConciliationPreviewRow[];
+  unmatchedBankRows: ConciliationPreviewRow[];
+  metrics: {
+    totalSystemRows: number;
+    totalBankRows: number;
+    autoMatches: number;
+    manualMatches: number;
+    unmatchedSystem: number;
+    unmatchedBank: number;
+    matchPercentage: number;
+  };
+}
+
 export interface PublicReconciliationDetail extends PublicReconciliationSummary {
-  summarySnapshot: Record<string, unknown> | null;
+  summarySnapshot: ReconciliationSnapshot | null;
 }
 
 export interface ConciliationKpiResponse {

@@ -79,6 +79,11 @@ class SavePreviewMatchDto {
 }
 
 export class SaveReconciliationDto {
+  @IsOptional()
+  @IsInt()
+  @IsPositive()
+  reconciliationId?: number;
+
   @IsInt()
   @IsPositive()
   userBankId!: number;

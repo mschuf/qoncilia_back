@@ -22,12 +22,15 @@ import { ModuleAccessGuard } from "../common/guards/module-access.guard";
 import { RolesGuard } from "../common/guards/roles.guard";
 import { AuthUser } from "../common/interfaces/auth-user.interface";
 import { ConciliationKpiQueryDto } from "./dto/conciliation-kpi-query.dto";
+import { ApplyTemplateLayoutDto } from "./dto/apply-template-layout.dto";
 import { CreateLayoutDto } from "./dto/create-layout.dto";
+import { CreateTemplateLayoutDto } from "./dto/create-template-layout.dto";
 import { CreateUserBankDto } from "./dto/create-user-bank.dto";
 import { ListReconciliationsQueryDto } from "./dto/list-reconciliations-query.dto";
 import { PreviewReconciliationDto } from "./dto/preview-reconciliation.dto";
 import { SaveReconciliationDto } from "./dto/save-reconciliation.dto";
 import { UpdateLayoutDto } from "./dto/update-layout.dto";
+import { UpdateTemplateLayoutDto } from "./dto/update-template-layout.dto";
 import { UpdateUserBankDto } from "./dto/update-user-bank.dto";
 import { ConciliationService } from "./conciliation.service";
 
@@ -51,6 +54,31 @@ export class ConciliationController {
   @RequiredModule(AppModuleCode.CONCILIATION)
   listCatalog(@CurrentUser() actor: AuthUser, @Query() query: ConciliationKpiQueryDto) {
     return this.conciliationService.listCatalog(actor, query.userId);
+  }
+
+  @Get("template-layouts")
+  @Roles(Role.IS_SUPER_ADMIN)
+  @RequiredModule(AppModuleCode.LAYOUT_MANAGEMENT)
+  listTemplateLayouts(@CurrentUser() actor: AuthUser) {
+    return this.conciliationService.listTemplateLayouts(actor);
+  }
+
+  @Post("template-layouts")
+  @Roles(Role.IS_SUPER_ADMIN)
+  @RequiredModule(AppModuleCode.LAYOUT_MANAGEMENT)
+  createTemplateLayout(@Body() body: CreateTemplateLayoutDto, @CurrentUser() actor: AuthUser) {
+    return this.conciliationService.createTemplateLayout(body, actor);
+  }
+
+  @Patch("template-layouts/:templateLayoutId")
+  @Roles(Role.IS_SUPER_ADMIN)
+  @RequiredModule(AppModuleCode.LAYOUT_MANAGEMENT)
+  updateTemplateLayout(
+    @Param("templateLayoutId", ParseIntPipe) templateLayoutId: number,
+    @Body() body: UpdateTemplateLayoutDto,
+    @CurrentUser() actor: AuthUser
+  ) {
+    return this.conciliationService.updateTemplateLayout(templateLayoutId, body, actor);
   }
 
   @Post("users/:userId/banks")
@@ -86,6 +114,25 @@ export class ConciliationController {
     @CurrentUser() actor: AuthUser
   ) {
     return this.conciliationService.createLayout(userId, bankId, body, actor);
+  }
+
+  @Post("users/:userId/banks/:bankId/template-layouts/:templateLayoutId/apply")
+  @Roles(Role.IS_SUPER_ADMIN)
+  @RequiredModule(AppModuleCode.LAYOUT_MANAGEMENT)
+  applyTemplateLayoutToBank(
+    @Param("userId", ParseIntPipe) userId: number,
+    @Param("bankId", ParseIntPipe) bankId: number,
+    @Param("templateLayoutId", ParseIntPipe) templateLayoutId: number,
+    @Body() body: ApplyTemplateLayoutDto,
+    @CurrentUser() actor: AuthUser
+  ) {
+    return this.conciliationService.applyTemplateLayoutToBank(
+      userId,
+      bankId,
+      templateLayoutId,
+      body,
+      actor
+    );
   }
 
   @Patch("users/:userId/banks/:bankId/layouts/:layoutId")

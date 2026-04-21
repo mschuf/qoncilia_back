@@ -10,6 +10,8 @@ import { ReconciliationLayoutMapping } from "./entities/reconciliation-layout-ma
 import { ReconciliationLayout } from "./entities/reconciliation-layout.entity";
 import { ReconciliationMatch } from "./entities/reconciliation-match.entity";
 import { Reconciliation } from "./entities/reconciliation.entity";
+import { TemplateLayoutMapping } from "./entities/template-layout-mapping.entity";
+import { TemplateLayout } from "./entities/template-layout.entity";
 import { UserBank } from "./entities/user-bank.entity";
 
 @Module({
@@ -17,6 +19,8 @@ import { UserBank } from "./entities/user-bank.entity";
     TypeOrmModule.forFeature([
       User,
       UserBank,
+      TemplateLayout,
+      TemplateLayoutMapping,
       ReconciliationLayout,
       ReconciliationLayoutMapping,
       Reconciliation,

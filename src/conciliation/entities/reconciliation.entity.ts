@@ -42,6 +42,9 @@ export class Reconciliation {
   @Column({ name: "con_estado", type: "varchar", length: 40, default: "saved" })
   status!: string;
 
+  @Column({ name: "con_update_count", type: "integer", default: 0 })
+  updateCount!: number;
+
   @Column({ name: "con_system_filename", type: "varchar", length: 255, nullable: true })
   systemFileName!: string | null;
 

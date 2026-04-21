@@ -10,6 +10,7 @@ import {
 } from "typeorm";
 import { Reconciliation } from "./reconciliation.entity";
 import { ReconciliationLayoutMapping } from "./reconciliation-layout-mapping.entity";
+import { TemplateLayout } from "./template-layout.entity";
 import { UserBank } from "./user-bank.entity";
 
 @Entity({ name: "conciliacion_layouts" })
@@ -20,6 +21,13 @@ export class ReconciliationLayout {
   @ManyToOne(() => UserBank, (userBank) => userBank.layouts, { nullable: false, onDelete: "CASCADE" })
   @JoinColumn({ name: "ubk_id", referencedColumnName: "id" })
   userBank!: UserBank;
+
+  @ManyToOne(() => TemplateLayout, (templateLayout) => templateLayout.layouts, {
+    nullable: true,
+    onDelete: "SET NULL"
+  })
+  @JoinColumn({ name: "tpl_id", referencedColumnName: "id" })
+  templateLayout!: TemplateLayout | null;
 
   @Column({ name: "lyt_nombre", type: "varchar", length: 120 })
   name!: string;

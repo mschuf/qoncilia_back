@@ -11,6 +11,7 @@
 9. `09_rbac_empresas_roles_modulos.sql` (obligatorio para el nuevo modelo)
 10. `10_seed_superadmin_template_rbac.sql` (opcional, solo si necesitas crear superadmin por SQL)
 11. `11_create_usuarios_roles_table.sql` (recomendado para tabla puente usuario<->rol)
+12. `12_create_template_layout_and_incremental_updates.sql` (recomendado para templates reutilizables e importaciones incrementales)
 
 ## Notas
 
@@ -26,5 +27,8 @@
 - El paso `11` crea `usuarios_roles` como tabla puente para asignaciones de rol por usuario
   (incluye una marca de rol principal) y sincroniza automaticamente con `usuarios.rol_id`
   para mantener compatibilidad con el backend actual.
+- El paso `12` agrega `template_layout`, sus mappings, la referencia opcional desde
+  `conciliacion_layouts` hacia el template usado y el contador `con_update_count`
+  para poder actualizar conciliaciones existentes sin duplicar lineas.
 - En los mappings podes usar columnas alternativas con separador `|`.
   Ejemplo: `E|F` toma la primera columna con dato en esa fila, util para extractos con Debito/Credito separados.
