@@ -4,6 +4,7 @@ import { TypeOrmModule } from "@nestjs/typeorm";
 import { AccessControlModule } from "./access-control/access-control.module";
 import { AuthModule } from "./auth/auth.module";
 import { ConciliationModule } from "./conciliation/conciliation.module";
+import { ErpModule } from "./erp/erp.module";
 import { User } from "./users/entities/user.entity";
 import { UsersModule } from "./users/users.module";
 
@@ -28,7 +29,8 @@ import { UsersModule } from "./users/users.module";
     AccessControlModule,
     UsersModule,
     AuthModule,
-    ConciliationModule
+    ConciliationModule,
+    ErpModule
   ]
 })
 export class AppModule {}

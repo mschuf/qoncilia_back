@@ -13,6 +13,7 @@
 11. `11_create_usuarios_roles_table.sql` (recomendado para tabla puente usuario<->rol)
 12. `12_create_template_layout_and_incremental_updates.sql` (recomendado para templates reutilizables e importaciones incrementales)
 13. `13_seed_default_templates_from_existing_layouts.sql` (opcional, copia como templates los layouts que ya existen en tu base)
+14. `14_create_erp_configs_and_shipments.sql` (recomendado para configuracion ERP por empresa y envios a SAP Service Layer)
 
 ## Notas
 
@@ -33,5 +34,8 @@
   para poder actualizar conciliaciones existentes sin duplicar lineas.
 - El paso `13` toma los layouts actuales de `conciliacion_layouts` y sus mappings,
   y los inserta en `template_layout`/`template_layout_mapping` de forma idempotente.
+- El paso `14` crea las tablas `empresas_erp_configuraciones` y
+  `conciliaciones_erp_envios`, agrega el modulo `erp_management`
+  y lo habilita por defecto para `admin` e `is_super_admin`.
 - En los mappings podes usar columnas alternativas con separador `|`.
   Ejemplo: `E|F` toma la primera columna con dato en esa fila, util para extractos con Debito/Credito separados.

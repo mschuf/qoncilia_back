@@ -4,5 +4,6 @@ export enum AppModuleCode {
   CONCILIATION = "conciliation",
   USERS = "users",
   LAYOUT_MANAGEMENT = "layout_management",
-  ACCESS_MATRIX = "access_matrix"
+  ACCESS_MATRIX = "access_matrix",
+  ERP_MANAGEMENT = "erp_management"
 }
