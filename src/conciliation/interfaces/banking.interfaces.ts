@@ -2,7 +2,12 @@ import { PublicCompany } from "../../access-control/interfaces/access-control.in
 
 export interface PublicBank {
   id: number;
+  companyId: number;
+  userId: number;
+  userLogin: string;
   name: string;
+  alias: string | null;
+  description: string | null;
   branch: string | null;
   active: boolean;
 }
@@ -13,8 +18,10 @@ export interface PublicCompanyBankAccount {
   companyName: string;
   bankId: number;
   bankName: string;
+  bankAlias: string | null;
   bankBranch: string | null;
   name: string;
+  currency: string;
   accountNumber: string;
   bankErpId: string;
   majorAccountNumber: string;

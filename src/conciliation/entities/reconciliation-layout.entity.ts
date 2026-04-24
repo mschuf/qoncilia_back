@@ -11,16 +11,16 @@ import {
 import { Reconciliation } from "./reconciliation.entity";
 import { ReconciliationLayoutMapping } from "./reconciliation-layout-mapping.entity";
 import { TemplateLayout } from "./template-layout.entity";
-import { UserBank } from "./user-bank.entity";
+import { BankEntity } from "./bank.entity";
 
 @Entity({ name: "conciliacion_layouts" })
 export class ReconciliationLayout {
   @PrimaryGeneratedColumn({ name: "lyt_id" })
   id!: number;
 
-  @ManyToOne(() => UserBank, (userBank) => userBank.layouts, { nullable: false, onDelete: "CASCADE" })
-  @JoinColumn({ name: "ubk_id", referencedColumnName: "id" })
-  userBank!: UserBank;
+  @ManyToOne(() => BankEntity, (bank) => bank.layouts, { nullable: false, onDelete: "CASCADE" })
+  @JoinColumn({ name: "ban_id", referencedColumnName: "id" })
+  userBank!: BankEntity;
 
   @ManyToOne(() => TemplateLayout, (templateLayout) => templateLayout.layouts, {
     nullable: true,

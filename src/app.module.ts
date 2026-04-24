@@ -23,8 +23,7 @@ import { UsersModule } from "./users/users.module";
         entities: [User],
         autoLoadEntities: true,
         synchronize: false,
-        migrationsRun: true,
-        migrations: [__dirname + "/migrations/*{.ts,.js}"],
+        migrationsRun: false,
         logging: true
       })
     }),

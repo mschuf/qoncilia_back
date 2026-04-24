@@ -37,6 +37,12 @@ export class CreateCompanyBankAccountDto {
   @Transform(emptyToUndefined)
   @IsString()
   @IsNotEmpty()
+  @MaxLength(20)
+  currency!: string;
+
+  @Transform(emptyToUndefined)
+  @IsString()
+  @IsNotEmpty()
   @MaxLength(80)
   accountNumber!: string;
 

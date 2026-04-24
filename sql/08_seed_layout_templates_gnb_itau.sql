@@ -19,6 +19,7 @@ DECLARE
   requested_login TEXT := '<<USER_LOGIN>>';
   target_user_id INTEGER;
   target_user_login TEXT;
+  target_company_id INTEGER;
 
   gnb_bank_id INTEGER;
   itau_bank_id INTEGER;
@@ -31,8 +32,8 @@ BEGIN
   IF requested_login IS NOT NULL
      AND btrim(requested_login) <> ''
      AND requested_login <> '<<USER_LOGIN>>' THEN
-    SELECT usr_id, usr_login
-    INTO target_user_id, target_user_login
+    SELECT usr_id, usr_login, emp_id
+    INTO target_user_id, target_user_login, target_company_id
     FROM public.usuarios
     WHERE LOWER(usr_login) = LOWER(requested_login)
     ORDER BY usr_id ASC
@@ -40,8 +41,8 @@ BEGIN
   END IF;
 
   IF target_user_id IS NULL THEN
-    SELECT usr_id, usr_login
-    INTO target_user_id, target_user_login
+    SELECT usr_id, usr_login, emp_id
+    INTO target_user_id, target_user_login, target_company_id
     FROM public.usuarios
     ORDER BY
       CASE WHEN usr_activo = TRUE THEN 1 ELSE 2 END,
@@ -55,36 +56,35 @@ BEGIN
 
   RAISE NOTICE 'Seed GNB/Itau aplicado sobre usr_id=% usr_login=%', target_user_id, target_user_login;
 
-  INSERT INTO public.usuarios_bancos (
+  INSERT INTO public.bancos (
+    emp_id,
     usr_id,
-    ubk_banco_nombre,
-    ubk_alias,
-    ubk_moneda,
-    ubk_numero_cuenta,
-    ubk_descripcion,
-    ubk_activo
+    ban_nombre,
+    ban_alias,
+    ban_descripcion,
+    ban_activo
   )
   VALUES
-    (target_user_id, 'GNB', 'GNB GS', 'GS', '1074137', 'Template de extracto GNB', TRUE),
-    (target_user_id, 'Itau', 'Itau GS', 'GS', '800005117', 'Template de extracto Itau', TRUE)
+    (target_company_id, target_user_id, 'GNB', 'GNB GS', 'Template de extracto GNB', TRUE),
+    (target_company_id, target_user_id, 'Itau', 'Itau GS', 'Template de extracto Itau', TRUE)
   ON CONFLICT DO NOTHING;
 
-  SELECT ubk_id INTO gnb_bank_id
-  FROM public.usuarios_bancos
+  SELECT ban_id INTO gnb_bank_id
+  FROM public.bancos
   WHERE usr_id = target_user_id
-    AND LOWER(ubk_banco_nombre) = LOWER('GNB')
-  ORDER BY ubk_id ASC
+    AND LOWER(ban_nombre) = LOWER('GNB')
+  ORDER BY ban_id ASC
   LIMIT 1;
 
-  SELECT ubk_id INTO itau_bank_id
-  FROM public.usuarios_bancos
+  SELECT ban_id INTO itau_bank_id
+  FROM public.bancos
   WHERE usr_id = target_user_id
-    AND LOWER(ubk_banco_nombre) = LOWER('Itau')
-  ORDER BY ubk_id ASC
+    AND LOWER(ban_nombre) = LOWER('Itau')
+  ORDER BY ban_id ASC
   LIMIT 1;
 
   INSERT INTO public.conciliacion_layouts (
-    ubk_id,
+    ban_id,
     lyt_nombre,
     lyt_descripcion,
     lyt_system_label,
@@ -102,19 +102,19 @@ BEGIN
     NOT EXISTS (
       SELECT 1
       FROM public.conciliacion_layouts
-      WHERE ubk_id = gnb_bank_id
+      WHERE ban_id = gnb_bank_id
         AND lyt_activo = TRUE
     )
   WHERE gnb_bank_id IS NOT NULL
     AND NOT EXISTS (
       SELECT 1
       FROM public.conciliacion_layouts
-      WHERE ubk_id = gnb_bank_id
+      WHERE ban_id = gnb_bank_id
         AND LOWER(lyt_nombre) = LOWER('GNB vs SAP B1')
     );
 
   INSERT INTO public.conciliacion_layouts (
-    ubk_id,
+    ban_id,
     lyt_nombre,
     lyt_descripcion,
     lyt_system_label,
@@ -134,12 +134,12 @@ BEGIN
     AND NOT EXISTS (
       SELECT 1
       FROM public.conciliacion_layouts
-      WHERE ubk_id = gnb_bank_id
+      WHERE ban_id = gnb_bank_id
         AND LOWER(lyt_nombre) = LOWER('GNB-443 vs SAP B1')
     );
 
   INSERT INTO public.conciliacion_layouts (
-    ubk_id,
+    ban_id,
     lyt_nombre,
     lyt_descripcion,
     lyt_system_label,
@@ -159,12 +159,12 @@ BEGIN
     AND NOT EXISTS (
       SELECT 1
       FROM public.conciliacion_layouts
-      WHERE ubk_id = gnb_bank_id
+      WHERE ban_id = gnb_bank_id
         AND LOWER(lyt_nombre) = LOWER('GNB3 vs SAP B1')
     );
 
   INSERT INTO public.conciliacion_layouts (
-    ubk_id,
+    ban_id,
     lyt_nombre,
     lyt_descripcion,
     lyt_system_label,
@@ -182,38 +182,38 @@ BEGIN
     NOT EXISTS (
       SELECT 1
       FROM public.conciliacion_layouts
-      WHERE ubk_id = itau_bank_id
+      WHERE ban_id = itau_bank_id
         AND lyt_activo = TRUE
     )
   WHERE itau_bank_id IS NOT NULL
     AND NOT EXISTS (
       SELECT 1
       FROM public.conciliacion_layouts
-      WHERE ubk_id = itau_bank_id
+      WHERE ban_id = itau_bank_id
         AND LOWER(lyt_nombre) = LOWER('Itau vs SAP B1')
     );
 
   SELECT lyt_id INTO gnb_layout_id
   FROM public.conciliacion_layouts
-  WHERE ubk_id = gnb_bank_id
+  WHERE ban_id = gnb_bank_id
     AND LOWER(lyt_nombre) = LOWER('GNB vs SAP B1')
   LIMIT 1;
 
   SELECT lyt_id INTO gnb_443_layout_id
   FROM public.conciliacion_layouts
-  WHERE ubk_id = gnb_bank_id
+  WHERE ban_id = gnb_bank_id
     AND LOWER(lyt_nombre) = LOWER('GNB-443 vs SAP B1')
   LIMIT 1;
 
   SELECT lyt_id INTO gnb3_layout_id
   FROM public.conciliacion_layouts
-  WHERE ubk_id = gnb_bank_id
+  WHERE ban_id = gnb_bank_id
     AND LOWER(lyt_nombre) = LOWER('GNB3 vs SAP B1')
   LIMIT 1;
 
   SELECT lyt_id INTO itau_layout_id
   FROM public.conciliacion_layouts
-  WHERE ubk_id = itau_bank_id
+  WHERE ban_id = itau_bank_id
     AND LOWER(lyt_nombre) = LOWER('Itau vs SAP B1')
   LIMIT 1;
 

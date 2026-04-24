@@ -19,6 +19,7 @@ DECLARE
   requested_login TEXT := '<<USER_LOGIN>>';
   target_user_id INTEGER;
   target_user_login TEXT;
+  target_company_id INTEGER;
   familiar_bank_id INTEGER;
   sudameris_bank_id INTEGER;
   conti_bank_id INTEGER;
@@ -29,8 +30,8 @@ BEGIN
   IF requested_login IS NOT NULL
      AND btrim(requested_login) <> ''
      AND requested_login <> '<<USER_LOGIN>>' THEN
-    SELECT usr_id, usr_login
-    INTO target_user_id, target_user_login
+    SELECT usr_id, usr_login, emp_id
+    INTO target_user_id, target_user_login, target_company_id
     FROM public.usuarios
     WHERE LOWER(usr_login) = LOWER(requested_login)
     ORDER BY usr_id ASC
@@ -38,8 +39,8 @@ BEGIN
   END IF;
 
   IF target_user_id IS NULL THEN
-    SELECT usr_id, usr_login
-    INTO target_user_id, target_user_login
+    SELECT usr_id, usr_login, emp_id
+    INTO target_user_id, target_user_login, target_company_id
     FROM public.usuarios
     ORDER BY
       CASE WHEN usr_activo = TRUE THEN 1 ELSE 2 END,
@@ -53,44 +54,43 @@ BEGIN
 
   RAISE NOTICE 'Seed de layouts aplicado sobre usr_id=% usr_login=%', target_user_id, target_user_login;
 
-  INSERT INTO public.usuarios_bancos (
+  INSERT INTO public.bancos (
+    emp_id,
     usr_id,
-    ubk_banco_nombre,
-    ubk_alias,
-    ubk_moneda,
-    ubk_numero_cuenta,
-    ubk_descripcion,
-    ubk_activo
+    ban_nombre,
+    ban_alias,
+    ban_descripcion,
+    ban_activo
   )
   VALUES
-    (target_user_id, 'Banco Familiar', 'Familiar GS', 'GS', '3-5962045', 'Template de extracto Banco Familiar', TRUE),
-    (target_user_id, 'Sudameris', 'Sudameris GS', 'GS', '1581941', 'Template de extracto Sudameris', TRUE),
-    (target_user_id, 'Continental', 'Conti GS', 'GS', NULL, 'Template de extracto Continental', TRUE)
+    (target_company_id, target_user_id, 'Banco Familiar', 'Familiar GS', 'Template de extracto Banco Familiar', TRUE),
+    (target_company_id, target_user_id, 'Sudameris', 'Sudameris GS', 'Template de extracto Sudameris', TRUE),
+    (target_company_id, target_user_id, 'Continental', 'Conti GS', 'Template de extracto Continental', TRUE)
   ON CONFLICT DO NOTHING;
 
-  SELECT ubk_id INTO familiar_bank_id
-  FROM public.usuarios_bancos
+  SELECT ban_id INTO familiar_bank_id
+  FROM public.bancos
   WHERE usr_id = target_user_id
-    AND LOWER(ubk_banco_nombre) = LOWER('Banco Familiar')
-  ORDER BY ubk_id ASC
+    AND LOWER(ban_nombre) = LOWER('Banco Familiar')
+  ORDER BY ban_id ASC
   LIMIT 1;
 
-  SELECT ubk_id INTO sudameris_bank_id
-  FROM public.usuarios_bancos
+  SELECT ban_id INTO sudameris_bank_id
+  FROM public.bancos
   WHERE usr_id = target_user_id
-    AND LOWER(ubk_banco_nombre) = LOWER('Sudameris')
-  ORDER BY ubk_id ASC
+    AND LOWER(ban_nombre) = LOWER('Sudameris')
+  ORDER BY ban_id ASC
   LIMIT 1;
 
-  SELECT ubk_id INTO conti_bank_id
-  FROM public.usuarios_bancos
+  SELECT ban_id INTO conti_bank_id
+  FROM public.bancos
   WHERE usr_id = target_user_id
-    AND LOWER(ubk_banco_nombre) = LOWER('Continental')
-  ORDER BY ubk_id ASC
+    AND LOWER(ban_nombre) = LOWER('Continental')
+  ORDER BY ban_id ASC
   LIMIT 1;
 
   INSERT INTO public.conciliacion_layouts (
-    ubk_id,
+    ban_id,
     lyt_nombre,
     lyt_descripcion,
     lyt_system_label,
@@ -108,19 +108,19 @@ BEGIN
     NOT EXISTS (
       SELECT 1
       FROM public.conciliacion_layouts
-      WHERE ubk_id = familiar_bank_id
+      WHERE ban_id = familiar_bank_id
         AND lyt_activo = TRUE
     )
   WHERE familiar_bank_id IS NOT NULL
     AND NOT EXISTS (
       SELECT 1
       FROM public.conciliacion_layouts
-      WHERE ubk_id = familiar_bank_id
+      WHERE ban_id = familiar_bank_id
         AND LOWER(lyt_nombre) = LOWER('Familiar vs SAP B1')
     );
 
   INSERT INTO public.conciliacion_layouts (
-    ubk_id,
+    ban_id,
     lyt_nombre,
     lyt_descripcion,
     lyt_system_label,
@@ -138,19 +138,19 @@ BEGIN
     NOT EXISTS (
       SELECT 1
       FROM public.conciliacion_layouts
-      WHERE ubk_id = sudameris_bank_id
+      WHERE ban_id = sudameris_bank_id
         AND lyt_activo = TRUE
     )
   WHERE sudameris_bank_id IS NOT NULL
     AND NOT EXISTS (
       SELECT 1
       FROM public.conciliacion_layouts
-      WHERE ubk_id = sudameris_bank_id
+      WHERE ban_id = sudameris_bank_id
         AND LOWER(lyt_nombre) = LOWER('Sudameris vs SAP B1')
     );
 
   INSERT INTO public.conciliacion_layouts (
-    ubk_id,
+    ban_id,
     lyt_nombre,
     lyt_descripcion,
     lyt_system_label,
@@ -168,32 +168,32 @@ BEGIN
     NOT EXISTS (
       SELECT 1
       FROM public.conciliacion_layouts
-      WHERE ubk_id = conti_bank_id
+      WHERE ban_id = conti_bank_id
         AND lyt_activo = TRUE
     )
   WHERE conti_bank_id IS NOT NULL
     AND NOT EXISTS (
       SELECT 1
       FROM public.conciliacion_layouts
-      WHERE ubk_id = conti_bank_id
+      WHERE ban_id = conti_bank_id
         AND LOWER(lyt_nombre) = LOWER('Conti vs SAP B1')
     );
 
   SELECT lyt_id INTO familiar_layout_id
   FROM public.conciliacion_layouts
-  WHERE ubk_id = familiar_bank_id
+  WHERE ban_id = familiar_bank_id
     AND LOWER(lyt_nombre) = LOWER('Familiar vs SAP B1')
   LIMIT 1;
 
   SELECT lyt_id INTO sudameris_layout_id
   FROM public.conciliacion_layouts
-  WHERE ubk_id = sudameris_bank_id
+  WHERE ban_id = sudameris_bank_id
     AND LOWER(lyt_nombre) = LOWER('Sudameris vs SAP B1')
   LIMIT 1;
 
   SELECT lyt_id INTO conti_layout_id
   FROM public.conciliacion_layouts
-  WHERE ubk_id = conti_bank_id
+  WHERE ban_id = conti_bank_id
     AND LOWER(lyt_nombre) = LOWER('Conti vs SAP B1')
   LIMIT 1;
 

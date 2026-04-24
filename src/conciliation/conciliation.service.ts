@@ -18,23 +18,23 @@ import { Role } from "../common/enums/role.enum";
 import { AuthUser } from "../common/interfaces/auth-user.interface";
 import { User } from "../users/entities/user.entity";
 import { ApplyTemplateLayoutDto } from "./dto/apply-template-layout.dto";
+import { CreateBankDto } from "./dto/create-bank.dto";
 import { CreateLayoutDto } from "./dto/create-layout.dto";
 import { CreateTemplateLayoutDto } from "./dto/create-template-layout.dto";
-import { CreateUserBankDto } from "./dto/create-user-bank.dto";
 import { ListReconciliationsQueryDto } from "./dto/list-reconciliations-query.dto";
 import { ParseFileDto } from "./dto/parse-file.dto";
 import { PreviewReconciliationDto } from "./dto/preview-reconciliation.dto";
 import { SaveReconciliationDto } from "./dto/save-reconciliation.dto";
+import { UpdateBankDto } from "./dto/update-bank.dto";
 import { UpdateLayoutDto } from "./dto/update-layout.dto";
 import { UpdateTemplateLayoutDto } from "./dto/update-template-layout.dto";
-import { UpdateUserBankDto } from "./dto/update-user-bank.dto";
+import { BankEntity } from "./entities/bank.entity";
 import { ReconciliationLayoutMapping } from "./entities/reconciliation-layout-mapping.entity";
 import { ReconciliationLayout } from "./entities/reconciliation-layout.entity";
 import { ReconciliationMatch } from "./entities/reconciliation-match.entity";
 import { Reconciliation } from "./entities/reconciliation.entity";
 import { TemplateLayoutMapping } from "./entities/template-layout-mapping.entity";
 import { TemplateLayout } from "./entities/template-layout.entity";
-import { UserBank } from "./entities/user-bank.entity";
 import {
   CompareOperator,
   ConciliationKpiResponse,
@@ -93,8 +93,8 @@ export class ConciliationService {
   constructor(
     @InjectRepository(User)
     private readonly userRepository: Repository<User>,
-    @InjectRepository(UserBank)
-    private readonly userBankRepository: Repository<UserBank>,
+    @InjectRepository(BankEntity)
+    private readonly userBankRepository: Repository<BankEntity>,
     @InjectRepository(TemplateLayout)
     private readonly templateLayoutRepository: Repository<TemplateLayout>,
     @InjectRepository(TemplateLayoutMapping)
@@ -151,19 +151,19 @@ export class ConciliationService {
 
   async createUserBank(
     userId: number,
-    payload: CreateUserBankDto,
+    payload: CreateBankDto,
     actor: AuthUser
   ): Promise<PublicUserBankWithLayouts> {
     this.ensureSuperadmin(actor);
 
     const user = await this.requireUser(userId);
     const bank = this.userBankRepository.create({
+      company: user.company,
       user,
-      bankName: this.normalizeRequired(payload.bankName, "bankName"),
+      name: this.normalizeRequired(payload.name, "name"),
       alias: this.normalizeOptional(payload.alias),
-      currency: this.normalizeRequired(payload.currency, "currency").toUpperCase(),
-      accountNumber: this.normalizeOptional(payload.accountNumber),
       description: this.normalizeOptional(payload.description),
+      branch: this.normalizeOptional(payload.branch),
       active: payload.active ?? true
     });
 
@@ -178,25 +178,22 @@ export class ConciliationService {
   async updateUserBank(
     userId: number,
     bankId: number,
-    payload: UpdateUserBankDto,
+    payload: UpdateBankDto,
     actor: AuthUser
   ): Promise<PublicUserBankWithLayouts> {
     this.ensureSuperadmin(actor);
 
     const bank = await this.requireUserBank(userId, bankId);
 
-    if (payload.bankName !== undefined) {
-      bank.bankName = this.normalizeRequired(payload.bankName, "bankName");
+    if (payload.name !== undefined) {
+      bank.name = this.normalizeRequired(payload.name, "name");
     }
     if (payload.alias !== undefined) bank.alias = this.normalizeOptional(payload.alias);
-    if (payload.currency !== undefined) {
-      bank.currency = this.normalizeRequired(payload.currency, "currency").toUpperCase();
-    }
-    if (payload.accountNumber !== undefined) {
-      bank.accountNumber = this.normalizeOptional(payload.accountNumber);
-    }
     if (payload.description !== undefined) {
       bank.description = this.normalizeOptional(payload.description);
+    }
+    if (payload.branch !== undefined) {
+      bank.branch = this.normalizeOptional(payload.branch);
     }
     if (payload.active !== undefined) bank.active = payload.active;
 
@@ -400,7 +397,7 @@ export class ConciliationService {
     this.ensureMappings(payload.mappings);
 
     return this.layoutRepository.manager.transaction(async (manager) => {
-      const bankRepository = manager.getRepository(UserBank);
+      const bankRepository = manager.getRepository(BankEntity);
       const layoutRepository = manager.getRepository(ReconciliationLayout);
       const mappingRepository = manager.getRepository(ReconciliationLayoutMapping);
 
@@ -420,7 +417,7 @@ export class ConciliationService {
           .createQueryBuilder()
           .update(ReconciliationLayout)
           .set({ active: false })
-          .where("ubk_id = :bankId", { bankId: userBank.id })
+          .where("ban_id = :bankId", { bankId: userBank.id })
           .execute();
       }
 
@@ -492,7 +489,7 @@ export class ConciliationService {
     this.ensureSuperadmin(actor);
 
     return this.layoutRepository.manager.transaction(async (manager) => {
-      const bankRepository = manager.getRepository(UserBank);
+      const bankRepository = manager.getRepository(BankEntity);
       const templateRepository = manager.getRepository(TemplateLayout);
       const layoutRepository = manager.getRepository(ReconciliationLayout);
       const mappingRepository = manager.getRepository(ReconciliationLayoutMapping);
@@ -527,7 +524,7 @@ export class ConciliationService {
           .createQueryBuilder()
           .update(ReconciliationLayout)
           .set({ active: false })
-          .where("ubk_id = :bankId", { bankId: userBank.id })
+          .where("ban_id = :bankId", { bankId: userBank.id })
           .execute();
       }
 
@@ -642,7 +639,7 @@ export class ConciliationService {
           .createQueryBuilder()
           .update(ReconciliationLayout)
           .set({ active: false })
-          .where("ubk_id = :bankId AND lyt_id <> :layoutId", { bankId, layoutId })
+          .where("ban_id = :bankId AND lyt_id <> :layoutId", { bankId, layoutId })
           .execute();
       }
 
@@ -1077,7 +1074,7 @@ export class ConciliationService {
     actor: AuthUser,
     userBankId: number,
     layoutId: number
-  ): Promise<{ userBank: UserBank; layout: ReconciliationLayout }> {
+  ): Promise<{ userBank: BankEntity; layout: ReconciliationLayout }> {
     const layout = await this.layoutRepository.findOne({
       where: {
         id: layoutId,
@@ -1114,7 +1111,7 @@ export class ConciliationService {
       autoMatches: ConciliationPreviewMatch[];
       manualMatches: ConciliationPreviewMatch[];
     },
-    userBank: UserBank,
+    userBank: BankEntity,
     layout: ReconciliationLayout
   ): Promise<PublicReconciliationDetail> {
     return this.reconciliationRepository.manager.transaction(async (manager) => {
@@ -1254,7 +1251,7 @@ export class ConciliationService {
   }
 
   private buildSnapshot(
-    userBank: UserBank,
+    userBank: BankEntity,
     layout: ReconciliationLayout,
     systemRows: ConciliationPreviewRow[],
     bankRows: ConciliationPreviewRow[],
@@ -2031,14 +2028,14 @@ export class ConciliationService {
     });
   }
 
-  private toPublicUserBankWithLayouts(entity: UserBank): PublicUserBankWithLayouts {
+  private toPublicUserBankWithLayouts(entity: BankEntity): PublicUserBankWithLayouts {
     return {
       ...this.toPublicUserBank(entity),
       layouts: (entity.layouts ?? []).map((layout) => this.toPublicLayout(layout, entity.id))
     };
   }
 
-  private toPublicUserBank(entity: UserBank): PublicUserBank {
+  private toPublicUserBank(entity: BankEntity): PublicUserBank {
     return {
       ...this.toPublicUserBankSummary(entity),
       userId: entity.user.id,
@@ -2046,13 +2043,12 @@ export class ConciliationService {
     };
   }
 
-  private toPublicUserBankSummary(entity: UserBank): PublicUserBankSummary {
+  private toPublicUserBankSummary(entity: BankEntity): PublicUserBankSummary {
     return {
       id: entity.id,
       bankName: entity.bankName,
       alias: entity.alias,
-      currency: entity.currency,
-      accountNumber: entity.accountNumber,
+      branch: entity.branch,
       description: entity.description,
       active: entity.active
     };
@@ -2245,7 +2241,7 @@ export class ConciliationService {
     return user;
   }
 
-  private async requireUserBank(userId: number, bankId: number): Promise<UserBank> {
+  private async requireUserBank(userId: number, bankId: number): Promise<BankEntity> {
     const bank = await this.userBankRepository.findOne({
       where: {
         id: bankId,
@@ -2313,7 +2309,7 @@ export class ConciliationService {
         const detail = String(driverError.detail ?? "").toLowerCase();
         const constraint = String(driverError.constraint ?? "").toLowerCase();
 
-        if (detail.includes("ubk_") || constraint.includes("usuarios_bancos")) {
+        if (detail.includes("ban_") || constraint.includes("bancos")) {
           throw new ConflictException("Ya existe una asignacion de banco con esos datos.");
         }
 

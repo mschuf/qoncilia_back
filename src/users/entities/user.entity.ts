@@ -10,7 +10,7 @@ import {
 } from "typeorm";
 import { Company } from "../../access-control/entities/company.entity";
 import { UserRole } from "../../access-control/entities/user-role.entity";
-import { UserBank } from "../../conciliation/entities/user-bank.entity";
+import { BankEntity } from "../../conciliation/entities/bank.entity";
 
 @Entity({ name: "usuarios" })
 export class User {
@@ -49,8 +49,8 @@ export class User {
   @JoinColumn({ name: "rol_id", referencedColumnName: "id" })
   role!: UserRole;
 
-  @OneToMany(() => UserBank, (userBank) => userBank.user)
-  bancos!: UserBank[];
+  @OneToMany(() => BankEntity, (bank) => bank.user)
+  banks!: BankEntity[];
 
   @CreateDateColumn({ name: "usr_created_at", type: "timestamptz" })
   createdAt!: Date;

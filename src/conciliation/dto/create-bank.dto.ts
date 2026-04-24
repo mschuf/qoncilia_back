@@ -1,5 +1,5 @@
-import { Transform } from "class-transformer";
-import { IsBoolean, IsNotEmpty, IsOptional, IsString, MaxLength } from "class-validator";
+import { Transform, Type } from "class-transformer";
+import { IsBoolean, IsInt, IsNotEmpty, IsOptional, IsString, MaxLength, Min } from "class-validator";
 
 const emptyToUndefined = ({ value }: { value: unknown }) => {
   if (typeof value === "string" && value.trim() === "") {
@@ -17,11 +17,35 @@ const toBoolean = ({ value }: { value: unknown }) => {
 };
 
 export class CreateBankDto {
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  companyId?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  userId?: number;
+
   @Transform(emptyToUndefined)
   @IsString()
   @IsNotEmpty()
   @MaxLength(160)
   name!: string;
+
+  @Transform(emptyToUndefined)
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  alias?: string;
+
+  @Transform(emptyToUndefined)
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  description?: string;
 
   @Transform(emptyToUndefined)
   @IsOptional()

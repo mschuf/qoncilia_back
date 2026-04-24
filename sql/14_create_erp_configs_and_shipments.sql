@@ -1,5 +1,10 @@
 BEGIN;
 
+DROP TRIGGER IF EXISTS trg_conciliaciones_erp_envios_touch_updated_at ON public.conciliaciones_erp_envios;
+DROP TRIGGER IF EXISTS trg_empresas_erp_configuraciones_touch_updated_at ON public.empresas_erp_configuraciones;
+DROP TABLE IF EXISTS public.conciliaciones_erp_envios CASCADE;
+DROP TABLE IF EXISTS public.empresas_erp_configuraciones CASCADE;
+
 CREATE TABLE IF NOT EXISTS public.empresas_erp_configuraciones (
   epc_id SERIAL PRIMARY KEY,
   emp_id INTEGER NOT NULL,

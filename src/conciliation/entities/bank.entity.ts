@@ -2,19 +2,39 @@ import {
   Column,
   CreateDateColumn,
   Entity,
+  JoinColumn,
+  ManyToOne,
   OneToMany,
   PrimaryGeneratedColumn,
   UpdateDateColumn
 } from "typeorm";
+import { Company } from "../../access-control/entities/company.entity";
+import { User } from "../../users/entities/user.entity";
 import { CompanyBankAccount } from "./company-bank-account.entity";
+import { ReconciliationLayout } from "./reconciliation-layout.entity";
+import { Reconciliation } from "./reconciliation.entity";
 
 @Entity({ name: "bancos" })
 export class BankEntity {
   @PrimaryGeneratedColumn({ name: "ban_id" })
   id!: number;
 
-  @Column({ name: "ban_nombre", type: "varchar", length: 160, unique: true })
+  @ManyToOne(() => Company, { nullable: false, onDelete: "CASCADE" })
+  @JoinColumn({ name: "emp_id", referencedColumnName: "id" })
+  company!: Company;
+
+  @ManyToOne(() => User, { nullable: false, onDelete: "CASCADE" })
+  @JoinColumn({ name: "usr_id", referencedColumnName: "id" })
+  user!: User;
+
+  @Column({ name: "ban_nombre", type: "varchar", length: 160 })
   name!: string;
+
+  @Column({ name: "ban_alias", type: "varchar", length: 120, nullable: true })
+  alias!: string | null;
+
+  @Column({ name: "ban_descripcion", type: "varchar", length: 255, nullable: true })
+  description!: string | null;
 
   @Column({ name: "ban_sucursal", type: "varchar", length: 120, nullable: true })
   branch!: string | null;
@@ -25,9 +45,23 @@ export class BankEntity {
   @OneToMany(() => CompanyBankAccount, (account) => account.bank)
   accounts!: CompanyBankAccount[];
 
+  @OneToMany(() => ReconciliationLayout, (layout) => layout.userBank)
+  layouts!: ReconciliationLayout[];
+
+  @OneToMany(() => Reconciliation, (reconciliation) => reconciliation.userBank)
+  reconciliations!: Reconciliation[];
+
   @CreateDateColumn({ name: "ban_created_at", type: "timestamptz" })
   createdAt!: Date;
 
   @UpdateDateColumn({ name: "ban_updated_at", type: "timestamptz" })
   updatedAt!: Date;
+
+  get bankName(): string {
+    return this.name;
+  }
+
+  set bankName(value: string) {
+    this.name = value;
+  }
 }

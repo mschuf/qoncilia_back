@@ -25,16 +25,16 @@ import { RolesGuard } from "../common/guards/roles.guard";
 import { AuthUser } from "../common/interfaces/auth-user.interface";
 import { ConciliationKpiQueryDto } from "./dto/conciliation-kpi-query.dto";
 import { ApplyTemplateLayoutDto } from "./dto/apply-template-layout.dto";
+import { CreateBankDto } from "./dto/create-bank.dto";
 import { CreateLayoutDto } from "./dto/create-layout.dto";
 import { CreateTemplateLayoutDto } from "./dto/create-template-layout.dto";
-import { CreateUserBankDto } from "./dto/create-user-bank.dto";
 import { ListReconciliationsQueryDto } from "./dto/list-reconciliations-query.dto";
 import { ParseFileDto } from "./dto/parse-file.dto";
 import { PreviewReconciliationDto } from "./dto/preview-reconciliation.dto";
 import { SaveReconciliationDto } from "./dto/save-reconciliation.dto";
+import { UpdateBankDto } from "./dto/update-bank.dto";
 import { UpdateLayoutDto } from "./dto/update-layout.dto";
 import { UpdateTemplateLayoutDto } from "./dto/update-template-layout.dto";
-import { UpdateUserBankDto } from "./dto/update-user-bank.dto";
 import { ConciliationService } from "./conciliation.service";
 
 type UploadedMemoryFile = {
@@ -99,7 +99,7 @@ export class ConciliationController {
   @RequiredModule(AppModuleCode.LAYOUT_MANAGEMENT)
   createUserBank(
     @Param("userId", ParseIntPipe) userId: number,
-    @Body() body: CreateUserBankDto,
+    @Body() body: CreateBankDto,
     @CurrentUser() actor: AuthUser
   ) {
     return this.conciliationService.createUserBank(userId, body, actor);
@@ -111,7 +111,7 @@ export class ConciliationController {
   updateUserBank(
     @Param("userId", ParseIntPipe) userId: number,
     @Param("bankId", ParseIntPipe) bankId: number,
-    @Body() body: UpdateUserBankDto,
+    @Body() body: UpdateBankDto,
     @CurrentUser() actor: AuthUser
   ) {
     return this.conciliationService.updateUserBank(userId, bankId, body, actor);

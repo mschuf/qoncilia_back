@@ -12,8 +12,7 @@ export interface PublicUserBankSummary {
   id: number;
   bankName: string;
   alias: string | null;
-  currency: string;
-  accountNumber: string | null;
+  branch: string | null;
   description: string | null;
   active: boolean;
 }

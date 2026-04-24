@@ -9,9 +9,9 @@ import {
   UpdateDateColumn
 } from "typeorm";
 import { User } from "../../users/entities/user.entity";
+import { BankEntity } from "./bank.entity";
 import { ReconciliationLayout } from "./reconciliation-layout.entity";
 import { ReconciliationMatch } from "./reconciliation-match.entity";
-import { UserBank } from "./user-bank.entity";
 
 @Entity({ name: "conciliaciones" })
 export class Reconciliation {
@@ -22,12 +22,12 @@ export class Reconciliation {
   @JoinColumn({ name: "usr_id", referencedColumnName: "id" })
   user!: User;
 
-  @ManyToOne(() => UserBank, (userBank) => userBank.reconciliations, {
+  @ManyToOne(() => BankEntity, (bank) => bank.reconciliations, {
     nullable: false,
     onDelete: "CASCADE"
   })
-  @JoinColumn({ name: "ubk_id", referencedColumnName: "id" })
-  userBank!: UserBank;
+  @JoinColumn({ name: "ban_id", referencedColumnName: "id" })
+  userBank!: BankEntity;
 
   @ManyToOne(() => ReconciliationLayout, (layout) => layout.reconciliations, {
     nullable: false,

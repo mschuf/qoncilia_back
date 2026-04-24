@@ -12,6 +12,7 @@ import { PublicCompany } from "../access-control/interfaces/access-control.inter
 import { Role } from "../common/enums/role.enum";
 import { AuthUser } from "../common/interfaces/auth-user.interface";
 import { isSuperAdminRole } from "../common/utils/role.util";
+import { User } from "../users/entities/user.entity";
 import { CreateBankDto } from "./dto/create-bank.dto";
 import { CreateCompanyBankAccountDto } from "./dto/create-company-bank-account.dto";
 import { ListCompanyBankingQueryDto } from "./dto/list-company-banking-query.dto";
@@ -28,6 +29,8 @@ import {
 @Injectable()
 export class BankingService {
   constructor(
+    @InjectRepository(User)
+    private readonly userRepository: Repository<User>,
     @InjectRepository(Company)
     private readonly companyRepository: Repository<Company>,
     @InjectRepository(BankEntity)
@@ -43,10 +46,14 @@ export class BankingService {
     const companyId = await this.resolveAccessibleCompanyId(actor, query.companyId);
     const [companies, banks, accounts] = await Promise.all([
       this.listCompaniesForActor(actor),
-      this.bankRepository.find({ order: { name: "ASC", id: "ASC" } }),
+      this.bankRepository.find({
+        where: { company: { id: companyId } },
+        relations: { company: true, user: true },
+        order: { name: "ASC", id: "ASC" }
+      }),
       this.companyBankAccountRepository.find({
         where: { company: { id: companyId } },
-        relations: { company: true, bank: true },
+        relations: { company: true, bank: { user: true, company: true } },
         order: { name: "ASC", id: "ASC" }
       })
     ]);
@@ -61,15 +68,23 @@ export class BankingService {
   async createBank(payload: CreateBankDto, actor: AuthUser): Promise<PublicBank> {
     this.ensureAdminOrSuperadmin(actor);
 
+    const companyId = await this.resolveAccessibleCompanyId(actor, payload.companyId);
+    const owner = await this.resolveBankOwner(actor, companyId, payload.userId);
+
     const bank = this.bankRepository.create({
+      company: owner.company,
+      user: owner,
       name: this.normalizeRequired(payload.name, "name"),
+      alias: this.normalizeOptional(payload.alias),
+      description: this.normalizeOptional(payload.description),
       branch: this.normalizeOptional(payload.branch),
       active: payload.active ?? true
     });
 
     try {
       const created = await this.bankRepository.save(bank);
-      return this.toPublicBank(created);
+      const hydrated = await this.requireBank(created.id);
+      return this.toPublicBank(hydrated);
     } catch (error) {
       this.handleDatabaseError(error);
     }
@@ -79,8 +94,27 @@ export class BankingService {
     this.ensureAdminOrSuperadmin(actor);
 
     const bank = await this.requireBank(bankId);
+    this.ensureActorCanAccessCompany(actor, bank.company.id);
+
+    const nextCompanyId = payload.companyId ?? bank.company.id;
+    if (payload.companyId !== undefined) {
+      await this.resolveAccessibleCompanyId(actor, payload.companyId);
+    }
+
+    if (payload.userId !== undefined || payload.companyId !== undefined) {
+      const owner = await this.resolveBankOwner(actor, nextCompanyId, payload.userId ?? bank.user.id);
+      bank.company = owner.company;
+      bank.user = owner;
+    }
+
     if (payload.name !== undefined) {
       bank.name = this.normalizeRequired(payload.name, "name");
+    }
+    if (payload.alias !== undefined) {
+      bank.alias = this.normalizeOptional(payload.alias);
+    }
+    if (payload.description !== undefined) {
+      bank.description = this.normalizeOptional(payload.description);
     }
     if (payload.branch !== undefined) {
       bank.branch = this.normalizeOptional(payload.branch);
@@ -91,7 +125,8 @@ export class BankingService {
 
     try {
       const updated = await this.bankRepository.save(bank);
-      return this.toPublicBank(updated);
+      const hydrated = await this.requireBank(updated.id);
+      return this.toPublicBank(hydrated);
     } catch (error) {
       this.handleDatabaseError(error);
     }
@@ -103,16 +138,19 @@ export class BankingService {
   ): Promise<PublicCompanyBankAccount> {
     this.ensureAdminOrSuperadmin(actor);
 
-    const [companyId, bank] = await Promise.all([
-      this.resolveAccessibleCompanyId(actor, payload.companyId),
+    const companyId = await this.resolveAccessibleCompanyId(actor, payload.companyId);
+    const [company, bank] = await Promise.all([
+      this.requireCompany(companyId),
       this.requireBank(payload.bankId)
     ]);
-    const company = await this.requireCompany(companyId);
+
+    this.ensureBankBelongsToCompany(bank, company.id);
 
     const account = this.companyBankAccountRepository.create({
       company,
       bank,
       name: this.normalizeRequired(payload.name, "name"),
+      currency: this.normalizeRequired(payload.currency, "currency").toUpperCase(),
       accountNumber: this.normalizeRequired(payload.accountNumber, "accountNumber"),
       bankErpId: this.normalizeRequired(payload.bankErpId, "bankErpId"),
       majorAccountNumber: this.normalizeRequired(payload.majorAccountNumber, "majorAccountNumber"),
@@ -122,15 +160,7 @@ export class BankingService {
 
     try {
       const created = await this.companyBankAccountRepository.save(account);
-      const hydrated = await this.companyBankAccountRepository.findOne({
-        where: { id: created.id },
-        relations: { company: true, bank: true }
-      });
-
-      if (!hydrated) {
-        throw new NotFoundException("No se pudo recuperar la cuenta bancaria creada.");
-      }
-
+      const hydrated = await this.requireCompanyBankAccount(created.id);
       return this.toPublicCompanyBankAccount(hydrated);
     } catch (error) {
       this.handleDatabaseError(error);
@@ -151,11 +181,18 @@ export class BankingService {
       const companyId = await this.resolveAccessibleCompanyId(actor, payload.companyId);
       account.company = await this.requireCompany(companyId);
     }
+
     if (payload.bankId !== undefined) {
       account.bank = await this.requireBank(payload.bankId);
     }
+
+    this.ensureBankBelongsToCompany(account.bank, account.company.id);
+
     if (payload.name !== undefined) {
       account.name = this.normalizeRequired(payload.name, "name");
+    }
+    if (payload.currency !== undefined) {
+      account.currency = this.normalizeRequired(payload.currency, "currency").toUpperCase();
     }
     if (payload.accountNumber !== undefined) {
       account.accountNumber = this.normalizeRequired(payload.accountNumber, "accountNumber");
@@ -164,7 +201,10 @@ export class BankingService {
       account.bankErpId = this.normalizeRequired(payload.bankErpId, "bankErpId");
     }
     if (payload.majorAccountNumber !== undefined) {
-      account.majorAccountNumber = this.normalizeRequired(payload.majorAccountNumber, "majorAccountNumber");
+      account.majorAccountNumber = this.normalizeRequired(
+        payload.majorAccountNumber,
+        "majorAccountNumber"
+      );
     }
     if (payload.paymentAccountNumber !== undefined) {
       account.paymentAccountNumber = this.normalizeOptional(payload.paymentAccountNumber);
@@ -175,15 +215,7 @@ export class BankingService {
 
     try {
       const updated = await this.companyBankAccountRepository.save(account);
-      const hydrated = await this.companyBankAccountRepository.findOne({
-        where: { id: updated.id },
-        relations: { company: true, bank: true }
-      });
-
-      if (!hydrated) {
-        throw new NotFoundException("No se pudo recuperar la cuenta bancaria actualizada.");
-      }
-
+      const hydrated = await this.requireCompanyBankAccount(updated.id);
       return this.toPublicCompanyBankAccount(hydrated);
     } catch (error) {
       this.handleDatabaseError(error);
@@ -216,10 +248,41 @@ export class BankingService {
     }
 
     if (requestedCompanyId && requestedCompanyId !== actor.companyId) {
-      throw new ForbiddenException("No podes administrar cuentas bancarias de otra empresa.");
+      throw new ForbiddenException("No podes administrar datos bancarios de otra empresa.");
     }
 
     return actor.companyId;
+  }
+
+  private async resolveBankOwner(
+    actor: AuthUser,
+    companyId: number,
+    requestedUserId?: number
+  ): Promise<User> {
+    const targetUserId =
+      requestedUserId ??
+      (actor.companyId === companyId ? actor.id : undefined);
+
+    if (!targetUserId) {
+      throw new BadRequestException("userId es obligatorio para asignar el banco.");
+    }
+
+    const user = await this.userRepository.findOne({
+      where: { id: targetUserId },
+      relations: { company: true, role: true }
+    });
+
+    if (!user) {
+      throw new NotFoundException("Usuario responsable no encontrado.");
+    }
+
+    this.ensureActorCanAccessCompany(actor, user.company.id);
+
+    if (user.company.id !== companyId) {
+      throw new BadRequestException("El usuario responsable no pertenece a la empresa seleccionada.");
+    }
+
+    return user;
   }
 
   private ensureAdminOrSuperadmin(actor: AuthUser) {
@@ -240,6 +303,12 @@ export class BankingService {
     throw new ForbiddenException("No podes administrar bancos de otra empresa.");
   }
 
+  private ensureBankBelongsToCompany(bank: BankEntity, companyId: number) {
+    if (bank.company.id !== companyId) {
+      throw new BadRequestException("El banco seleccionado no pertenece a la empresa elegida.");
+    }
+  }
+
   private async requireCompany(companyId: number): Promise<Company> {
     const company = await this.companyRepository.findOne({
       where: { id: companyId }
@@ -254,7 +323,8 @@ export class BankingService {
 
   private async requireBank(bankId: number): Promise<BankEntity> {
     const bank = await this.bankRepository.findOne({
-      where: { id: bankId }
+      where: { id: bankId },
+      relations: { company: true, user: true }
     });
 
     if (!bank) {
@@ -267,7 +337,7 @@ export class BankingService {
   private async requireCompanyBankAccount(accountId: number): Promise<CompanyBankAccount> {
     const account = await this.companyBankAccountRepository.findOne({
       where: { id: accountId },
-      relations: { company: true, bank: true }
+      relations: { company: true, bank: { company: true, user: true } }
     });
 
     if (!account) {
@@ -294,7 +364,12 @@ export class BankingService {
   private toPublicBank(bank: BankEntity): PublicBank {
     return {
       id: bank.id,
+      companyId: bank.company.id,
+      userId: bank.user.id,
+      userLogin: bank.user.usrLogin,
       name: bank.name,
+      alias: bank.alias,
+      description: bank.description,
       branch: bank.branch,
       active: bank.active
     };
@@ -307,8 +382,10 @@ export class BankingService {
       companyName: account.company.name,
       bankId: account.bank.id,
       bankName: account.bank.name,
+      bankAlias: account.bank.alias,
       bankBranch: account.bank.branch,
       name: account.name,
+      currency: account.currency,
       accountNumber: account.accountNumber,
       bankErpId: account.bankErpId,
       majorAccountNumber: account.majorAccountNumber,
@@ -343,7 +420,7 @@ export class BankingService {
         const constraint = String(driverError.constraint ?? "").toLowerCase();
 
         if (detail.includes("ban_nombre") || constraint.includes("bancos")) {
-          throw new ConflictException("Ya existe un banco con ese nombre.");
+          throw new ConflictException("Ya existe un banco con ese nombre para el usuario.");
         }
 
         if (constraint.includes("uq_empresas_cuentas_bancarias_empresa_banco_cuenta")) {

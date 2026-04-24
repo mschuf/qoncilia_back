@@ -6,16 +6,16 @@ WITH source_layouts AS (
     trim(l.lyt_nombre) AS template_name,
     NULLIF(trim(l.lyt_descripcion), '') AS template_description,
     COALESCE(
-      NULLIF(trim(ub.ubk_alias), ''),
-      NULLIF(trim(ub.ubk_banco_nombre), '')
+      NULLIF(trim(b.ban_alias), ''),
+      NULLIF(trim(b.ban_nombre), '')
     ) AS reference_bank_name,
     l.lyt_system_label,
     l.lyt_bank_label,
     l.lyt_auto_match_threshold,
     COALESCE(l.lyt_activo, TRUE) AS tpl_activo
   FROM public.conciliacion_layouts l
-  INNER JOIN public.usuarios_bancos ub
-    ON ub.ubk_id = l.ubk_id
+  INNER JOIN public.bancos b
+    ON b.ban_id = l.ban_id
   ORDER BY LOWER(l.lyt_nombre), l.lyt_id
 )
 INSERT INTO public.template_layout (

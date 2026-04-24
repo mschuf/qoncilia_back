@@ -1,5 +1,9 @@
 BEGIN;
 
+DROP TRIGGER IF EXISTS trg_sync_usuarios_roles_from_usuarios ON public.usuarios;
+DROP TRIGGER IF EXISTS trg_usuarios_roles_set_updated_at ON public.usuarios_roles;
+DROP TABLE IF EXISTS public.usuarios_roles CASCADE;
+
 CREATE TABLE IF NOT EXISTS public.usuarios_roles (
   ur_id SERIAL PRIMARY KEY,
   usr_id INTEGER NOT NULL,

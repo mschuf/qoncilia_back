@@ -19,12 +19,15 @@ export class CompanyBankAccount {
   @JoinColumn({ name: "emp_id", referencedColumnName: "id" })
   company!: Company;
 
-  @ManyToOne(() => BankEntity, (bank) => bank.accounts, { nullable: false, onDelete: "RESTRICT" })
+  @ManyToOne(() => BankEntity, (bank) => bank.accounts, { nullable: false, onDelete: "CASCADE" })
   @JoinColumn({ name: "ban_id", referencedColumnName: "id" })
   bank!: BankEntity;
 
   @Column({ name: "ecb_nombre", type: "varchar", length: 160 })
   name!: string;
+
+  @Column({ name: "ecb_moneda", type: "varchar", length: 20, default: "GS" })
+  currency!: string;
 
   @Column({ name: "ecb_numero_cuenta", type: "varchar", length: 80 })
   accountNumber!: string;

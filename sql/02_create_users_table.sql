@@ -1,3 +1,5 @@
+DROP TABLE IF EXISTS public.usuarios CASCADE;
+
 CREATE TABLE IF NOT EXISTS public.usuarios (
   usr_id SERIAL PRIMARY KEY,
   usr_nombre VARCHAR(120) NULL,

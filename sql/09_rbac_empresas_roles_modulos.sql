@@ -1,5 +1,15 @@
 BEGIN;
 
+DROP TRIGGER IF EXISTS trg_erm_set_updated_at ON public.empresas_roles_modulos;
+DROP TRIGGER IF EXISTS trg_modulos_set_updated_at ON public.modulos;
+DROP TRIGGER IF EXISTS trg_empresas_set_updated_at ON public.empresas;
+DROP TRIGGER IF EXISTS trg_roles_set_updated_at ON public.roles;
+
+DROP TABLE IF EXISTS public.empresas_roles_modulos CASCADE;
+DROP TABLE IF EXISTS public.modulos CASCADE;
+DROP TABLE IF EXISTS public.empresas CASCADE;
+DROP TABLE IF EXISTS public.roles CASCADE;
+
 CREATE TABLE IF NOT EXISTS public.roles (
   rol_id SERIAL PRIMARY KEY,
   rol_codigo VARCHAR(50) NOT NULL,

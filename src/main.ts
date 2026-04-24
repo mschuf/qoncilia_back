@@ -14,10 +14,6 @@ async function bootstrap() {
 
   // Middleware CORS manual para asegurar que las cabeceras se envíen
   app.use((req: Request, res: Response, next: NextFunction) => {
-    console.log(
-      `CORS middleware: ${req.method} ${req.path} from ${req.headers.origin || "no origin"}`,
-    );
-
     res.header("Access-Control-Allow-Origin", "*");
     res.header(
       "Access-Control-Allow-Methods",
@@ -31,7 +27,6 @@ async function bootstrap() {
 
     // Manejar preflight requests
     if (req.method === "OPTIONS") {
-      console.log(`CORS preflight handled for ${req.path}`);
       res.sendStatus(200);
       return;
     }
@@ -94,8 +89,6 @@ async function bootstrap() {
   SwaggerModule.setup("api", app, document);
 
   const port = process.env.PORT ?? 3003;
-  console.log(`Aplicación ejecutándose en el puerto: ${port}`);
-
   await app.listen(port);
 }
 bootstrap();
