@@ -1,7 +1,7 @@
 -- Script opcional.
 -- Reemplazar <<BCRYPT_HASH>> por hash real de una contrasena fuerte.
 -- Ejemplo de login: superadmin.
--- Si luego ejecutas 09_rbac_empresas_roles_modulos.sql, este usuario se migrara a rol
+-- Si luego ejecutas 05_rbac_empresas_roles_modulos.sql, este usuario se migrara a rol
 -- is_super_admin cuando el login sea 'superadmin'.
 
 INSERT INTO public.usuarios (

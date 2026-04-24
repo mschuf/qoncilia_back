@@ -1,4 +1,4 @@
--- Script opcional para entornos ya migrados con 09_rbac_empresas_roles_modulos.sql.
+-- Script opcional para entornos ya migrados con 05_rbac_empresas_roles_modulos.sql.
 -- Reemplazar <<BCRYPT_HASH>> por hash real de una contrasena fuerte.
 -- Ejemplo de login: superadmin
 
