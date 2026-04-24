@@ -530,7 +530,7 @@ export class UsersService {
         if (detail.includes("usr_legajo")) {
           throw new ConflictException("El legajo ya existe.");
         }
-        if (detail.includes("emp_codigo")) {
+        if (detail.includes("emp_codigo") || detail.includes("emp_id_fiscal")) {
           throw new ConflictException("Ya existe una empresa con ese ID fiscal.");
         }
 

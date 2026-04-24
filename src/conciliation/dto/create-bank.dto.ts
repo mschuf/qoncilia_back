@@ -23,6 +23,12 @@ export class CreateBankDto {
   @MaxLength(160)
   name!: string;
 
+  @Transform(emptyToUndefined)
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  branch?: string;
+
   @Transform(toBoolean)
   @IsOptional()
   @IsBoolean()

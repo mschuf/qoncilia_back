@@ -9,6 +9,7 @@ ALTER TABLE public.empresas
 CREATE TABLE IF NOT EXISTS public.bancos (
   ban_id SERIAL PRIMARY KEY,
   ban_nombre VARCHAR(160) NOT NULL,
+  ban_sucursal VARCHAR(120) NULL,
   ban_activo BOOLEAN NOT NULL DEFAULT TRUE,
   ban_created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   ban_updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -18,6 +19,7 @@ CREATE TABLE IF NOT EXISTS public.bancos (
 
 ALTER TABLE public.bancos
   ADD COLUMN IF NOT EXISTS ban_nombre VARCHAR(160),
+  ADD COLUMN IF NOT EXISTS ban_sucursal VARCHAR(120) NULL,
   ADD COLUMN IF NOT EXISTS ban_activo BOOLEAN NOT NULL DEFAULT TRUE,
   ADD COLUMN IF NOT EXISTS ban_created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   ADD COLUMN IF NOT EXISTS ban_updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
@@ -29,7 +31,6 @@ CREATE TABLE IF NOT EXISTS public.empresas_cuentas_bancarias (
   ecb_id SERIAL PRIMARY KEY,
   emp_id INTEGER NOT NULL,
   ban_id INTEGER NOT NULL,
-  ecb_sucursal VARCHAR(120) NULL,
   ecb_nombre VARCHAR(160) NOT NULL,
   ecb_numero_cuenta VARCHAR(80) NOT NULL,
   ecb_id_banco_erp VARCHAR(80) NOT NULL,
@@ -47,7 +48,6 @@ CREATE TABLE IF NOT EXISTS public.empresas_cuentas_bancarias (
 ALTER TABLE public.empresas_cuentas_bancarias
   ADD COLUMN IF NOT EXISTS emp_id INTEGER,
   ADD COLUMN IF NOT EXISTS ban_id INTEGER,
-  ADD COLUMN IF NOT EXISTS ecb_sucursal VARCHAR(120) NULL,
   ADD COLUMN IF NOT EXISTS ecb_nombre VARCHAR(160),
   ADD COLUMN IF NOT EXISTS ecb_numero_cuenta VARCHAR(80),
   ADD COLUMN IF NOT EXISTS ecb_id_banco_erp VARCHAR(80),

@@ -15,6 +15,7 @@
 13. `13_seed_default_templates_from_existing_layouts.sql` (opcional, copia como templates los layouts que ya existen en tu base)
 14. `14_create_erp_configs_and_shipments.sql` (recomendado para configuracion ERP por empresa y envios a SAP Service Layer)
 15. `15_company_profile_and_admin_banking.sql` (recomendado para perfil extendido de empresa y ABM admin de bancos/cuentas)
+16. `16_manual_alter_empresas_y_bancos.sql` (manual, para renombrar `emp_id_fiscal` y mover `sucursal` a `bancos` en bases ya existentes)
 
 ## Notas
 
@@ -41,5 +42,8 @@
 - El paso `15` agrega campos ERP visibles en `empresas`, crea `bancos`
   y `empresas_cuentas_bancarias`, y habilita `layout_management`
   tambien para `admin`.
+- El paso `16` es para ambientes ya creados: renombra `empresas.emp_codigo`
+  a `empresas.emp_id_fiscal`, copia `ecb_sucursal` hacia `bancos.ban_sucursal`
+  y elimina la columna vieja de cuentas.
 - En los mappings podes usar columnas alternativas con separador `|`.
   Ejemplo: `E|F` toma la primera columna con dato en esa fila, util para extractos con Debito/Credito separados.

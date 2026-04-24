@@ -16,6 +16,9 @@ export class BankEntity {
   @Column({ name: "ban_nombre", type: "varchar", length: 160, unique: true })
   name!: string;
 
+  @Column({ name: "ban_sucursal", type: "varchar", length: 120, nullable: true })
+  branch!: string | null;
+
   @Column({ name: "ban_activo", type: "boolean", default: true })
   active!: boolean;
 

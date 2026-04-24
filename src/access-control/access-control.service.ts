@@ -499,7 +499,7 @@ export class AccessControlService {
 
       if (driverError?.code === "23505") {
         const detail = String(driverError.detail ?? "").toLowerCase();
-        if (detail.includes("emp_codigo")) {
+        if (detail.includes("emp_codigo") || detail.includes("emp_id_fiscal")) {
           throw new ConflictException("Ya existe una empresa con ese ID fiscal.");
         }
 

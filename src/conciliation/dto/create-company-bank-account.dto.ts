@@ -29,12 +29,6 @@ export class CreateCompanyBankAccountDto {
   bankId!: number;
 
   @Transform(emptyToUndefined)
-  @IsOptional()
-  @IsString()
-  @MaxLength(120)
-  branch?: string;
-
-  @Transform(emptyToUndefined)
   @IsString()
   @IsNotEmpty()
   @MaxLength(160)

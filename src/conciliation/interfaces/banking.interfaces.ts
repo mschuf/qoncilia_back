@@ -3,6 +3,7 @@ import { PublicCompany } from "../../access-control/interfaces/access-control.in
 export interface PublicBank {
   id: number;
   name: string;
+  branch: string | null;
   active: boolean;
 }
 
@@ -12,7 +13,7 @@ export interface PublicCompanyBankAccount {
   companyName: string;
   bankId: number;
   bankName: string;
-  branch: string | null;
+  bankBranch: string | null;
   name: string;
   accountNumber: string;
   bankErpId: string;

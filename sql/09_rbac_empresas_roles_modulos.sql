@@ -29,25 +29,25 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_roles_codigo_lower
 
 CREATE TABLE IF NOT EXISTS public.empresas (
   emp_id SERIAL PRIMARY KEY,
-  emp_codigo VARCHAR(50) NOT NULL,
+  emp_id_fiscal VARCHAR(50) NOT NULL,
   emp_nombre VARCHAR(160) NOT NULL,
   emp_activa BOOLEAN NOT NULL DEFAULT TRUE,
   emp_created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   emp_updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  CONSTRAINT uq_empresas_codigo UNIQUE (emp_codigo),
-  CONSTRAINT chk_empresas_codigo_not_blank CHECK (length(trim(emp_codigo)) > 0),
+  CONSTRAINT uq_empresas_id_fiscal UNIQUE (emp_id_fiscal),
+  CONSTRAINT chk_empresas_id_fiscal_not_blank CHECK (length(trim(emp_id_fiscal)) > 0),
   CONSTRAINT chk_empresas_nombre_not_blank CHECK (length(trim(emp_nombre)) > 0)
 );
 
 ALTER TABLE public.empresas
-  ADD COLUMN IF NOT EXISTS emp_codigo VARCHAR(50),
+  ADD COLUMN IF NOT EXISTS emp_id_fiscal VARCHAR(50),
   ADD COLUMN IF NOT EXISTS emp_nombre VARCHAR(160),
   ADD COLUMN IF NOT EXISTS emp_activa BOOLEAN NOT NULL DEFAULT TRUE,
   ADD COLUMN IF NOT EXISTS emp_created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   ADD COLUMN IF NOT EXISTS emp_updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
 
-CREATE UNIQUE INDEX IF NOT EXISTS uq_empresas_codigo_lower
-  ON public.empresas ((LOWER(emp_codigo)));
+CREATE UNIQUE INDEX IF NOT EXISTS uq_empresas_id_fiscal_lower
+  ON public.empresas ((LOWER(emp_id_fiscal)));
 
 CREATE TABLE IF NOT EXISTS public.modulos (
   mod_id SERIAL PRIMARY KEY,
@@ -249,12 +249,12 @@ SET
   mod_activo = EXCLUDED.mod_activo;
 
 INSERT INTO public.empresas (
-  emp_codigo,
+  emp_id_fiscal,
   emp_nombre,
   emp_activa
 ) VALUES
   ('QONCILIA', 'Qoncilia', TRUE)
-ON CONFLICT (emp_codigo) DO UPDATE
+ON CONFLICT (emp_id_fiscal) DO UPDATE
 SET
   emp_nombre = EXCLUDED.emp_nombre,
   emp_activa = EXCLUDED.emp_activa;
@@ -267,7 +267,7 @@ UPDATE public.usuarios
 SET emp_id = (
   SELECT emp_id
   FROM public.empresas
-  WHERE LOWER(emp_codigo) = LOWER('QONCILIA')
+  WHERE LOWER(emp_id_fiscal) = LOWER('QONCILIA')
   LIMIT 1
 )
 WHERE emp_id IS NULL;

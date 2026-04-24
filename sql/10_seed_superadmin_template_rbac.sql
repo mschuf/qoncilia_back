@@ -4,12 +4,12 @@
 
 WITH ensured_company AS (
   INSERT INTO public.empresas (
-    emp_codigo,
+    emp_id_fiscal,
     emp_nombre,
     emp_activa
   )
   VALUES ('QONCILIA', 'Qoncilia', TRUE)
-  ON CONFLICT (emp_codigo) DO UPDATE
+  ON CONFLICT (emp_id_fiscal) DO UPDATE
   SET
     emp_nombre = EXCLUDED.emp_nombre,
     emp_activa = EXCLUDED.emp_activa

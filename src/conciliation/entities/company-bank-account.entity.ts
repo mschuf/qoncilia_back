@@ -23,9 +23,6 @@ export class CompanyBankAccount {
   @JoinColumn({ name: "ban_id", referencedColumnName: "id" })
   bank!: BankEntity;
 
-  @Column({ name: "ecb_sucursal", type: "varchar", length: 120, nullable: true })
-  branch!: string | null;
-
   @Column({ name: "ecb_nombre", type: "varchar", length: 160 })
   name!: string;
 

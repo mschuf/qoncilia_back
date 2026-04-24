@@ -14,7 +14,7 @@ export class Company {
   @PrimaryGeneratedColumn({ name: "emp_id" })
   id!: number;
 
-  @Column({ name: "emp_codigo", type: "varchar", length: 50, unique: true })
+  @Column({ name: "emp_id_fiscal", type: "varchar", length: 50, unique: true })
   code!: string;
 
   @Column({ name: "emp_nombre", type: "varchar", length: 160 })

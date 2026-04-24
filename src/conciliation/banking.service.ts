@@ -63,6 +63,7 @@ export class BankingService {
 
     const bank = this.bankRepository.create({
       name: this.normalizeRequired(payload.name, "name"),
+      branch: this.normalizeOptional(payload.branch),
       active: payload.active ?? true
     });
 
@@ -80,6 +81,9 @@ export class BankingService {
     const bank = await this.requireBank(bankId);
     if (payload.name !== undefined) {
       bank.name = this.normalizeRequired(payload.name, "name");
+    }
+    if (payload.branch !== undefined) {
+      bank.branch = this.normalizeOptional(payload.branch);
     }
     if (payload.active !== undefined) {
       bank.active = payload.active;
@@ -108,7 +112,6 @@ export class BankingService {
     const account = this.companyBankAccountRepository.create({
       company,
       bank,
-      branch: this.normalizeOptional(payload.branch),
       name: this.normalizeRequired(payload.name, "name"),
       accountNumber: this.normalizeRequired(payload.accountNumber, "accountNumber"),
       bankErpId: this.normalizeRequired(payload.bankErpId, "bankErpId"),
@@ -150,9 +153,6 @@ export class BankingService {
     }
     if (payload.bankId !== undefined) {
       account.bank = await this.requireBank(payload.bankId);
-    }
-    if (payload.branch !== undefined) {
-      account.branch = this.normalizeOptional(payload.branch);
     }
     if (payload.name !== undefined) {
       account.name = this.normalizeRequired(payload.name, "name");
@@ -295,6 +295,7 @@ export class BankingService {
     return {
       id: bank.id,
       name: bank.name,
+      branch: bank.branch,
       active: bank.active
     };
   }
@@ -306,7 +307,7 @@ export class BankingService {
       companyName: account.company.name,
       bankId: account.bank.id,
       bankName: account.bank.name,
-      branch: account.branch,
+      bankBranch: account.bank.branch,
       name: account.name,
       accountNumber: account.accountNumber,
       bankErpId: account.bankErpId,
