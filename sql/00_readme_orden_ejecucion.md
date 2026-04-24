@@ -16,6 +16,7 @@
 14. `14_create_erp_configs_and_shipments.sql` (recomendado para configuracion ERP por empresa y envios a SAP Service Layer)
 15. `15_company_profile_and_admin_banking.sql` (recomendado para perfil extendido de empresa y ABM admin de bancos/cuentas)
 16. `16_manual_alter_empresas_y_bancos.sql` (manual, para renombrar `emp_id_fiscal` y mover `sucursal` a `bancos` en bases ya existentes)
+17. `17_manual_empresas_id_fiscal_sin_romper_fk.sql` (manual, alternativa mas segura para bases con datos: crea `emp_id_fiscal` sin borrar/recrear `empresas`)
 
 ## Notas
 
@@ -45,5 +46,8 @@
 - El paso `16` es para ambientes ya creados: renombra `empresas.emp_codigo`
   a `empresas.emp_id_fiscal`, copia `ecb_sucursal` hacia `bancos.ban_sucursal`
   y elimina la columna vieja de cuentas.
+- El paso `17` es la alternativa recomendada cuando ya hay datos y FKs activas:
+  no borra ni recrea `empresas`, hace backup, crea `emp_id_fiscal`,
+  copia los valores desde `emp_codigo` y deja la columna vieja para limpieza posterior.
 - En los mappings podes usar columnas alternativas con separador `|`.
   Ejemplo: `E|F` toma la primera columna con dato en esa fila, util para extractos con Debito/Credito separados.
