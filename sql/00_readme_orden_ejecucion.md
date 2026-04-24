@@ -43,11 +43,10 @@
 - El paso `15` agrega campos ERP visibles en `empresas`, crea `bancos`
   y `empresas_cuentas_bancarias`, y habilita `layout_management`
   tambien para `admin`.
-- El paso `16` es para ambientes ya creados: renombra `empresas.emp_codigo`
-  a `empresas.emp_id_fiscal`, copia `ecb_sucursal` hacia `bancos.ban_sucursal`
+- El paso `16` es para ambientes ya creados: asegura que exista
+  `empresas.emp_id_fiscal`, copia `ecb_sucursal` hacia `bancos.ban_sucursal`
   y elimina la columna vieja de cuentas.
 - El paso `17` es la alternativa recomendada cuando ya hay datos y FKs activas:
-  no borra ni recrea `empresas`, hace backup, crea `emp_id_fiscal`,
-  copia los valores desde `emp_codigo` y deja la columna vieja para limpieza posterior.
+  no borra ni recrea `empresas`, hace backup y crea `emp_id_fiscal`.
 - En los mappings podes usar columnas alternativas con separador `|`.
   Ejemplo: `E|F` toma la primera columna con dato en esa fila, util para extractos con Debito/Credito separados.
