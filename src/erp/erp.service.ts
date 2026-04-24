@@ -478,8 +478,13 @@ export class ErpService {
     return {
       id: company.id,
       code: company.code,
+      fiscalId: company.code,
       name: company.name,
-      active: company.active
+      active: company.active,
+      webserviceErp: company.webserviceErp,
+      schemeErp: company.schemeErp,
+      tlsVersionErp: company.tlsVersionErp,
+      cardsId: company.cardsId
     }
   }
 

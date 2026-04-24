@@ -4,6 +4,7 @@ import {
   Get,
   Param,
   ParseIntPipe,
+  Patch,
   Post,
   Put,
   UseGuards
@@ -17,9 +18,11 @@ import { JwtAuthGuard } from "../common/guards/jwt-auth.guard";
 import { ModuleAccessGuard } from "../common/guards/module-access.guard";
 import { RolesGuard } from "../common/guards/roles.guard";
 import { AuthUser } from "../common/interfaces/auth-user.interface";
-import { CreateCompanyDto } from "./dto/create-company.dto";
-import { UpdateCompanyRoleModulesDto } from "./dto/update-company-role-modules.dto";
 import { AccessControlService } from "./access-control.service";
+import { CreateCompanyDto } from "./dto/create-company.dto";
+import { UpdateCompanyDto } from "./dto/update-company.dto";
+import { UpdateCompanyRoleModulesDto } from "./dto/update-company-role-modules.dto";
+import { UpsertOwnCompanyDto } from "./dto/upsert-own-company.dto";
 
 @Controller("access-control")
 @UseGuards(JwtAuthGuard, RolesGuard, ModuleAccessGuard)
@@ -38,6 +41,31 @@ export class AccessControlController {
   @RequiredModule(AppModuleCode.ACCESS_MATRIX)
   createCompany(@Body() body: CreateCompanyDto, @CurrentUser() actor: AuthUser) {
     return this.accessControlService.createCompany(body, actor);
+  }
+
+  @Patch("companies/:companyId")
+  @Roles(Role.IS_SUPER_ADMIN)
+  @RequiredModule(AppModuleCode.ACCESS_MATRIX)
+  updateCompany(
+    @Param("companyId", ParseIntPipe) companyId: number,
+    @Body() body: UpdateCompanyDto,
+    @CurrentUser() actor: AuthUser
+  ) {
+    return this.accessControlService.updateCompany(companyId, body, actor);
+  }
+
+  @Get("company-profile")
+  @Roles(Role.ADMIN, Role.IS_SUPER_ADMIN)
+  @RequiredModule(AppModuleCode.ERP_MANAGEMENT)
+  getOwnCompany(@CurrentUser() actor: AuthUser) {
+    return this.accessControlService.getOwnCompany(actor);
+  }
+
+  @Put("company-profile")
+  @Roles(Role.ADMIN)
+  @RequiredModule(AppModuleCode.ERP_MANAGEMENT)
+  upsertOwnCompany(@Body() body: UpsertOwnCompanyDto, @CurrentUser() actor: AuthUser) {
+    return this.accessControlService.upsertOwnCompany(body, actor);
   }
 
   @Get("matrix/:companyId")

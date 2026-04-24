@@ -9,16 +9,15 @@ import { ConfigService } from "@nestjs/config";
 import { InjectRepository } from "@nestjs/typeorm";
 import { hash } from "bcryptjs";
 import { QueryFailedError, Raw, Repository } from "typeorm";
+import { AppModuleEntity } from "../access-control/entities/app-module.entity";
 import { CompanyRoleModule } from "../access-control/entities/company-role-module.entity";
 import { Company } from "../access-control/entities/company.entity";
 import { UserRole } from "../access-control/entities/user-role.entity";
+import { AppModuleCode } from "../common/enums/app-module-code.enum";
 import { Role } from "../common/enums/role.enum";
 import { AuthUser } from "../common/interfaces/auth-user.interface";
+import { ensureStrongPassword, generateTemporaryPasswordFromOneToSix } from "../common/utils/password.util";
 import { isGestorRole, isSuperAdminRole } from "../common/utils/role.util";
-import {
-  ensureStrongPassword,
-  generateTemporaryPasswordFromOneToSix
-} from "../common/utils/password.util";
 import { CreateUserDto } from "./dto/create-user.dto";
 import { RegisterDto } from "./dto/register.dto";
 import { UpdateUserDto } from "./dto/update-user.dto";
@@ -36,6 +35,8 @@ export class UsersService {
     private readonly companyRepository: Repository<Company>,
     @InjectRepository(UserRole)
     private readonly roleRepository: Repository<UserRole>,
+    @InjectRepository(AppModuleEntity)
+    private readonly moduleRepository: Repository<AppModuleEntity>,
     @InjectRepository(CompanyRoleModule)
     private readonly companyRoleModuleRepository: Repository<CompanyRoleModule>,
     configService: ConfigService
@@ -46,32 +47,70 @@ export class UsersService {
   async registerInactiveUser(payload: RegisterDto): Promise<PublicUser> {
     ensureStrongPassword(payload.password);
 
-    const company = await this.resolveCompanyForRegistration(payload.companyId);
-    const roleCode = this.resolveRoleCodeFromPayload(payload.roleCode, Role.GESTOR_PAGOS);
-
-    if (!isGestorRole(roleCode)) {
-      throw new ForbiddenException("El registro publico solo puede crear usuarios gestores.");
-    }
-
-    const role = await this.requireRoleByCode(roleCode);
-
-    const user = this.userRepository.create({
-      usrNombre: this.normalizeOptional(payload.usrNombre),
-      usrApellido: this.normalizeOptional(payload.usrApellido),
-      usrEmail: this.normalizeOptional(payload.usrEmail),
-      usrCelular: this.normalizeOptional(payload.usrCelular),
-      usrLogin: this.normalizeRequired(payload.usrLogin, "usrLogin"),
-      usrLegajo: this.normalizeRequired(payload.usrLegajo, "usrLegajo"),
-      passwordHash: await hash(payload.password, this.bcryptRounds),
-      activo: false,
-      company,
-      role
-    });
-
     try {
-      const created = await this.userRepository.save(user);
-      const hydrated = await this.requireUser(created.id);
-      return this.toPublicUser(hydrated);
+      return await this.userRepository.manager.transaction(async (manager) => {
+        const userRepository = manager.getRepository(User);
+        const companyRepository = manager.getRepository(Company);
+        const roleRepository = manager.getRepository(UserRole);
+        const moduleRepository = manager.getRepository(AppModuleEntity);
+        const companyRoleModuleRepository = manager.getRepository(CompanyRoleModule);
+
+        const companyName = this.normalizeRequired(payload.usrNombre ?? "", "companyName");
+        const login = this.normalizeRequired(payload.usrLogin, "usrLogin");
+        const requestedRole = this.resolveRoleCodeFromPayload(payload.roleCode, Role.ADMIN);
+        if (requestedRole !== Role.ADMIN) {
+          throw new ForbiddenException("El registro publico solo puede crear usuarios admin.");
+        }
+
+        const role = await this.requireRoleByCodeFromRepository(roleRepository, Role.ADMIN);
+        const company = await companyRepository.save(
+          companyRepository.create({
+            code: this.buildRegistrationFiscalId(login),
+            name: companyName,
+            active: false,
+            webserviceErp: null,
+            schemeErp: null,
+            tlsVersionErp: null,
+            cardsId: null
+          })
+        );
+
+        await this.seedDefaultModuleAssignments(
+          company,
+          roleRepository,
+          moduleRepository,
+          companyRoleModuleRepository
+        );
+
+        const user = await userRepository.save(
+          userRepository.create({
+            usrNombre: companyName,
+            usrApellido: null,
+            usrEmail: this.normalizeOptional(payload.usrEmail),
+            usrCelular: this.normalizeOptional(payload.usrCelular),
+            usrLogin: login,
+            usrLegajo: this.buildRegistrationLegajo(login),
+            passwordHash: await hash(payload.password, this.bcryptRounds),
+            activo: false,
+            company,
+            role
+          })
+        );
+
+        const hydrated = await userRepository.findOne({
+          where: { id: user.id },
+          relations: {
+            company: true,
+            role: true
+          }
+        });
+
+        if (!hydrated) {
+          throw new NotFoundException("No se pudo recuperar el usuario registrado.");
+        }
+
+        return this.toPublicUser(hydrated);
+      });
     } catch (error) {
       this.handleDatabaseError(error);
     }
@@ -183,18 +222,15 @@ export class UsersService {
     const normalizedIdentifier = identifier.trim().toLowerCase();
 
     const lowerMatch = Raw((alias) => `LOWER(${alias}) = :identifier`, {
-      identifier: normalizedIdentifier,
+      identifier: normalizedIdentifier
     });
 
     return this.userRepository.findOne({
-      where: [
-        { usrLogin: lowerMatch },
-        { usrEmail: lowerMatch },
-      ],
+      where: [{ usrLogin: lowerMatch }, { usrEmail: lowerMatch }],
       relations: {
         company: true,
-        role: true,
-      },
+        role: true
+      }
     });
   }
 
@@ -257,33 +293,6 @@ export class UsersService {
     return assignments.map((item) => item.module.code);
   }
 
-  private async resolveCompanyForRegistration(companyId?: number): Promise<Company> {
-    if (companyId) {
-      return this.requireCompany(companyId);
-    }
-
-    const defaultByCode = await this.companyRepository.findOne({
-      where: { code: "QONCILIA" }
-    });
-
-    if (defaultByCode) {
-      return defaultByCode;
-    }
-
-    const firstCompany = await this.companyRepository.findOne({
-      where: { active: true },
-      order: { id: "ASC" }
-    });
-
-    if (!firstCompany) {
-      throw new BadRequestException(
-        "No hay empresas configuradas. Ejecuta el script 09_rbac_empresas_roles_modulos.sql."
-      );
-    }
-
-    return firstCompany;
-  }
-
   private async resolveCompanyForAbm(actor: AuthUser, payloadCompanyId?: number): Promise<Company> {
     if (isSuperAdminRole(actor.roleCode)) {
       if (!payloadCompanyId) {
@@ -330,7 +339,14 @@ export class UsersService {
   }
 
   private async requireRoleByCode(roleCode: Role): Promise<UserRole> {
-    const role = await this.roleRepository.findOne({
+    return this.requireRoleByCodeFromRepository(this.roleRepository, roleCode);
+  }
+
+  private async requireRoleByCodeFromRepository(
+    roleRepository: Repository<UserRole>,
+    roleCode: Role
+  ): Promise<UserRole> {
+    const role = await roleRepository.findOne({
       where: { code: roleCode, active: true }
     });
 
@@ -389,8 +405,8 @@ export class UsersService {
     throw new ForbiddenException("No tenes permisos para administrar este usuario.");
   }
 
-  private normalizeOptional(value?: string): string | null {
-    if (value === undefined) return null;
+  private normalizeOptional(value?: string | null): string | null {
+    if (value === undefined || value === null) return null;
     const trimmed = value.trim();
     return trimmed.length > 0 ? trimmed : null;
   }
@@ -402,6 +418,96 @@ export class UsersService {
     }
 
     return trimmed;
+  }
+
+  private buildRegistrationLegajo(login: string): string {
+    const normalizedLogin = login.replace(/\s+/g, "_").slice(0, 42);
+    return `ADM-${normalizedLogin}`;
+  }
+
+  private buildRegistrationFiscalId(login: string): string {
+    const normalizedLogin = login
+      .trim()
+      .toUpperCase()
+      .replace(/[^A-Z0-9_-]/g, "_")
+      .slice(0, 40);
+
+    return `PEND-${normalizedLogin}`;
+  }
+
+  private async seedDefaultModuleAssignments(
+    company: Company,
+    roleRepository: Repository<UserRole>,
+    moduleRepository: Repository<AppModuleEntity>,
+    companyRoleModuleRepository: Repository<CompanyRoleModule>
+  ) {
+    const [roles, modules, existingAssignments] = await Promise.all([
+      roleRepository.find({ where: { active: true } }),
+      moduleRepository.find({ where: { active: true } }),
+      companyRoleModuleRepository.find({
+        where: { company: { id: company.id } },
+        relations: { role: true, module: true }
+      })
+    ]);
+
+    const roleByCode = new Map(roles.map((item) => [item.code, item]));
+    const moduleByCode = new Map(modules.map((item) => [item.code, item]));
+    const existingKeys = new Set(existingAssignments.map((item) => `${item.role.id}:${item.module.id}`));
+
+    const defaultModulesByRole: Array<[Role, AppModuleCode[]]> = [
+      [
+        Role.IS_SUPER_ADMIN,
+        [
+          AppModuleCode.HOME,
+          AppModuleCode.PROFILE,
+          AppModuleCode.CONCILIATION,
+          AppModuleCode.USERS,
+          AppModuleCode.LAYOUT_MANAGEMENT,
+          AppModuleCode.ACCESS_MATRIX,
+          AppModuleCode.ERP_MANAGEMENT
+        ]
+      ],
+      [
+        Role.ADMIN,
+        [
+          AppModuleCode.HOME,
+          AppModuleCode.PROFILE,
+          AppModuleCode.CONCILIATION,
+          AppModuleCode.USERS,
+          AppModuleCode.LAYOUT_MANAGEMENT,
+          AppModuleCode.ERP_MANAGEMENT
+        ]
+      ],
+      [Role.GESTOR_COBRANZA, [AppModuleCode.HOME, AppModuleCode.PROFILE, AppModuleCode.CONCILIATION]],
+      [Role.GESTOR_PAGOS, [AppModuleCode.HOME, AppModuleCode.PROFILE, AppModuleCode.CONCILIATION]]
+    ];
+
+    const toPersist: CompanyRoleModule[] = [];
+    for (const [roleCode, moduleCodes] of defaultModulesByRole) {
+      const role = roleByCode.get(roleCode);
+      if (!role) continue;
+
+      for (const moduleCode of moduleCodes) {
+        const module = moduleByCode.get(moduleCode);
+        if (!module) continue;
+
+        const key = `${role.id}:${module.id}`;
+        if (existingKeys.has(key)) continue;
+
+        toPersist.push(
+          companyRoleModuleRepository.create({
+            company,
+            role,
+            module,
+            enabled: true
+          })
+        );
+      }
+    }
+
+    if (toPersist.length > 0) {
+      await companyRoleModuleRepository.save(toPersist);
+    }
   }
 
   private handleDatabaseError(error: unknown): never {
@@ -423,6 +529,9 @@ export class UsersService {
         }
         if (detail.includes("usr_legajo")) {
           throw new ConflictException("El legajo ya existe.");
+        }
+        if (detail.includes("emp_codigo")) {
+          throw new ConflictException("Ya existe una empresa con ese ID fiscal.");
         }
 
         throw new ConflictException("Ya existe un usuario con esos datos unicos.");

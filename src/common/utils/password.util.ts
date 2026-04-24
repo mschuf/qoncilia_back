@@ -1,14 +1,9 @@
 import { BadRequestException } from "@nestjs/common";
 
-const STRONG_PASSWORD_REGEX =
-  /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z\d])(?!.*\s).{6,128}$/;
-
 export function ensureStrongPassword(password: string) {
-  const valid = STRONG_PASSWORD_REGEX.test(password);
-  if (!valid) {
-    throw new BadRequestException(
-      "La contraseña debe tener mínimo 6 caracteres, mayúscula, minúscula, número y símbolo."
-    );
+  const normalized = password?.trim() ?? "";
+  if (normalized.length < 6 || normalized.length > 128) {
+    throw new BadRequestException("La contrasena debe tener entre 6 y 128 caracteres.");
   }
 }
 
@@ -23,4 +18,3 @@ export function generateTemporaryPasswordFromOneToSix(length = 6): string {
 
   return result;
 }
-

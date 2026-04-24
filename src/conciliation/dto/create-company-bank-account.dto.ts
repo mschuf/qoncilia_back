@@ -1,5 +1,5 @@
-import { Transform } from "class-transformer";
-import { IsBoolean, IsOptional, IsString, MaxLength } from "class-validator";
+import { Transform, Type } from "class-transformer";
+import { IsBoolean, IsInt, IsNotEmpty, IsOptional, IsString, MaxLength, Min } from "class-validator";
 
 const emptyToUndefined = ({ value }: { value: unknown }) => {
   if (typeof value === "string" && value.trim() === "") {
@@ -16,47 +16,53 @@ const toBoolean = ({ value }: { value: unknown }) => {
   return value;
 };
 
-export class CreateCompanyDto {
-  @Transform(emptyToUndefined)
+export class CreateCompanyBankAccountDto {
   @IsOptional()
-  @IsString()
-  @MaxLength(50)
-  code?: string;
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  companyId?: number;
+
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  bankId!: number;
 
   @Transform(emptyToUndefined)
   @IsOptional()
   @IsString()
-  @MaxLength(50)
-  fiscalId?: string;
+  @MaxLength(120)
+  branch?: string;
 
   @Transform(emptyToUndefined)
   @IsString()
+  @IsNotEmpty()
   @MaxLength(160)
   name!: string;
 
   @Transform(emptyToUndefined)
-  @IsOptional()
   @IsString()
-  @MaxLength(255)
-  webserviceErp?: string;
+  @IsNotEmpty()
+  @MaxLength(80)
+  accountNumber!: string;
+
+  @Transform(emptyToUndefined)
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(80)
+  bankErpId!: string;
+
+  @Transform(emptyToUndefined)
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(80)
+  majorAccountNumber!: string;
 
   @Transform(emptyToUndefined)
   @IsOptional()
   @IsString()
-  @MaxLength(120)
-  schemeErp?: string;
-
-  @Transform(emptyToUndefined)
-  @IsOptional()
-  @IsString()
-  @MaxLength(10)
-  tlsVersionErp?: string;
-
-  @Transform(emptyToUndefined)
-  @IsOptional()
-  @IsString()
-  @MaxLength(120)
-  cardsId?: string;
+  @MaxLength(80)
+  paymentAccountNumber?: string;
 
   @Transform(toBoolean)
   @IsOptional()

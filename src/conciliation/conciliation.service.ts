@@ -1689,8 +1689,15 @@ export class ConciliationService {
         if (left === null || right === null) return false;
         return Math.abs(left - right) <= (options.tolerance ?? 0);
       }
-      case "date_equals":
-        return this.normalizeDateValue(systemValue) === this.normalizeDateValue(bankValue);
+      case "date_equals": {
+        const left = this.toDateDayNumber(systemValue);
+        const right = this.toDateDayNumber(bankValue);
+        if (left === null || right === null) {
+          return this.normalizeDateValue(systemValue) === this.normalizeDateValue(bankValue);
+        }
+
+        return Math.abs(left - right) <= Math.abs(options.tolerance ?? 0);
+      }
       case "equals":
       default: {
         if (typeof systemValue === "number" || typeof bankValue === "number") {
@@ -1906,6 +1913,16 @@ export class ConciliationService {
     }
 
     return null;
+  }
+
+  private toDateDayNumber(value: unknown): number | null {
+    const normalized = this.normalizeDateValue(value);
+    if (!normalized) return null;
+
+    const timestamp = Date.parse(`${normalized}T00:00:00Z`);
+    if (Number.isNaN(timestamp)) return null;
+
+    return Math.floor(timestamp / 86400000);
   }
 
   private toNumber(value: unknown): number | null {

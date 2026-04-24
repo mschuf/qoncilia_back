@@ -1,8 +1,13 @@
 export interface PublicCompany {
   id: number;
   code: string;
+  fiscalId: string;
   name: string;
   active: boolean;
+  webserviceErp: string | null;
+  schemeErp: string | null;
+  tlsVersionErp: string | null;
+  cardsId: string | null;
 }
 
 export interface PublicRole {

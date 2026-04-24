@@ -1,6 +1,13 @@
 import { Transform } from "class-transformer";
 import { IsBoolean, IsNotEmpty, IsOptional, IsString, MaxLength } from "class-validator";
-import { RegisterDto } from "./register.dto";
+
+const emptyToUndefined = ({ value }: { value: unknown }) => {
+  if (typeof value === "string" && value.trim() === "") {
+    return undefined;
+  }
+
+  return value;
+};
 
 const toBoolean = ({ value }: { value: unknown }) => {
   if (typeof value === "boolean") return value;
@@ -9,14 +16,15 @@ const toBoolean = ({ value }: { value: unknown }) => {
   return value;
 };
 
-export class CreateUserDto extends RegisterDto {
-  @IsNotEmpty()
+export class CreateBankDto {
+  @Transform(emptyToUndefined)
   @IsString()
-  @MaxLength(50)
-  usrLegajo!: string;
+  @IsNotEmpty()
+  @MaxLength(160)
+  name!: string;
 
   @Transform(toBoolean)
   @IsOptional()
   @IsBoolean()
-  activo?: boolean;
+  active?: boolean;
 }

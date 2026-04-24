@@ -1,9 +1,14 @@
 import { Module } from "@nestjs/common";
 import { TypeOrmModule } from "@nestjs/typeorm";
+import { Company } from "../access-control/entities/company.entity";
 import { JwtAuthGuard } from "../common/guards/jwt-auth.guard";
 import { ModuleAccessGuard } from "../common/guards/module-access.guard";
 import { RolesGuard } from "../common/guards/roles.guard";
+import { BankingController } from "./banking.controller";
+import { BankingService } from "./banking.service";
 import { User } from "../users/entities/user.entity";
+import { BankEntity } from "./entities/bank.entity";
+import { CompanyBankAccount } from "./entities/company-bank-account.entity";
 import { ConciliationController } from "./conciliation.controller";
 import { ConciliationService } from "./conciliation.service";
 import { ReconciliationLayoutMapping } from "./entities/reconciliation-layout-mapping.entity";
@@ -18,6 +23,9 @@ import { UserBank } from "./entities/user-bank.entity";
   imports: [
     TypeOrmModule.forFeature([
       User,
+      Company,
+      BankEntity,
+      CompanyBankAccount,
       UserBank,
       TemplateLayout,
       TemplateLayoutMapping,
@@ -27,8 +35,8 @@ import { UserBank } from "./entities/user-bank.entity";
       ReconciliationMatch
     ])
   ],
-  controllers: [ConciliationController],
-  providers: [ConciliationService, JwtAuthGuard, RolesGuard, ModuleAccessGuard],
+  controllers: [ConciliationController, BankingController],
+  providers: [ConciliationService, BankingService, JwtAuthGuard, RolesGuard, ModuleAccessGuard],
   exports: [ConciliationService]
 })
 export class ConciliationModule {}

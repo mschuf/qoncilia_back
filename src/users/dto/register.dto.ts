@@ -62,19 +62,16 @@ export class RegisterDto {
   @MaxLength(80)
   usrLogin!: string;
 
-  @IsNotEmpty()
+  @Transform(emptyToUndefined)
+  @IsOptional()
   @IsString()
   @MaxLength(50)
-  usrLegajo!: string;
+  usrLegajo?: string;
 
   @IsNotEmpty()
   @IsString()
   @MinLength(6)
   @MaxLength(128)
-  @Matches(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z\d]).+$/, {
-    message:
-      "La contrasena debe tener minimo 6 caracteres, mayuscula, minuscula, numero y simbolo."
-  })
   password!: string;
 
   @Transform(toInteger)

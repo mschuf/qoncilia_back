@@ -7,11 +7,14 @@ import {
 } from "@nestjs/common";
 import { InjectRepository } from "@nestjs/typeorm";
 import { In, QueryFailedError, Repository } from "typeorm";
+import { AppModuleCode } from "../common/enums/app-module-code.enum";
 import { Role } from "../common/enums/role.enum";
-import { isSuperAdminRole } from "../common/utils/role.util";
 import { AuthUser } from "../common/interfaces/auth-user.interface";
+import { isSuperAdminRole } from "../common/utils/role.util";
 import { CreateCompanyDto } from "./dto/create-company.dto";
+import { UpdateCompanyDto } from "./dto/update-company.dto";
 import { UpdateCompanyRoleModulesDto } from "./dto/update-company-role-modules.dto";
+import { UpsertOwnCompanyDto } from "./dto/upsert-own-company.dto";
 import { AppModuleEntity } from "./entities/app-module.entity";
 import { CompanyRoleModule } from "./entities/company-role-module.entity";
 import { Company } from "./entities/company.entity";
@@ -54,15 +57,100 @@ export class AccessControlService {
   async createCompany(payload: CreateCompanyDto, actor: AuthUser): Promise<PublicCompany> {
     this.ensureSuperadmin(actor);
 
-    const company = this.companyRepository.create({
-      code: this.normalizeCompanyCode(payload.code),
-      name: this.normalizeRequired(payload.name, "name"),
-      active: payload.active ?? true
-    });
+    try {
+      return await this.companyRepository.manager.transaction(async (manager) => {
+        const companyRepository = manager.getRepository(Company);
+        const roleRepository = manager.getRepository(UserRole);
+        const moduleRepository = manager.getRepository(AppModuleEntity);
+        const companyRoleModuleRepository = manager.getRepository(CompanyRoleModule);
+
+        const company = companyRepository.create({
+          code: this.normalizeFiscalId(payload.fiscalId ?? payload.code),
+          name: this.normalizeRequired(payload.name, "name"),
+          active: payload.active ?? true,
+          webserviceErp: this.normalizeOptional(payload.webserviceErp),
+          schemeErp: this.normalizeOptional(payload.schemeErp),
+          tlsVersionErp: this.normalizeOptional(payload.tlsVersionErp),
+          cardsId: this.normalizeOptional(payload.cardsId)
+        });
+
+        const created = await companyRepository.save(company);
+        await this.seedDefaultModuleAssignments(
+          created,
+          roleRepository,
+          moduleRepository,
+          companyRoleModuleRepository
+        );
+
+        return this.toPublicCompany(created);
+      });
+    } catch (error) {
+      this.handleDatabaseError(error);
+    }
+  }
+
+  async updateCompany(
+    companyId: number,
+    payload: UpdateCompanyDto,
+    actor: AuthUser
+  ): Promise<PublicCompany> {
+    this.ensureSuperadmin(actor);
+
+    const company = await this.requireCompany(companyId);
+
+    if (payload.code !== undefined || payload.fiscalId !== undefined) {
+      company.code = this.normalizeFiscalId(payload.fiscalId ?? payload.code);
+    }
+    if (payload.name !== undefined) {
+      company.name = this.normalizeRequired(payload.name, "name");
+    }
+    if (payload.active !== undefined) {
+      company.active = payload.active;
+    }
+    if (payload.webserviceErp !== undefined) {
+      company.webserviceErp = this.normalizeOptional(payload.webserviceErp);
+    }
+    if (payload.schemeErp !== undefined) {
+      company.schemeErp = this.normalizeOptional(payload.schemeErp);
+    }
+    if (payload.tlsVersionErp !== undefined) {
+      company.tlsVersionErp = this.normalizeOptional(payload.tlsVersionErp);
+    }
+    if (payload.cardsId !== undefined) {
+      company.cardsId = this.normalizeOptional(payload.cardsId);
+    }
 
     try {
-      const created = await this.companyRepository.save(company);
-      return this.toPublicCompany(created);
+      const updated = await this.companyRepository.save(company);
+      return this.toPublicCompany(updated);
+    } catch (error) {
+      this.handleDatabaseError(error);
+    }
+  }
+
+  async getOwnCompany(actor: AuthUser): Promise<PublicCompany> {
+    const company = await this.requireCompany(actor.companyId);
+    return this.toPublicCompany(company);
+  }
+
+  async upsertOwnCompany(
+    payload: UpsertOwnCompanyDto,
+    actor: AuthUser
+  ): Promise<PublicCompany> {
+    if (isSuperAdminRole(actor.roleCode)) {
+      throw new ForbiddenException("El super admin administra empresas desde el ABM general.");
+    }
+
+    const company = await this.requireCompany(actor.companyId);
+    company.name = this.normalizeRequired(payload.name, "name");
+
+    if (payload.fiscalId !== undefined) {
+      company.code = this.normalizeFiscalId(payload.fiscalId);
+    }
+
+    try {
+      const updated = await this.companyRepository.save(company);
+      return this.toPublicCompany(updated);
     } catch (error) {
       this.handleDatabaseError(error);
     }
@@ -272,8 +360,13 @@ export class AccessControlService {
     return {
       id: entity.id,
       code: entity.code,
+      fiscalId: entity.code,
       name: entity.name,
-      active: entity.active
+      active: entity.active,
+      webserviceErp: entity.webserviceErp,
+      schemeErp: entity.schemeErp,
+      tlsVersionErp: entity.tlsVersionErp,
+      cardsId: entity.cardsId
     };
   }
 
@@ -307,12 +400,96 @@ export class AccessControlService {
     return trimmed;
   }
 
-  private normalizeCompanyCode(value: string): string {
-    return this.normalizeRequired(value, "code").toUpperCase().replace(/\s+/g, "_");
+  private normalizeOptional(value?: string | null): string | null {
+    if (value === undefined || value === null) return null;
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : null;
+  }
+
+  private normalizeFiscalId(value?: string): string {
+    const normalized = this.normalizeRequired(value ?? "", "fiscalId");
+    return normalized.replace(/\s+/g, "");
   }
 
   private buildMapKey(roleId: number, moduleId: number): string {
     return `${roleId}:${moduleId}`;
+  }
+
+  private async seedDefaultModuleAssignments(
+    company: Company,
+    roleRepository: Repository<UserRole>,
+    moduleRepository: Repository<AppModuleEntity>,
+    companyRoleModuleRepository: Repository<CompanyRoleModule>
+  ) {
+    const [roles, modules, existingAssignments] = await Promise.all([
+      roleRepository.find({ where: { active: true } }),
+      moduleRepository.find({ where: { active: true } }),
+      companyRoleModuleRepository.find({
+        where: { company: { id: company.id } },
+        relations: { role: true, module: true }
+      })
+    ]);
+
+    const roleByCode = new Map(roles.map((item) => [item.code, item]));
+    const moduleByCode = new Map(modules.map((item) => [item.code, item]));
+    const existingKeys = new Set(
+      existingAssignments.map((item) => this.buildMapKey(item.role.id, item.module.id))
+    );
+
+    const defaultModulesByRole: Array<[Role, AppModuleCode[]]> = [
+      [
+        Role.IS_SUPER_ADMIN,
+        [
+          AppModuleCode.HOME,
+          AppModuleCode.PROFILE,
+          AppModuleCode.CONCILIATION,
+          AppModuleCode.USERS,
+          AppModuleCode.LAYOUT_MANAGEMENT,
+          AppModuleCode.ACCESS_MATRIX,
+          AppModuleCode.ERP_MANAGEMENT
+        ]
+      ],
+      [
+        Role.ADMIN,
+        [
+          AppModuleCode.HOME,
+          AppModuleCode.PROFILE,
+          AppModuleCode.CONCILIATION,
+          AppModuleCode.USERS,
+          AppModuleCode.LAYOUT_MANAGEMENT,
+          AppModuleCode.ERP_MANAGEMENT
+        ]
+      ],
+      [Role.GESTOR_COBRANZA, [AppModuleCode.HOME, AppModuleCode.PROFILE, AppModuleCode.CONCILIATION]],
+      [Role.GESTOR_PAGOS, [AppModuleCode.HOME, AppModuleCode.PROFILE, AppModuleCode.CONCILIATION]]
+    ];
+
+    const toPersist: CompanyRoleModule[] = [];
+    for (const [roleCode, moduleCodes] of defaultModulesByRole) {
+      const role = roleByCode.get(roleCode);
+      if (!role) continue;
+
+      for (const moduleCode of moduleCodes) {
+        const module = moduleByCode.get(moduleCode);
+        if (!module) continue;
+
+        const key = this.buildMapKey(role.id, module.id);
+        if (existingKeys.has(key)) continue;
+
+        toPersist.push(
+          companyRoleModuleRepository.create({
+            company,
+            role,
+            module,
+            enabled: true
+          })
+        );
+      }
+    }
+
+    if (toPersist.length > 0) {
+      await companyRoleModuleRepository.save(toPersist);
+    }
   }
 
   private handleDatabaseError(error: unknown): never {
@@ -323,7 +500,7 @@ export class AccessControlService {
       if (driverError?.code === "23505") {
         const detail = String(driverError.detail ?? "").toLowerCase();
         if (detail.includes("emp_codigo")) {
-          throw new ConflictException("Ya existe una empresa con ese codigo.");
+          throw new ConflictException("Ya existe una empresa con ese ID fiscal.");
         }
 
         throw new ConflictException("Ya existe un registro con esos datos unicos.");

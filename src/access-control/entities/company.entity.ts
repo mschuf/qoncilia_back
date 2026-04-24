@@ -23,6 +23,18 @@ export class Company {
   @Column({ name: "emp_activa", type: "boolean", default: true })
   active!: boolean;
 
+  @Column({ name: "emp_webservice_erp", type: "varchar", length: 255, nullable: true })
+  webserviceErp!: string | null;
+
+  @Column({ name: "emp_scheme_erp", type: "varchar", length: 120, nullable: true })
+  schemeErp!: string | null;
+
+  @Column({ name: "emp_version_tls_erp", type: "varchar", length: 10, nullable: true })
+  tlsVersionErp!: string | null;
+
+  @Column({ name: "emp_id_tarjetas", type: "varchar", length: 120, nullable: true })
+  cardsId!: string | null;
+
   @OneToMany(() => User, (user) => user.company)
   users!: User[];
 

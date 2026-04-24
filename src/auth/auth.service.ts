@@ -19,7 +19,7 @@ export class AuthService {
     const user = await this.usersService.registerInactiveUser(payload);
     return {
       message:
-        "Usuario registrado. Queda inactivo hasta aprobacion de admin/super admin.",
+        "Empresa y usuario admin registrados. La empresa queda inactiva hasta aprobacion del superadmin.",
       user,
     };
   }
