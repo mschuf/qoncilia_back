@@ -22,6 +22,7 @@ import { CreateLayoutDto } from "./dto/create-layout.dto";
 import { CreateTemplateLayoutDto } from "./dto/create-template-layout.dto";
 import { CreateUserBankDto } from "./dto/create-user-bank.dto";
 import { ListReconciliationsQueryDto } from "./dto/list-reconciliations-query.dto";
+import { ParseFileDto } from "./dto/parse-file.dto";
 import { PreviewReconciliationDto } from "./dto/preview-reconciliation.dto";
 import { SaveReconciliationDto } from "./dto/save-reconciliation.dto";
 import { UpdateLayoutDto } from "./dto/update-layout.dto";
@@ -809,6 +810,30 @@ export class ConciliationService {
       unmatchedSystemRows,
       unmatchedBankRows,
       metrics
+    };
+  }
+
+  async parseFile(
+    actor: AuthUser,
+    payload: ParseFileDto,
+    file?: UploadedMemoryFile
+  ): Promise<{ rows: ConciliationPreviewRow[]; fileName: string }> {
+    if (!file?.buffer) {
+      throw new BadRequestException("Debes subir un archivo Excel.");
+    }
+
+    const { layout } = await this.requireAccessibleLayout(
+      actor,
+      payload.userBankId,
+      payload.layoutId
+    );
+
+    const workbook = this.readWorkbook(file.buffer, file.originalname);
+    const rows = this.extractRowsFromWorkbook(workbook, layout.mappings, payload.source);
+
+    return {
+      rows,
+      fileName: file.originalname
     };
   }
 

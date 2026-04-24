@@ -8,11 +8,12 @@ import {
   Patch,
   Post,
   Query,
+  UploadedFile,
   UploadedFiles,
   UseGuards,
   UseInterceptors
 } from "@nestjs/common";
-import { FileFieldsInterceptor } from "@nestjs/platform-express";
+import { FileFieldsInterceptor, FileInterceptor } from "@nestjs/platform-express";
 import { CurrentUser } from "../common/decorators/current-user.decorator";
 import { RequiredModule } from "../common/decorators/required-module.decorator";
 import { Roles } from "../common/decorators/roles.decorator";
@@ -28,6 +29,7 @@ import { CreateLayoutDto } from "./dto/create-layout.dto";
 import { CreateTemplateLayoutDto } from "./dto/create-template-layout.dto";
 import { CreateUserBankDto } from "./dto/create-user-bank.dto";
 import { ListReconciliationsQueryDto } from "./dto/list-reconciliations-query.dto";
+import { ParseFileDto } from "./dto/parse-file.dto";
 import { PreviewReconciliationDto } from "./dto/preview-reconciliation.dto";
 import { SaveReconciliationDto } from "./dto/save-reconciliation.dto";
 import { UpdateLayoutDto } from "./dto/update-layout.dto";
@@ -226,5 +228,25 @@ export class ConciliationController {
   @RequiredModule(AppModuleCode.CONCILIATION)
   getKpis(@CurrentUser() actor: AuthUser, @Query() query: ConciliationKpiQueryDto) {
     return this.conciliationService.getKpis(actor, query.userId);
+  }
+
+  @Post("parse-file")
+  @Roles(Role.ADMIN, Role.IS_SUPER_ADMIN, Role.GESTOR_COBRANZA, Role.GESTOR_PAGOS)
+  @RequiredModule(AppModuleCode.CONCILIATION)
+  @UseInterceptors(
+    FileInterceptor("file", {
+      limits: {
+        fileSize: 10 * 1024 * 1024
+      }
+    })
+  )
+  parseFile(
+    @Query("userBankId", ParseIntPipe) userBankId: number,
+    @Query("layoutId", ParseIntPipe) layoutId: number,
+    @Query("source") source: "system" | "bank",
+    @UploadedFile() file: UploadedMemoryFile,
+    @CurrentUser() actor: AuthUser
+  ) {
+    return this.conciliationService.parseFile(actor, { userBankId, layoutId, source }, file);
   }
 }
