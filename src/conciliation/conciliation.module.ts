@@ -8,6 +8,7 @@ import { BankingController } from "./banking.controller";
 import { BankingService } from "./banking.service";
 import { User } from "../users/entities/user.entity";
 import { BankEntity } from "./entities/bank.entity";
+import { ConciliationSystem } from "./entities/conciliation-system.entity";
 import { CompanyBankAccount } from "./entities/company-bank-account.entity";
 import { ConciliationController } from "./conciliation.controller";
 import { ConciliationService } from "./conciliation.service";
@@ -24,6 +25,7 @@ import { TemplateLayout } from "./entities/template-layout.entity";
       User,
       Company,
       BankEntity,
+      ConciliationSystem,
       CompanyBankAccount,
       TemplateLayout,
       TemplateLayoutMapping,

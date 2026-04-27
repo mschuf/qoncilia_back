@@ -10,6 +10,7 @@ CREATE TABLE IF NOT EXISTS public.usuarios (
   usr_legajo VARCHAR(50) NOT NULL,
   usr_password_hash VARCHAR(255) NOT NULL,
   usr_activo BOOLEAN NOT NULL DEFAULT FALSE,
+  usr_created_by INTEGER NULL,
   usr_created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   usr_updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   CONSTRAINT uq_usuarios_login UNIQUE (usr_login),
@@ -17,7 +18,9 @@ CREATE TABLE IF NOT EXISTS public.usuarios (
   CONSTRAINT uq_usuarios_email UNIQUE (usr_email),
   CONSTRAINT uq_usuarios_celular UNIQUE (usr_celular),
   CONSTRAINT chk_usuarios_login_not_blank CHECK (length(trim(usr_login)) > 0),
-  CONSTRAINT chk_usuarios_legajo_not_blank CHECK (length(trim(usr_legajo)) > 0)
+  CONSTRAINT chk_usuarios_legajo_not_blank CHECK (length(trim(usr_legajo)) > 0),
+  CONSTRAINT fk_usuarios_created_by FOREIGN KEY (usr_created_by)
+    REFERENCES public.usuarios (usr_id) ON DELETE SET NULL
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS uq_usuarios_login_lower
@@ -26,3 +29,6 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_usuarios_login_lower
 CREATE UNIQUE INDEX IF NOT EXISTS uq_usuarios_email_lower
   ON public.usuarios ((LOWER(usr_email)))
   WHERE usr_email IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_usuarios_created_by
+  ON public.usuarios (usr_created_by);

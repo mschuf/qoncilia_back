@@ -4,11 +4,13 @@ import {
   Entity,
   JoinColumn,
   ManyToOne,
+  OneToMany,
   PrimaryGeneratedColumn,
   UpdateDateColumn
 } from "typeorm";
 import { Company } from "../../access-control/entities/company.entity";
 import { BankEntity } from "./bank.entity";
+import { Reconciliation } from "./reconciliation.entity";
 
 @Entity({ name: "empresas_cuentas_bancarias" })
 export class CompanyBankAccount {
@@ -22,6 +24,13 @@ export class CompanyBankAccount {
   @ManyToOne(() => BankEntity, (bank) => bank.accounts, { nullable: false, onDelete: "CASCADE" })
   @JoinColumn({ name: "ban_id", referencedColumnName: "id" })
   bank!: BankEntity;
+
+  @ManyToOne(() => CompanyBankAccount, (account) => account.assignedAccounts, {
+    nullable: true,
+    onDelete: "SET NULL"
+  })
+  @JoinColumn({ name: "ecb_source_account_id", referencedColumnName: "id" })
+  sourceAccount!: CompanyBankAccount | null;
 
   @Column({ name: "ecb_nombre", type: "varchar", length: 160 })
   name!: string;
@@ -43,6 +52,12 @@ export class CompanyBankAccount {
 
   @Column({ name: "ecb_activo", type: "boolean", default: true })
   active!: boolean;
+
+  @OneToMany(() => CompanyBankAccount, (account) => account.sourceAccount)
+  assignedAccounts!: CompanyBankAccount[];
+
+  @OneToMany(() => Reconciliation, (reconciliation) => reconciliation.companyBankAccount)
+  reconciliations!: Reconciliation[];
 
   @CreateDateColumn({ name: "ecb_created_at", type: "timestamptz" })
   createdAt!: Date;

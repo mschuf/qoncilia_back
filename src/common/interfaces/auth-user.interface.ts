@@ -17,4 +17,6 @@ export interface AuthUser {
   companyName: string;
   enabledModules: string[];
   role: Role;
+  creatorUserId: number | null;
+  creatorUserLogin: string | null;
 }

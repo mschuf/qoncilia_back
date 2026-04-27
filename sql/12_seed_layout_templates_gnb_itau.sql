@@ -20,6 +20,7 @@ DECLARE
   target_user_id INTEGER;
   target_user_login TEXT;
   target_company_id INTEGER;
+  system_id INTEGER;
 
   gnb_bank_id INTEGER;
   itau_bank_id INTEGER;
@@ -54,6 +55,27 @@ BEGIN
     RAISE EXCEPTION 'No existe ningun usuario en public.usuarios para aplicar el seed.';
   END IF;
 
+  SELECT sys_id
+  INTO system_id
+  FROM public.conciliation_systems
+  WHERE LOWER(sys_nombre) = LOWER('SAP')
+  ORDER BY sys_id ASC
+  LIMIT 1;
+
+  IF system_id IS NULL THEN
+    INSERT INTO public.conciliation_systems (
+      sys_nombre,
+      sys_descripcion,
+      sys_activo
+    )
+    VALUES (
+      'SAP',
+      'Sistema base creado automaticamente por el seed GNB/Itau.',
+      TRUE
+    )
+    RETURNING sys_id INTO system_id;
+  END IF;
+
   RAISE NOTICE 'Seed GNB/Itau aplicado sobre usr_id=% usr_login=%', target_user_id, target_user_login;
 
   INSERT INTO public.bancos (
@@ -85,6 +107,7 @@ BEGIN
 
   INSERT INTO public.conciliacion_layouts (
     ban_id,
+    sys_id,
     lyt_nombre,
     lyt_descripcion,
     lyt_system_label,
@@ -94,6 +117,7 @@ BEGIN
   )
   SELECT
     gnb_bank_id,
+    system_id,
     'GNB vs SAP B1',
     'Template basado en hoja GNB de Extractos GNB vs SAP B1',
     'SAP B1',
@@ -115,6 +139,7 @@ BEGIN
 
   INSERT INTO public.conciliacion_layouts (
     ban_id,
+    sys_id,
     lyt_nombre,
     lyt_descripcion,
     lyt_system_label,
@@ -124,6 +149,7 @@ BEGIN
   )
   SELECT
     gnb_bank_id,
+    system_id,
     'GNB-443 vs SAP B1',
     'Template basado en hoja GNB-443 de Extractos GNB vs SAP B1',
     'SAP B1',
@@ -140,6 +166,7 @@ BEGIN
 
   INSERT INTO public.conciliacion_layouts (
     ban_id,
+    sys_id,
     lyt_nombre,
     lyt_descripcion,
     lyt_system_label,
@@ -149,6 +176,7 @@ BEGIN
   )
   SELECT
     gnb_bank_id,
+    system_id,
     'GNB3 vs SAP B1',
     'Template basado en hoja GNB3 de Extractos GNB vs SAP B1',
     'SAP B1',
@@ -165,6 +193,7 @@ BEGIN
 
   INSERT INTO public.conciliacion_layouts (
     ban_id,
+    sys_id,
     lyt_nombre,
     lyt_descripcion,
     lyt_system_label,
@@ -174,6 +203,7 @@ BEGIN
   )
   SELECT
     itau_bank_id,
+    system_id,
     'Itau vs SAP B1',
     'Template basado en Extractos ITAU vs SAP B1',
     'SAP B1',

@@ -24,6 +24,12 @@ export class ListReconciliationsQueryDto {
   @IsOptional()
   @IsInt()
   @IsPositive()
+  companyBankAccountId?: number;
+
+  @Transform(toNumber)
+  @IsOptional()
+  @IsInt()
+  @IsPositive()
   layoutId?: number;
 
   @IsOptional()

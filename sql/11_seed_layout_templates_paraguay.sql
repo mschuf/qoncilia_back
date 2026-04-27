@@ -20,6 +20,7 @@ DECLARE
   target_user_id INTEGER;
   target_user_login TEXT;
   target_company_id INTEGER;
+  system_id INTEGER;
   familiar_bank_id INTEGER;
   sudameris_bank_id INTEGER;
   conti_bank_id INTEGER;
@@ -50,6 +51,27 @@ BEGIN
 
   IF target_user_id IS NULL THEN
     RAISE EXCEPTION 'No existe ningun usuario en public.usuarios para aplicar el seed.';
+  END IF;
+
+  SELECT sys_id
+  INTO system_id
+  FROM public.conciliation_systems
+  WHERE LOWER(sys_nombre) = LOWER('SAP')
+  ORDER BY sys_id ASC
+  LIMIT 1;
+
+  IF system_id IS NULL THEN
+    INSERT INTO public.conciliation_systems (
+      sys_nombre,
+      sys_descripcion,
+      sys_activo
+    )
+    VALUES (
+      'SAP',
+      'Sistema base creado automaticamente por el seed Paraguay.',
+      TRUE
+    )
+    RETURNING sys_id INTO system_id;
   END IF;
 
   RAISE NOTICE 'Seed de layouts aplicado sobre usr_id=% usr_login=%', target_user_id, target_user_login;
@@ -91,6 +113,7 @@ BEGIN
 
   INSERT INTO public.conciliacion_layouts (
     ban_id,
+    sys_id,
     lyt_nombre,
     lyt_descripcion,
     lyt_system_label,
@@ -100,6 +123,7 @@ BEGIN
   )
   SELECT
     familiar_bank_id,
+    system_id,
     'Familiar vs SAP B1',
     'Template basado en extracto Familiar y SAP B1',
     'SAP B1',
@@ -121,6 +145,7 @@ BEGIN
 
   INSERT INTO public.conciliacion_layouts (
     ban_id,
+    sys_id,
     lyt_nombre,
     lyt_descripcion,
     lyt_system_label,
@@ -130,6 +155,7 @@ BEGIN
   )
   SELECT
     sudameris_bank_id,
+    system_id,
     'Sudameris vs SAP B1',
     'Template basado en extracto Sudameris y SAP B1',
     'SAP B1',
@@ -151,6 +177,7 @@ BEGIN
 
   INSERT INTO public.conciliacion_layouts (
     ban_id,
+    sys_id,
     lyt_nombre,
     lyt_descripcion,
     lyt_system_label,
@@ -160,6 +187,7 @@ BEGIN
   )
   SELECT
     conti_bank_id,
+    system_id,
     'Conti vs SAP B1',
     'Template basado en extracto Continental y SAP B1',
     'SAP B1',

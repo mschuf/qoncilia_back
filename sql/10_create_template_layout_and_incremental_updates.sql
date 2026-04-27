@@ -17,6 +17,7 @@ CREATE TABLE public.template_layout (
   tpl_nombre VARCHAR(120) NOT NULL,
   tpl_descripcion VARCHAR(255) NULL,
   tpl_banco_referencia VARCHAR(120) NULL,
+  sys_id INTEGER NOT NULL,
   tpl_system_label VARCHAR(120) NOT NULL DEFAULT 'Sistema',
   tpl_bank_label VARCHAR(120) NOT NULL DEFAULT 'Banco',
   tpl_auto_match_threshold DOUBLE PRECISION NOT NULL DEFAULT 1,
@@ -26,7 +27,9 @@ CREATE TABLE public.template_layout (
   CONSTRAINT chk_template_layout_nombre_not_blank CHECK (length(trim(tpl_nombre)) > 0),
   CONSTRAINT chk_template_layout_threshold_range CHECK (
     tpl_auto_match_threshold >= 0 AND tpl_auto_match_threshold <= 1
-  )
+  ),
+  CONSTRAINT fk_template_layout_systems FOREIGN KEY (sys_id)
+    REFERENCES public.conciliation_systems (sys_id) ON DELETE RESTRICT
 );
 
 CREATE TABLE public.template_layout_mapping (
@@ -76,6 +79,9 @@ CREATE INDEX idx_template_layout_mapping_tpl_id
 
 CREATE INDEX idx_conciliacion_layouts_tpl_id
   ON public.conciliacion_layouts (tpl_id);
+
+CREATE INDEX idx_template_layout_sys_id
+  ON public.template_layout (sys_id);
 
 CREATE OR REPLACE FUNCTION public.fn_touch_tpl_updated_at()
 RETURNS TRIGGER

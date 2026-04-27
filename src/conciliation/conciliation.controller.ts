@@ -25,13 +25,16 @@ import { RolesGuard } from "../common/guards/roles.guard";
 import { AuthUser } from "../common/interfaces/auth-user.interface";
 import { ConciliationKpiQueryDto } from "./dto/conciliation-kpi-query.dto";
 import { ApplyTemplateLayoutDto } from "./dto/apply-template-layout.dto";
+import { AssignGestorBankDto } from "./dto/assign-gestor-bank.dto";
 import { CreateBankDto } from "./dto/create-bank.dto";
+import { CreateConciliationSystemDto } from "./dto/create-conciliation-system.dto";
 import { CreateLayoutDto } from "./dto/create-layout.dto";
 import { CreateTemplateLayoutDto } from "./dto/create-template-layout.dto";
 import { ListReconciliationsQueryDto } from "./dto/list-reconciliations-query.dto";
 import { ParseFileDto } from "./dto/parse-file.dto";
 import { PreviewReconciliationDto } from "./dto/preview-reconciliation.dto";
 import { SaveReconciliationDto } from "./dto/save-reconciliation.dto";
+import { UpdateConciliationSystemDto } from "./dto/update-conciliation-system.dto";
 import { UpdateBankDto } from "./dto/update-bank.dto";
 import { UpdateLayoutDto } from "./dto/update-layout.dto";
 import { UpdateTemplateLayoutDto } from "./dto/update-template-layout.dto";
@@ -64,6 +67,62 @@ export class ConciliationController {
   @RequiredModule(AppModuleCode.LAYOUT_MANAGEMENT)
   listTemplateLayouts(@CurrentUser() actor: AuthUser) {
     return this.conciliationService.listTemplateLayouts(actor);
+  }
+
+  @Get("systems")
+  @Roles(Role.ADMIN, Role.IS_SUPER_ADMIN)
+  @RequiredModule(AppModuleCode.LAYOUT_MANAGEMENT)
+  listSystems(@CurrentUser() actor: AuthUser) {
+    return this.conciliationService.listSystems(actor);
+  }
+
+  @Post("systems")
+  @Roles(Role.IS_SUPER_ADMIN)
+  @RequiredModule(AppModuleCode.LAYOUT_MANAGEMENT)
+  createSystem(@Body() body: CreateConciliationSystemDto, @CurrentUser() actor: AuthUser) {
+    return this.conciliationService.createSystem(body, actor);
+  }
+
+  @Patch("systems/:systemId")
+  @Roles(Role.IS_SUPER_ADMIN)
+  @RequiredModule(AppModuleCode.LAYOUT_MANAGEMENT)
+  updateSystem(
+    @Param("systemId", ParseIntPipe) systemId: number,
+    @Body() body: UpdateConciliationSystemDto,
+    @CurrentUser() actor: AuthUser
+  ) {
+    return this.conciliationService.updateSystem(systemId, body, actor);
+  }
+
+  @Delete("systems/:systemId")
+  @Roles(Role.IS_SUPER_ADMIN)
+  @RequiredModule(AppModuleCode.LAYOUT_MANAGEMENT)
+  deleteSystem(@Param("systemId", ParseIntPipe) systemId: number, @CurrentUser() actor: AuthUser) {
+    return this.conciliationService.deleteSystem(systemId, actor);
+  }
+
+  @Get("gestor-assignments/catalog")
+  @Roles(Role.ADMIN, Role.IS_SUPER_ADMIN)
+  @RequiredModule(AppModuleCode.LAYOUT_MANAGEMENT)
+  listGestorAssignmentCatalog(@CurrentUser() actor: AuthUser) {
+    return this.conciliationService.listGestorAssignmentCatalog(actor);
+  }
+
+  @Post("gestor-assignments/users/:userId/banks/:sourceBankId/sync")
+  @Roles(Role.ADMIN, Role.IS_SUPER_ADMIN)
+  @RequiredModule(AppModuleCode.LAYOUT_MANAGEMENT)
+  syncGestorBankAssignment(
+    @Param("userId", ParseIntPipe) userId: number,
+    @Param("sourceBankId", ParseIntPipe) sourceBankId: number,
+    @Body() body: AssignGestorBankDto,
+    @CurrentUser() actor: AuthUser
+  ) {
+    return this.conciliationService.syncGestorBankAssignment(
+      actor,
+      userId,
+      sourceBankId,
+      body
+    );
   }
 
   @Post("template-layouts")

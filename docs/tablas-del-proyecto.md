@@ -6,7 +6,7 @@ Este documento resume las tablas vigentes del proyecto despues del refactor que 
 
 ### `public.usuarios`
 
-Usuarios del sistema. Guarda credenciales, datos basicos y las referencias actuales a empresa y rol principal.
+Usuarios del sistema. Guarda credenciales, datos basicos, empresa, rol principal y el campo `usr_created_by` para identificar que admin creo a cada gestor.
 
 ### `public.roles`
 
@@ -42,6 +42,7 @@ Campos funcionales principales:
 
 - `emp_id`: empresa del banco
 - `usr_id`: usuario responsable
+- `ban_source_bank_id`: banco origen cuando el registro fue espejado a un gestor
 - `ban_nombre`: nombre del banco
 - `ban_alias`: alias operativo
 - `ban_descripcion`: descripcion interna
@@ -49,13 +50,22 @@ Campos funcionales principales:
 
 ### `public.empresas_cuentas_bancarias`
 
-Cuentas bancarias operativas de una empresa dentro de un banco. Guarda moneda, numero de cuenta y datos de integracion ERP.
+Cuentas bancarias operativas de una empresa dentro de un banco. Guarda moneda, numero de cuenta, datos de integracion ERP y `ecb_source_account_id` cuando la cuenta fue replicada desde un banco admin hacia un gestor.
 
 ## Conciliacion
+
+### `public.conciliation_systems`
+
+Catalogo dinamico de sistemas origen. Un sistema puede tener N template layouts y N layouts operativos. Ejemplos: `SAP`, `Softland`, `Bejerman`.
 
 ### `public.conciliacion_layouts`
 
 Layouts configurables de conciliacion asociados directamente a `bancos` por `ban_id`.
+
+Campos nuevos relevantes:
+
+- `sys_id`: sistema al que pertenece el layout
+- `lyt_source_layout_id`: layout origen cuando se espejo desde un admin a un gestor
 
 ### `public.conciliacion_layout_mappings`
 
@@ -63,7 +73,7 @@ Detalle de campos/mapeos de cada layout. Define columnas de sistema y banco, tip
 
 ### `public.template_layout`
 
-Templates reutilizables para crear layouts rapidamente.
+Templates reutilizables para crear layouts rapidamente. Tambien quedan asociados a `sys_id` para soportar varios sistemas.
 
 ### `public.template_layout_mapping`
 
@@ -71,7 +81,23 @@ Mappings de cada template layout.
 
 ### `public.conciliaciones`
 
-Cabecera de cada conciliacion guardada. Relaciona usuario ejecutor, banco, layout, archivos usados, metricas y snapshot resumido.
+Cabecera de cada conciliacion guardada. Relaciona usuario ejecutor, banco, cuenta bancaria, layout, archivos usados, metricas, estado funcional y snapshot resumido.
+
+Campos nuevos relevantes:
+
+- `ecb_id`: cuenta bancaria principal de la conciliacion
+- `con_has_system_data`: indica si se guardo lado sistema
+- `con_has_bank_data`: indica si se guardo lado banco
+
+Estados funcionales usados por la app:
+
+- `draft_system_only`
+- `draft_bank_only`
+- `ready_to_compare`
+- `matched`
+- `matched_with_manual`
+- `compared_with_pending`
+- `compared_without_matches`
 
 ### `public.conciliacion_matches`
 

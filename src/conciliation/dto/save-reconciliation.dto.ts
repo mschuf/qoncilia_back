@@ -90,12 +90,19 @@ export class SaveReconciliationDto {
 
   @IsInt()
   @IsPositive()
+  companyBankAccountId!: number;
+
+  @IsInt()
+  @IsPositive()
   layoutId!: number;
 
-  @IsOptional()
   @IsString()
   @MaxLength(160)
-  name?: string;
+  name!: string;
+
+  @IsOptional()
+  @IsBoolean()
+  comparisonPerformed?: boolean;
 
   @IsOptional()
   @IsString()

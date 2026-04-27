@@ -16,6 +16,7 @@ CREATE TABLE public.bancos (
   ban_id SERIAL PRIMARY KEY,
   emp_id INTEGER NOT NULL,
   usr_id INTEGER NOT NULL,
+  ban_source_bank_id INTEGER NULL,
   ban_nombre VARCHAR(160) NOT NULL,
   ban_alias VARCHAR(120) NULL,
   ban_descripcion VARCHAR(255) NULL,
@@ -25,7 +26,9 @@ CREATE TABLE public.bancos (
   ban_updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   CONSTRAINT chk_bancos_nombre_not_blank CHECK (length(trim(ban_nombre)) > 0),
   CONSTRAINT fk_bancos_empresas FOREIGN KEY (emp_id) REFERENCES public.empresas (emp_id) ON DELETE CASCADE,
-  CONSTRAINT fk_bancos_usuarios FOREIGN KEY (usr_id) REFERENCES public.usuarios (usr_id) ON DELETE CASCADE
+  CONSTRAINT fk_bancos_usuarios FOREIGN KEY (usr_id) REFERENCES public.usuarios (usr_id) ON DELETE CASCADE,
+  CONSTRAINT fk_bancos_source_bank FOREIGN KEY (ban_source_bank_id)
+    REFERENCES public.bancos (ban_id) ON DELETE SET NULL
 );
 
 CREATE UNIQUE INDEX uq_bancos_usuario_nombre_lower
@@ -37,10 +40,18 @@ CREATE INDEX idx_bancos_emp_id
 CREATE INDEX idx_bancos_usr_id
   ON public.bancos (usr_id);
 
+CREATE INDEX idx_bancos_source_bank_id
+  ON public.bancos (ban_source_bank_id);
+
+CREATE UNIQUE INDEX uq_bancos_usuario_source_bank
+  ON public.bancos (usr_id, ban_source_bank_id)
+  WHERE ban_source_bank_id IS NOT NULL;
+
 CREATE TABLE public.empresas_cuentas_bancarias (
   ecb_id SERIAL PRIMARY KEY,
   emp_id INTEGER NOT NULL,
   ban_id INTEGER NOT NULL,
+  ecb_source_account_id INTEGER NULL,
   ecb_nombre VARCHAR(160) NOT NULL,
   ecb_moneda VARCHAR(20) NOT NULL DEFAULT 'GS',
   ecb_numero_cuenta VARCHAR(80) NOT NULL,
@@ -57,6 +68,8 @@ CREATE TABLE public.empresas_cuentas_bancarias (
   CONSTRAINT chk_ecb_numero_cuenta_mayor_not_blank CHECK (length(trim(ecb_numero_cuenta_mayor)) > 0),
   CONSTRAINT fk_ecb_empresas FOREIGN KEY (emp_id) REFERENCES public.empresas (emp_id) ON DELETE CASCADE,
   CONSTRAINT fk_ecb_bancos FOREIGN KEY (ban_id) REFERENCES public.bancos (ban_id) ON DELETE CASCADE,
+  CONSTRAINT fk_ecb_source_account FOREIGN KEY (ecb_source_account_id)
+    REFERENCES public.empresas_cuentas_bancarias (ecb_id) ON DELETE SET NULL,
   CONSTRAINT uq_empresas_cuentas_bancarias_empresa_banco_cuenta UNIQUE (emp_id, ban_id, ecb_numero_cuenta)
 );
 
@@ -68,6 +81,13 @@ CREATE INDEX idx_ecb_ban_id
 
 CREATE INDEX idx_ecb_activo
   ON public.empresas_cuentas_bancarias (ecb_activo);
+
+CREATE INDEX idx_ecb_source_account_id
+  ON public.empresas_cuentas_bancarias (ecb_source_account_id);
+
+CREATE UNIQUE INDEX uq_ecb_bank_source_account
+  ON public.empresas_cuentas_bancarias (ban_id, ecb_source_account_id)
+  WHERE ecb_source_account_id IS NOT NULL;
 
 CREATE OR REPLACE FUNCTION public.fn_touch_bancos_updated_at()
 RETURNS TRIGGER

@@ -124,6 +124,7 @@ export class UsersService {
 
     const company = await this.resolveCompanyForAbm(actor, payload.companyId);
     const role = await this.requireRoleByCode(roleCode);
+    const creatorUser = await this.findById(actor.id);
 
     const user = this.userRepository.create({
       usrNombre: this.normalizeOptional(payload.usrNombre),
@@ -135,7 +136,8 @@ export class UsersService {
       passwordHash: await hash(payload.password, this.bcryptRounds),
       activo: payload.activo ?? true,
       company,
-      role
+      role,
+      creatorUser
     });
 
     try {
@@ -154,7 +156,8 @@ export class UsersService {
       where,
       relations: {
         company: true,
-        role: true
+        role: true,
+        creatorUser: true
       },
       order: { id: "ASC" }
     });
@@ -213,7 +216,8 @@ export class UsersService {
       where: { id },
       relations: {
         company: true,
-        role: true
+        role: true,
+        creatorUser: true
       }
     });
   }
@@ -229,7 +233,8 @@ export class UsersService {
       where: [{ usrLogin: lowerMatch }, { usrEmail: lowerMatch }],
       relations: {
         company: true,
-        role: true
+        role: true,
+        creatorUser: true
       }
     });
   }
@@ -264,7 +269,9 @@ export class UsersService {
       companyCode: user.company.code,
       companyName: user.company.name,
       enabledModules,
-      role: roleCode
+      role: roleCode,
+      creatorUserId: user.creatorUser?.id ?? null,
+      creatorUserLogin: user.creatorUser?.usrLogin ?? null
     };
   }
 

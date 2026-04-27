@@ -9,6 +9,7 @@ import {
   UpdateDateColumn
 } from "typeorm";
 import { Reconciliation } from "./reconciliation.entity";
+import { ConciliationSystem } from "./conciliation-system.entity";
 import { ReconciliationLayoutMapping } from "./reconciliation-layout-mapping.entity";
 import { TemplateLayout } from "./template-layout.entity";
 import { BankEntity } from "./bank.entity";
@@ -28,6 +29,20 @@ export class ReconciliationLayout {
   })
   @JoinColumn({ name: "tpl_id", referencedColumnName: "id" })
   templateLayout!: TemplateLayout | null;
+
+  @ManyToOne(() => ConciliationSystem, (system) => system.layouts, {
+    nullable: false,
+    onDelete: "RESTRICT"
+  })
+  @JoinColumn({ name: "sys_id", referencedColumnName: "id" })
+  system!: ConciliationSystem;
+
+  @ManyToOne(() => ReconciliationLayout, (layout) => layout.assignedLayouts, {
+    nullable: true,
+    onDelete: "SET NULL"
+  })
+  @JoinColumn({ name: "lyt_source_layout_id", referencedColumnName: "id" })
+  sourceLayout!: ReconciliationLayout | null;
 
   @Column({ name: "lyt_nombre", type: "varchar", length: 120 })
   name!: string;
@@ -49,6 +64,9 @@ export class ReconciliationLayout {
 
   @OneToMany(() => ReconciliationLayoutMapping, (mapping) => mapping.layout)
   mappings!: ReconciliationLayoutMapping[];
+
+  @OneToMany(() => ReconciliationLayout, (layout) => layout.sourceLayout)
+  assignedLayouts!: ReconciliationLayout[];
 
   @OneToMany(() => Reconciliation, (reconciliation) => reconciliation.layout)
   reconciliations!: Reconciliation[];

@@ -3,6 +3,7 @@ BEGIN;
 WITH source_layouts AS (
   SELECT DISTINCT ON (LOWER(l.lyt_nombre))
     l.lyt_id,
+    l.sys_id,
     trim(l.lyt_nombre) AS template_name,
     NULLIF(trim(l.lyt_descripcion), '') AS template_description,
     COALESCE(
@@ -22,6 +23,7 @@ INSERT INTO public.template_layout (
   tpl_nombre,
   tpl_descripcion,
   tpl_banco_referencia,
+  sys_id,
   tpl_system_label,
   tpl_bank_label,
   tpl_auto_match_threshold,
@@ -31,6 +33,7 @@ SELECT
   s.template_name,
   s.template_description,
   s.reference_bank_name,
+  s.sys_id,
   s.lyt_system_label,
   s.lyt_bank_label,
   s.lyt_auto_match_threshold,
@@ -101,5 +104,12 @@ WHERE NOT EXISTS (
   WHERE tm.tpl_id = t.tpl_id
 )
 ORDER BY t.tpl_id, m.lmp_sort_order, m.lmp_id;
+
+UPDATE public.conciliacion_layouts l
+SET tpl_id = t.tpl_id
+FROM public.template_layout t
+WHERE LOWER(t.tpl_nombre) = LOWER(l.lyt_nombre)
+  AND t.sys_id = l.sys_id
+  AND l.tpl_id IS DISTINCT FROM t.tpl_id;
 
 COMMIT;

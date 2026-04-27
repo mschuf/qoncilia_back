@@ -27,6 +27,13 @@ export class BankEntity {
   @JoinColumn({ name: "usr_id", referencedColumnName: "id" })
   user!: User;
 
+  @ManyToOne(() => BankEntity, (bank) => bank.assignedBanks, {
+    nullable: true,
+    onDelete: "SET NULL"
+  })
+  @JoinColumn({ name: "ban_source_bank_id", referencedColumnName: "id" })
+  sourceBank!: BankEntity | null;
+
   @Column({ name: "ban_nombre", type: "varchar", length: 160 })
   name!: string;
 
@@ -44,6 +51,9 @@ export class BankEntity {
 
   @OneToMany(() => CompanyBankAccount, (account) => account.bank)
   accounts!: CompanyBankAccount[];
+
+  @OneToMany(() => BankEntity, (bank) => bank.sourceBank)
+  assignedBanks!: BankEntity[];
 
   @OneToMany(() => ReconciliationLayout, (layout) => layout.userBank)
   layouts!: ReconciliationLayout[];

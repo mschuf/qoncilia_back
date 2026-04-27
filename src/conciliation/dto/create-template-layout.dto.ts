@@ -33,6 +33,11 @@ const toNumber = ({ value }: { value: unknown }) => {
 };
 
 export class CreateTemplateLayoutDto {
+  @Transform(toNumber)
+  @IsNumber()
+  @Min(1)
+  systemId!: number;
+
   @IsString()
   @MaxLength(120)
   name!: string;

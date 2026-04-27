@@ -10,6 +10,7 @@ import {
 } from "typeorm";
 import { User } from "../../users/entities/user.entity";
 import { BankEntity } from "./bank.entity";
+import { CompanyBankAccount } from "./company-bank-account.entity";
 import { ReconciliationLayout } from "./reconciliation-layout.entity";
 import { ReconciliationMatch } from "./reconciliation-match.entity";
 
@@ -36,6 +37,13 @@ export class Reconciliation {
   @JoinColumn({ name: "lyt_id", referencedColumnName: "id" })
   layout!: ReconciliationLayout;
 
+  @ManyToOne(() => CompanyBankAccount, (account) => account.reconciliations, {
+    nullable: true,
+    onDelete: "SET NULL"
+  })
+  @JoinColumn({ name: "ecb_id", referencedColumnName: "id" })
+  companyBankAccount!: CompanyBankAccount | null;
+
   @Column({ name: "con_nombre", type: "varchar", length: 160 })
   name!: string;
 
@@ -44,6 +52,12 @@ export class Reconciliation {
 
   @Column({ name: "con_update_count", type: "integer", default: 0 })
   updateCount!: number;
+
+  @Column({ name: "con_has_system_data", type: "boolean", default: false })
+  hasSystemData!: boolean;
+
+  @Column({ name: "con_has_bank_data", type: "boolean", default: false })
+  hasBankData!: boolean;
 
   @Column({ name: "con_system_filename", type: "varchar", length: 255, nullable: true })
   systemFileName!: string | null;

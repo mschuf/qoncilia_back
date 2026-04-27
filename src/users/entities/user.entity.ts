@@ -49,8 +49,18 @@ export class User {
   @JoinColumn({ name: "rol_id", referencedColumnName: "id" })
   role!: UserRole;
 
+  @ManyToOne(() => User, (user) => user.createdUsers, {
+    nullable: true,
+    onDelete: "SET NULL"
+  })
+  @JoinColumn({ name: "usr_created_by", referencedColumnName: "id" })
+  creatorUser!: User | null;
+
   @OneToMany(() => BankEntity, (bank) => bank.user)
   banks!: BankEntity[];
+
+  @OneToMany(() => User, (user) => user.creatorUser)
+  createdUsers!: User[];
 
   @CreateDateColumn({ name: "usr_created_at", type: "timestamptz" })
   createdAt!: Date;

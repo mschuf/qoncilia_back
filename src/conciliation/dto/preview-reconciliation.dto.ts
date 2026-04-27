@@ -9,9 +9,20 @@ const toNumber = ({ value }: { value: unknown }) => {
 
 export class PreviewReconciliationDto {
   @Transform(toNumber)
+  @IsOptional()
+  @IsInt()
+  @IsPositive()
+  reconciliationId?: number;
+
+  @Transform(toNumber)
   @IsInt()
   @IsPositive()
   userBankId!: number;
+
+  @Transform(toNumber)
+  @IsInt()
+  @IsPositive()
+  companyBankAccountId!: number;
 
   @Transform(toNumber)
   @IsInt()
