@@ -117,6 +117,28 @@ export class ConciliationController {
     return this.conciliationService.updateUserBank(userId, bankId, body, actor);
   }
 
+  @Get("users/:userId/banks/:bankId/delete-preview")
+  @Roles(Role.IS_SUPER_ADMIN)
+  @RequiredModule(AppModuleCode.LAYOUT_MANAGEMENT)
+  getUserBankDeletionPreview(
+    @Param("userId", ParseIntPipe) userId: number,
+    @Param("bankId", ParseIntPipe) bankId: number,
+    @CurrentUser() actor: AuthUser
+  ) {
+    return this.conciliationService.getUserBankDeletionPreview(userId, bankId, actor);
+  }
+
+  @Delete("users/:userId/banks/:bankId")
+  @Roles(Role.IS_SUPER_ADMIN)
+  @RequiredModule(AppModuleCode.LAYOUT_MANAGEMENT)
+  deleteUserBank(
+    @Param("userId", ParseIntPipe) userId: number,
+    @Param("bankId", ParseIntPipe) bankId: number,
+    @CurrentUser() actor: AuthUser
+  ) {
+    return this.conciliationService.deleteUserBank(userId, bankId, actor);
+  }
+
   @Post("users/:userId/banks/:bankId/layouts")
   @Roles(Role.IS_SUPER_ADMIN)
   @RequiredModule(AppModuleCode.LAYOUT_MANAGEMENT)

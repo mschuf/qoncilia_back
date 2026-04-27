@@ -121,6 +121,38 @@ export interface PublicUserBankWithLayouts extends PublicUserBank {
   layouts: PublicLayout[];
 }
 
+export interface PublicUserBankDeletionLayout {
+  id: number;
+  name: string;
+  description: string | null;
+  active: boolean;
+}
+
+export interface PublicUserBankDeletionAccount {
+  id: number;
+  name: string;
+  currency: string;
+  accountNumber: string;
+  bankErpId: string;
+  majorAccountNumber: string;
+  paymentAccountNumber: string | null;
+  active: boolean;
+}
+
+export interface PublicUserBankDeletionPreview {
+  bank: PublicUserBank;
+  layouts: PublicUserBankDeletionLayout[];
+  accounts: PublicUserBankDeletionAccount[];
+  reconciliationCount: number;
+}
+
+export interface DeleteUserBankResponse {
+  message: string;
+  deletedLayouts: number;
+  deletedAccounts: number;
+  deletedReconciliations: number;
+}
+
 export interface PublicReconciliationSummary {
   id: number;
   name: string;

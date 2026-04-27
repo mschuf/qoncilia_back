@@ -21,6 +21,7 @@ import { ApplyTemplateLayoutDto } from "./dto/apply-template-layout.dto";
 import { CreateBankDto } from "./dto/create-bank.dto";
 import { CreateLayoutDto } from "./dto/create-layout.dto";
 import { CreateTemplateLayoutDto } from "./dto/create-template-layout.dto";
+import { CompanyBankAccount } from "./entities/company-bank-account.entity";
 import { ListReconciliationsQueryDto } from "./dto/list-reconciliations-query.dto";
 import { ParseFileDto } from "./dto/parse-file.dto";
 import { PreviewReconciliationDto } from "./dto/preview-reconciliation.dto";
@@ -42,11 +43,15 @@ import {
   ConciliationPreviewResponse,
   ConciliationPreviewRow,
   ConciliationRuleResult,
+  DeleteUserBankResponse,
   PublicLayout,
   PublicLayoutMapping,
   PublicReconciliationDetail,
   PublicReconciliationSummary,
   PublicTemplateLayout,
+  PublicUserBankDeletionAccount,
+  PublicUserBankDeletionLayout,
+  PublicUserBankDeletionPreview,
   ReconciliationSnapshot,
   PublicUserBank,
   PublicUserBankSummary,
@@ -203,6 +208,47 @@ export class ConciliationService {
     } catch (error) {
       this.handleDatabaseError(error);
     }
+  }
+
+  async getUserBankDeletionPreview(
+    userId: number,
+    bankId: number,
+    actor: AuthUser
+  ): Promise<PublicUserBankDeletionPreview> {
+    this.ensureSuperadmin(actor);
+    return this.buildUserBankDeletionPreview(this.userBankRepository.manager, userId, bankId);
+  }
+
+  async deleteUserBank(
+    userId: number,
+    bankId: number,
+    actor: AuthUser
+  ): Promise<DeleteUserBankResponse> {
+    this.ensureSuperadmin(actor);
+
+    return this.userBankRepository.manager.transaction(async (manager) => {
+      const preview = await this.buildUserBankDeletionPreview(manager, userId, bankId);
+      const reconciliationRepository = manager.getRepository(Reconciliation);
+      const bankRepository = manager.getRepository(BankEntity);
+
+      if (preview.reconciliationCount > 0) {
+        await reconciliationRepository
+          .createQueryBuilder()
+          .delete()
+          .from(Reconciliation)
+          .where("ban_id = :bankId", { bankId })
+          .execute();
+      }
+
+      await bankRepository.delete(bankId);
+
+      return {
+        message: "Banco eliminado.",
+        deletedLayouts: preview.layouts.length,
+        deletedAccounts: preview.accounts.length,
+        deletedReconciliations: preview.reconciliationCount
+      };
+    });
   }
 
   async createTemplateLayout(
@@ -2035,6 +2081,64 @@ export class ConciliationService {
     };
   }
 
+  private async buildUserBankDeletionPreview(
+    manager: EntityManager,
+    userId: number,
+    bankId: number
+  ): Promise<PublicUserBankDeletionPreview> {
+    const bankRepository = manager.getRepository(BankEntity);
+    const companyBankAccountRepository = manager.getRepository(CompanyBankAccount);
+    const reconciliationRepository = manager.getRepository(Reconciliation);
+
+    const bank = await bankRepository.findOne({
+      where: {
+        id: bankId,
+        user: {
+          id: userId
+        }
+      },
+      relations: {
+        user: true,
+        layouts: true
+      }
+    });
+
+    if (!bank) {
+      throw new NotFoundException("Banco asignado no encontrado.");
+    }
+
+    const [accounts, reconciliationCount] = await Promise.all([
+      companyBankAccountRepository.find({
+        where: {
+          bank: {
+            id: bankId
+          }
+        },
+        order: {
+          name: "ASC",
+          id: "ASC"
+        }
+      }),
+      reconciliationRepository
+        .createQueryBuilder("reconciliation")
+        .where("reconciliation.ban_id = :bankId", { bankId })
+        .getCount()
+    ]);
+
+    return {
+      bank: this.toPublicUserBank(bank),
+      layouts: [...(bank.layouts ?? [])]
+        .sort((left, right) => {
+          const byName = left.name.localeCompare(right.name);
+          if (byName !== 0) return byName;
+          return left.id - right.id;
+        })
+        .map((layout) => this.toPublicUserBankDeletionLayout(layout)),
+      accounts: accounts.map((account) => this.toPublicUserBankDeletionAccount(account)),
+      reconciliationCount
+    };
+  }
+
   private toPublicUserBank(entity: BankEntity): PublicUserBank {
     return {
       ...this.toPublicUserBankSummary(entity),
@@ -2092,6 +2196,32 @@ export class ConciliationService {
       mappings: this.sortTemplateMappings(entity.mappings ?? []).map((mapping) =>
         this.toPublicLayoutMapping(mapping)
       )
+    };
+  }
+
+  private toPublicUserBankDeletionLayout(
+    entity: ReconciliationLayout
+  ): PublicUserBankDeletionLayout {
+    return {
+      id: entity.id,
+      name: entity.name,
+      description: entity.description,
+      active: entity.active
+    };
+  }
+
+  private toPublicUserBankDeletionAccount(
+    entity: CompanyBankAccount
+  ): PublicUserBankDeletionAccount {
+    return {
+      id: entity.id,
+      name: entity.name,
+      currency: entity.currency,
+      accountNumber: entity.accountNumber,
+      bankErpId: entity.bankErpId,
+      majorAccountNumber: entity.majorAccountNumber,
+      paymentAccountNumber: entity.paymentAccountNumber,
+      active: entity.active
     };
   }
 
