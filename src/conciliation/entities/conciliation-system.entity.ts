@@ -9,18 +9,18 @@ import {
 import { ReconciliationLayout } from "./reconciliation-layout.entity";
 import { TemplateLayout } from "./template-layout.entity";
 
-@Entity({ name: "conciliation_systems" })
+@Entity({ name: "sistemas" })
 export class ConciliationSystem {
-  @PrimaryGeneratedColumn({ name: "sys_id" })
+  @PrimaryGeneratedColumn({ name: "sistema_id" })
   id!: number;
 
-  @Column({ name: "sys_nombre", type: "varchar", length: 120 })
+  @Column({ name: "sistema_nombre", type: "varchar", length: 120 })
   name!: string;
 
-  @Column({ name: "sys_descripcion", type: "varchar", length: 255, nullable: true })
+  @Column({ name: "sistema_descripcion", type: "varchar", length: 255, nullable: true })
   description!: string | null;
 
-  @Column({ name: "sys_activo", type: "boolean", default: true })
+  @Column({ name: "sistema_activo", type: "boolean", default: true })
   active!: boolean;
 
   @OneToMany(() => TemplateLayout, (templateLayout) => templateLayout.system)
@@ -29,9 +29,9 @@ export class ConciliationSystem {
   @OneToMany(() => ReconciliationLayout, (layout) => layout.system)
   layouts!: ReconciliationLayout[];
 
-  @CreateDateColumn({ name: "sys_created_at", type: "timestamptz" })
+  @CreateDateColumn({ name: "sistema_creado_en", type: "timestamptz" })
   createdAt!: Date;
 
-  @UpdateDateColumn({ name: "sys_updated_at", type: "timestamptz" })
+  @UpdateDateColumn({ name: "sistema_actualizado_en", type: "timestamptz" })
   updatedAt!: Date;
 }

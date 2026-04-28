@@ -1,10 +1,8 @@
 BEGIN;
 
-DROP TRIGGER IF EXISTS trg_erm_set_updated_at ON public.empresas_roles_modulos;
-DROP TRIGGER IF EXISTS trg_modulos_set_updated_at ON public.modulos;
-DROP TRIGGER IF EXISTS trg_empresas_set_updated_at ON public.empresas;
-DROP TRIGGER IF EXISTS trg_roles_set_updated_at ON public.roles;
+DROP TRIGGER IF EXISTS trg_sync_usuarios_roles_from_usuarios ON public.usuarios;
 
+DROP TABLE IF EXISTS public.usuarios_roles CASCADE;
 DROP TABLE IF EXISTS public.empresas_roles_modulos CASCADE;
 DROP TABLE IF EXISTS public.modulos CASCADE;
 DROP TABLE IF EXISTS public.empresas CASCADE;
@@ -249,7 +247,7 @@ INSERT INTO public.modulos (
   ('profile', 'Mis Datos', '/mis-datos', 'Perfil del usuario.', TRUE),
   ('conciliation', 'Conciliacion', '/conciliation', 'Mesa de conciliacion.', TRUE),
   ('users', 'Gestion de Usuarios', '/users', 'ABM de usuarios.', TRUE),
-  ('layout_management', 'Gestion de Layouts', '/layout-management', 'Bancos y layouts.', TRUE),
+  ('layout_management', 'Gestion de Plantillas', '/layout-management', 'Bancos y plantillas.', TRUE),
   ('access_matrix', 'Modulos por Empresa y Rol', '/access-control', 'Control dinamico de modulos.', TRUE)
 ON CONFLICT (mod_codigo) DO UPDATE
 SET
@@ -272,6 +270,9 @@ SET
 ALTER TABLE public.usuarios
   ADD COLUMN IF NOT EXISTS emp_id INTEGER,
   ADD COLUMN IF NOT EXISTS rol_id INTEGER;
+
+ALTER TABLE public.usuarios
+  DROP CONSTRAINT IF EXISTS fk_usuarios_roles;
 
 UPDATE public.usuarios
 SET emp_id = (
@@ -312,6 +313,10 @@ BEGIN
   SELECT rol_id INTO admin_role_id FROM public.roles WHERE rol_codigo = 'admin' LIMIT 1;
   SELECT rol_id INTO gestor_role_id FROM public.roles WHERE rol_codigo = 'gestor_cobranza' LIMIT 1;
 
+  UPDATE public.usuarios
+  SET rol_id = super_role_id
+  WHERE LOWER(usr_login) IN ('morteira', 'superadmin');
+
   IF has_usr_is_super_admin AND has_usr_is_admin THEN
     UPDATE public.usuarios
     SET rol_id = super_role_id
@@ -328,11 +333,6 @@ BEGIN
     SET rol_id = gestor_role_id
     WHERE rol_id IS NULL;
   ELSE
-    UPDATE public.usuarios
-    SET rol_id = super_role_id
-    WHERE rol_id IS NULL
-      AND LOWER(usr_login) = 'superadmin';
-
     UPDATE public.usuarios
     SET rol_id = gestor_role_id
     WHERE rol_id IS NULL;
@@ -355,10 +355,10 @@ BEGIN
   IF NOT EXISTS (
     SELECT 1
     FROM pg_constraint
-    WHERE conname = 'fk_usuarios_roles'
+    WHERE conname = 'fk_usuarios_rol'
   ) THEN
     ALTER TABLE public.usuarios
-      ADD CONSTRAINT fk_usuarios_roles
+      ADD CONSTRAINT fk_usuarios_rol
       FOREIGN KEY (rol_id) REFERENCES public.roles (rol_id) ON DELETE RESTRICT;
   END IF;
 END;

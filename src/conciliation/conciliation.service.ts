@@ -243,7 +243,7 @@ export class ConciliationService {
 
     if (templateCount > 0 || layoutCount > 0) {
       throw new BadRequestException(
-        "No se puede eliminar el sistema porque ya tiene templates o layouts asociados."
+        "No se puede eliminar el sistema porque ya tiene plantillas base o plantillas asociadas."
       );
     }
 
@@ -336,7 +336,7 @@ export class ConciliationService {
           .createQueryBuilder()
           .delete()
           .from(Reconciliation)
-          .where("ban_id = :bankId", { bankId })
+          .where("banco_id = :bankId", { bankId })
           .execute();
       }
 
@@ -416,7 +416,7 @@ export class ConciliationService {
       });
 
       if (!persisted) {
-        throw new NotFoundException("Template layout no encontrado luego de crear.");
+        throw new NotFoundException("Plantilla base no encontrada luego de crear.");
       }
 
       return this.toPublicTemplateLayout(persisted);
@@ -444,7 +444,7 @@ export class ConciliationService {
       });
 
       if (!template) {
-        throw new NotFoundException("Template layout no encontrado.");
+        throw new NotFoundException("Plantilla base no encontrada.");
       }
 
       if (payload.name !== undefined) template.name = this.normalizeRequired(payload.name, "name");
@@ -485,7 +485,7 @@ export class ConciliationService {
           .createQueryBuilder()
           .delete()
           .from(TemplateLayoutMapping)
-          .where("tpl_id = :templateLayoutId", { templateLayoutId })
+          .where("plantilla_base_id = :templateLayoutId", { templateLayoutId })
           .execute();
 
         await mappingRepository.save(
@@ -524,7 +524,7 @@ export class ConciliationService {
       });
 
       if (!persisted) {
-        throw new NotFoundException("Template layout no encontrado luego de actualizar.");
+        throw new NotFoundException("Plantilla base no encontrada luego de actualizar.");
       }
 
       return this.toPublicTemplateLayout(persisted);
@@ -542,13 +542,13 @@ export class ConciliationService {
     });
 
     if (!template) {
-      throw new NotFoundException("Template layout no encontrado.");
+      throw new NotFoundException("Plantilla base no encontrada.");
     }
 
     await this.templateLayoutRepository.delete(templateLayoutId);
 
     return {
-      message: "Template layout eliminado."
+      message: "Plantilla base eliminada."
     };
   }
 
@@ -591,7 +591,7 @@ export class ConciliationService {
           .createQueryBuilder()
           .update(ReconciliationLayout)
           .set({ active: false })
-          .where("ban_id = :bankId", { bankId: userBank.id })
+          .where("banco_id = :bankId", { bankId: userBank.id })
           .execute();
       }
 
@@ -645,8 +645,10 @@ export class ConciliationService {
       });
 
       if (!persisted) {
-        throw new NotFoundException("Layout no encontrado luego de crear.");
+        throw new NotFoundException("Plantilla no encontrada luego de crear.");
       }
+
+      await this.propagateLayoutToAssignedGestorBanks(manager, persisted);
 
       return this.toPublicLayout(persisted);
     });
@@ -688,7 +690,7 @@ export class ConciliationService {
       });
 
       if (!template) {
-        throw new NotFoundException("Template layout no encontrado.");
+        throw new NotFoundException("Plantilla base no encontrada.");
       }
 
       const shouldActivate = payload.active ?? template.active ?? (userBank.layouts?.length ?? 0) === 0;
@@ -698,7 +700,7 @@ export class ConciliationService {
           .createQueryBuilder()
           .update(ReconciliationLayout)
           .set({ active: false })
-          .where("ban_id = :bankId", { bankId: userBank.id })
+          .where("banco_id = :bankId", { bankId: userBank.id })
           .execute();
       }
 
@@ -761,8 +763,10 @@ export class ConciliationService {
       });
 
       if (!persisted) {
-        throw new NotFoundException("Layout no encontrado luego de copiar template.");
+        throw new NotFoundException("Plantilla no encontrada luego de copiar la base.");
       }
+
+      await this.propagateLayoutToAssignedGestorBanks(manager, persisted);
 
       return this.toPublicLayout(persisted);
     });
@@ -795,7 +799,7 @@ export class ConciliationService {
       });
 
       if (!layout) {
-        throw new NotFoundException("Layout no encontrado.");
+        throw new NotFoundException("Plantilla no encontrada.");
       }
 
       if (payload.name !== undefined) layout.name = this.normalizeRequired(payload.name, "name");
@@ -830,7 +834,7 @@ export class ConciliationService {
           .createQueryBuilder()
           .update(ReconciliationLayout)
           .set({ active: false })
-          .where("ban_id = :bankId AND lyt_id <> :layoutId", { bankId, layoutId })
+          .where("banco_id = :bankId AND plantilla_id <> :layoutId", { bankId, layoutId })
           .execute();
       }
 
@@ -843,7 +847,7 @@ export class ConciliationService {
           .createQueryBuilder()
           .delete()
           .from(ReconciliationLayoutMapping)
-          .where("lyt_id = :layoutId", { layoutId })
+          .where("plantilla_id = :layoutId", { layoutId })
           .execute();
 
         const freshMappings = payload.mappings.map((item, index) =>
@@ -884,8 +888,10 @@ export class ConciliationService {
       });
 
       if (!updated) {
-        throw new NotFoundException("Layout no encontrado luego de actualizar.");
+        throw new NotFoundException("Plantilla no encontrada luego de actualizar.");
       }
+
+      await this.propagateLayoutToAssignedGestorBanks(manager, updated);
 
       return this.toPublicLayout(updated);
     });
@@ -911,7 +917,7 @@ export class ConciliationService {
       });
 
       if (!layout) {
-        throw new NotFoundException("Layout no encontrado.");
+        throw new NotFoundException("Plantilla no encontrada.");
       }
 
       const linkedReconciliations = await reconciliationRepository.count({
@@ -924,7 +930,7 @@ export class ConciliationService {
 
       if (linkedReconciliations > 0) {
         throw new ConflictException(
-          "No se puede eliminar el layout porque ya tiene conciliaciones guardadas."
+          "No se puede eliminar la plantilla porque ya tiene conciliaciones guardadas."
         );
       }
 
@@ -951,7 +957,7 @@ export class ConciliationService {
       }
 
       return {
-        message: "Layout eliminado."
+        message: "Plantilla eliminada."
       };
     });
   }
@@ -1292,7 +1298,6 @@ export class ConciliationService {
           templateLayout: {
             system: true
           },
-          sourceLayout: true,
           mappings: true
         }
       }
@@ -1348,7 +1353,8 @@ export class ConciliationService {
           company: true,
           sourceBank: true,
           layouts: {
-            sourceLayout: true
+            templateLayout: true,
+            system: true
           }
         }
       });
@@ -1427,30 +1433,48 @@ export class ConciliationService {
           .createQueryBuilder()
           .update(ReconciliationLayout)
           .set({ active: false })
-          .where("ban_id = :bankId", { bankId: targetBank.id })
+          .where("banco_id = :bankId", { bankId: targetBank.id })
           .execute();
       }
 
       const syncedLayoutIds: number[] = [];
       for (const sourceLayout of sourceLayouts) {
-        let targetLayout = await layoutRepository.findOne({
-          where: {
-            userBank: { id: targetBank.id },
-            sourceLayout: { id: sourceLayout.id }
-          },
-          relations: {
-            userBank: true,
-            sourceLayout: true,
-            mappings: true
-          }
-        });
+        let targetLayout = sourceLayout.templateLayout?.id
+          ? await layoutRepository.findOne({
+              where: {
+                userBank: { id: targetBank.id },
+                templateLayout: { id: sourceLayout.templateLayout.id }
+              },
+              relations: {
+                userBank: true,
+                templateLayout: true,
+                system: true,
+                mappings: true
+              }
+            })
+          : null;
+
+        if (!targetLayout) {
+          targetLayout = await layoutRepository.findOne({
+            where: {
+              userBank: { id: targetBank.id },
+              system: { id: sourceLayout.system.id },
+              name: sourceLayout.name
+            },
+            relations: {
+              userBank: true,
+              templateLayout: true,
+              system: true,
+              mappings: true
+            }
+          });
+        }
 
         if (!targetLayout) {
           targetLayout = layoutRepository.create({
             userBank: targetBank,
             templateLayout: sourceLayout.templateLayout,
             system: sourceLayout.system,
-            sourceLayout,
             name: sourceLayout.name,
             description: sourceLayout.description,
             systemLabel: sourceLayout.systemLabel,
@@ -1463,7 +1487,6 @@ export class ConciliationService {
           targetLayout.userBank = targetBank;
           targetLayout.templateLayout = sourceLayout.templateLayout;
           targetLayout.system = sourceLayout.system;
-          targetLayout.sourceLayout = sourceLayout;
           targetLayout.name = sourceLayout.name;
           targetLayout.description = sourceLayout.description;
           targetLayout.systemLabel = sourceLayout.systemLabel;
@@ -1477,7 +1500,7 @@ export class ConciliationService {
           .createQueryBuilder()
           .delete()
           .from(ReconciliationLayoutMapping)
-          .where("lyt_id = :layoutId", { layoutId: targetLayout.id })
+          .where("plantilla_id = :layoutId", { layoutId: targetLayout.id })
           .execute();
 
         const copiedMappings = this.sortMappings(sourceLayout.mappings ?? []).map((mapping, index) =>
@@ -1569,6 +1592,144 @@ export class ConciliationService {
     return queryBuilder;
   }
 
+  private async propagateLayoutToAssignedGestorBanks(
+    manager: EntityManager,
+    sourceLayout: ReconciliationLayout
+  ): Promise<void> {
+    const bankRepository = manager.getRepository(BankEntity);
+    const layoutRepository = manager.getRepository(ReconciliationLayout);
+    const mappingRepository = manager.getRepository(ReconciliationLayoutMapping);
+
+    const hydratedSourceLayout = await layoutRepository.findOne({
+      where: { id: sourceLayout.id },
+      relations: {
+        userBank: true,
+        system: true,
+        templateLayout: true,
+        mappings: true
+      }
+    });
+
+    if (!hydratedSourceLayout) return;
+
+    const assignedBanks = await bankRepository.find({
+      where: {
+        sourceBank: {
+          id: hydratedSourceLayout.userBank.id
+        }
+      },
+      relations: {
+        user: true,
+        company: true,
+        sourceBank: true
+      }
+    });
+
+    for (const targetBank of assignedBanks) {
+      if (hydratedSourceLayout.active) {
+        await layoutRepository
+          .createQueryBuilder()
+          .update(ReconciliationLayout)
+          .set({ active: false })
+          .where("banco_id = :bankId", { bankId: targetBank.id })
+          .execute();
+      }
+
+      let targetLayout = hydratedSourceLayout.templateLayout?.id
+        ? await layoutRepository.findOne({
+            where: {
+              userBank: { id: targetBank.id },
+              templateLayout: { id: hydratedSourceLayout.templateLayout.id }
+            },
+            relations: {
+              userBank: true,
+              templateLayout: true,
+              system: true,
+              mappings: true
+            }
+          })
+        : null;
+
+      if (!targetLayout) {
+        targetLayout = await layoutRepository.findOne({
+          where: {
+            userBank: { id: targetBank.id },
+            system: { id: hydratedSourceLayout.system.id },
+            name: hydratedSourceLayout.name
+          },
+          relations: {
+            userBank: true,
+            templateLayout: true,
+            system: true,
+            mappings: true
+          }
+        });
+      }
+
+      if (!targetLayout) {
+        targetLayout = layoutRepository.create({
+          userBank: targetBank,
+          templateLayout: hydratedSourceLayout.templateLayout,
+          system: hydratedSourceLayout.system,
+          name: hydratedSourceLayout.name,
+          description: hydratedSourceLayout.description,
+          systemLabel: hydratedSourceLayout.systemLabel,
+          bankLabel: hydratedSourceLayout.bankLabel,
+          autoMatchThreshold: hydratedSourceLayout.autoMatchThreshold,
+          active: hydratedSourceLayout.active
+        });
+      } else {
+        targetLayout.userBank = targetBank;
+        targetLayout.templateLayout = hydratedSourceLayout.templateLayout;
+        targetLayout.system = hydratedSourceLayout.system;
+        targetLayout.name = hydratedSourceLayout.name;
+        targetLayout.description = hydratedSourceLayout.description;
+        targetLayout.systemLabel = hydratedSourceLayout.systemLabel;
+        targetLayout.bankLabel = hydratedSourceLayout.bankLabel;
+        targetLayout.autoMatchThreshold = hydratedSourceLayout.autoMatchThreshold;
+        targetLayout.active = hydratedSourceLayout.active;
+      }
+
+      const persistedTargetLayout = await layoutRepository.save(targetLayout);
+
+      await mappingRepository
+        .createQueryBuilder()
+        .delete()
+        .from(ReconciliationLayoutMapping)
+        .where("plantilla_id = :layoutId", { layoutId: persistedTargetLayout.id })
+        .execute();
+
+      const copiedMappings = this.sortMappings(hydratedSourceLayout.mappings ?? []).map(
+        (mapping, index) =>
+          mappingRepository.create({
+            layout: persistedTargetLayout,
+            fieldKey: mapping.fieldKey,
+            label: mapping.label,
+            sortOrder: mapping.sortOrder ?? index,
+            active: mapping.active,
+            required: mapping.required,
+            compareOperator: mapping.compareOperator,
+            weight: mapping.weight,
+            tolerance: mapping.tolerance,
+            systemSheet: mapping.systemSheet,
+            systemColumn: mapping.systemColumn,
+            systemStartRow: mapping.systemStartRow,
+            systemEndRow: mapping.systemEndRow,
+            systemDataType: mapping.systemDataType,
+            bankSheet: mapping.bankSheet,
+            bankColumn: mapping.bankColumn,
+            bankStartRow: mapping.bankStartRow,
+            bankEndRow: mapping.bankEndRow,
+            bankDataType: mapping.bankDataType
+          })
+      );
+
+      if (copiedMappings.length > 0) {
+        await mappingRepository.save(copiedMappings);
+      }
+    }
+  }
+
   private async requireAccessibleLayout(
     actor: AuthUser,
     userBankId: number,
@@ -1594,7 +1755,7 @@ export class ConciliationService {
     });
 
     if (!layout) {
-      throw new NotFoundException("Layout no encontrado para el banco seleccionado.");
+      throw new NotFoundException("Plantilla no encontrada para el banco seleccionado.");
     }
 
     this.ensureActorCanAccessTargetUser(actor, layout.userBank.user);
@@ -1672,7 +1833,7 @@ export class ConciliationService {
 
       if (reconciliation.userBank.id !== userBank.id || reconciliation.layout.id !== layout.id) {
         throw new BadRequestException(
-          "La conciliacion seleccionada no corresponde al banco/layout actual."
+          "La conciliacion seleccionada no corresponde al banco/plantilla actual."
         );
       }
 
@@ -1935,7 +2096,7 @@ export class ConciliationService {
       .createQueryBuilder()
       .delete()
       .from(ReconciliationMatch)
-      .where("con_id = :reconciliationId", { reconciliationId: reconciliation.id })
+      .where("conciliacion_id = :reconciliationId", { reconciliationId: reconciliation.id })
       .execute();
 
     const matches: ReconciliationMatch[] = [];
@@ -2359,7 +2520,7 @@ export class ConciliationService {
   ): ConciliationPreviewRow[] {
     const activeMappings = this.sortMappings(mappings).filter((mapping) => mapping.active);
     if (activeMappings.length === 0) {
-      throw new BadRequestException("El layout no tiene mappings activos para comparar.");
+      throw new BadRequestException("La plantilla no tiene mapeos activos para comparar.");
     }
 
     const rows = new Map<string, ConciliationPreviewRow>();
@@ -2739,7 +2900,7 @@ export class ConciliationService {
       }),
       reconciliationRepository
         .createQueryBuilder("reconciliation")
-        .where("reconciliation.ban_id = :bankId", { bankId })
+        .where("reconciliation.banco_id = :bankId", { bankId })
         .getCount()
     ]);
 
@@ -2782,7 +2943,7 @@ export class ConciliationService {
   ): PublicLayout {
     const resolvedUserBankId = entity.userBank?.id ?? fallbackUserBankId;
     if (!resolvedUserBankId) {
-      throw new BadRequestException("No se pudo resolver el banco asociado del layout.");
+      throw new BadRequestException("No se pudo resolver el banco asociado de la plantilla.");
     }
 
     return {
@@ -2996,14 +3157,14 @@ export class ConciliationService {
 
   private ensureMappings(mappings: CreateLayoutDto["mappings"]) {
     if (!Array.isArray(mappings) || mappings.length === 0) {
-      throw new BadRequestException("Debes enviar al menos un campo de layout.");
+      throw new BadRequestException("Debes enviar al menos un campo de plantilla.");
     }
 
     const fieldKeys = new Set<string>();
     for (const mapping of mappings) {
       const normalizedKey = this.normalizeRequired(mapping.fieldKey, "fieldKey");
       if (fieldKeys.has(normalizedKey)) {
-        throw new BadRequestException(`El campo ${normalizedKey} esta repetido en el layout.`);
+        throw new BadRequestException(`El campo ${normalizedKey} esta repetido en la plantilla.`);
       }
 
       fieldKeys.add(normalizedKey);
@@ -3012,7 +3173,7 @@ export class ConciliationService {
 
   private ensureSuperadmin(actor: AuthUser) {
     if (actor.role !== Role.IS_SUPER_ADMIN) {
-      throw new ForbiddenException("Solo el super admin puede administrar bancos y layouts.");
+      throw new ForbiddenException("Solo el super admin puede administrar bancos y plantillas.");
     }
   }
 
@@ -3137,28 +3298,28 @@ export class ConciliationService {
         const detail = String(driverError.detail ?? "").toLowerCase();
         const constraint = String(driverError.constraint ?? "").toLowerCase();
 
-        if (detail.includes("ban_") || constraint.includes("bancos")) {
+        if (detail.includes("banco_") || constraint.includes("bancos")) {
           throw new ConflictException("Ya existe una asignacion de banco con esos datos.");
         }
 
-        if (detail.includes("lmp_field_key") || constraint.includes("layout_mappings")) {
-          throw new ConflictException("El layout no puede repetir fieldKey.");
+        if (detail.includes("mapeo_clave_campo") || constraint.includes("plantillas_conciliacion_mapeos")) {
+          throw new ConflictException("La plantilla no puede repetir fieldKey.");
         }
 
-        if (detail.includes("tpm_field_key") || constraint.includes("template_layout_mapping")) {
-          throw new ConflictException("El template layout no puede repetir fieldKey.");
+        if (detail.includes("mapeo_base_clave_campo") || constraint.includes("plantillas_base_mapeos")) {
+          throw new ConflictException("La plantilla base no puede repetir fieldKey.");
         }
 
-        if (constraint.includes("uq_template_layout_name")) {
-          throw new ConflictException("Ya existe un template layout con ese nombre.");
+        if (constraint.includes("uq_plantillas_base_nombre")) {
+          throw new ConflictException("Ya existe una plantilla base con ese nombre.");
         }
 
-        if (constraint.includes("uq_conciliation_systems_name")) {
+        if (constraint.includes("uq_sistemas_nombre")) {
           throw new ConflictException("Ya existe un sistema con ese nombre.");
         }
 
-        if (constraint.includes("uq_conciliacion_layouts_active")) {
-          throw new ConflictException("Solo puede haber un layout activo por banco.");
+        if (constraint.includes("uq_plantillas_conciliacion_activa")) {
+          throw new ConflictException("Solo puede haber una plantilla activa por banco.");
         }
 
         throw new ConflictException("Ya existe un registro con esos datos unicos.");

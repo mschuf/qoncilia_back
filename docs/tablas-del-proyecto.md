@@ -1,105 +1,161 @@
 # Tablas del proyecto
 
-Este documento resume las tablas vigentes del proyecto despues del refactor que unifica bancos, layouts y cuentas sobre `public.bancos`.
+Documento de referencia para la recreacion limpia de la base. El dominio de bancos, cuentas, sistemas, plantillas y conciliaciones queda nombrado en espanol y con campos descriptivos.
 
 ## Seguridad y usuarios
 
 ### `public.usuarios`
 
-Usuarios del sistema. Guarda credenciales, datos basicos, empresa, rol principal y el campo `usr_created_by` para identificar que admin creo a cada gestor.
+Usuarios del sistema. Mantiene credenciales, datos basicos, empresa, rol unico y `usr_created_by` para identificar que usuario creo a cada gestor. Cuando un admin crea un gestor, el backend lo deja en la misma empresa del admin.
+
+Campos principales:
+
+- `usr_id`: identificador del usuario.
+- `emp_id`: empresa del usuario.
+- `rol_id`: rol unico del usuario. Es la unica fuente de verdad para login, permisos y navegacion.
+- `usr_created_by`: usuario que creo este usuario, usado para validar gestores creados por un admin.
+- `usr_login`, `usr_email`, `usr_celular`, `usr_legajo`: identificadores unicos.
+- `usr_password_hash`: hash bcrypt de la contrasena.
+- `usr_activo`: habilita o bloquea el acceso.
+
+Nota: `usuarios_roles` fue eliminado porque el sistema no maneja multiples roles por usuario. Tener `usuarios.rol_id` y una tabla puente generaba doble fuente de verdad; el login siempre lee `usuarios.rol_id`.
 
 ### `public.roles`
 
-Catalogo de roles funcionales (`is_super_admin`, `admin`, `gestor_cobranza`, `gestor_pagos`).
+Catalogo de roles funcionales.
+
+Roles seed:
+
+- `is_super_admin`
+- `admin`
+- `gestor_cobranza`
+- `gestor_pagos`
 
 ### `public.empresas`
 
-Empresas del sistema. Centraliza identidad fiscal, nombre y configuraciones visibles de ERP.
+Empresas del sistema. Una empresa puede tener varios bancos, cuentas bancarias, usuarios y configuraciones ERP.
 
-### `public.modulos`
+### `public.modulos`, `public.empresas_roles_modulos`
 
-Catalogo de modulos/pantallas habilitables en la aplicacion.
-
-### `public.empresas_roles_modulos`
-
-Matriz de acceso por empresa + rol + modulo. Define que modulo queda habilitado en cada contexto.
-
-### `public.usuarios_roles`
-
-Tabla puente de asignaciones de roles por usuario. Mantiene compatibilidad con `usuarios.rol_id` y permite marcar un rol principal.
+Tablas de permisos por empresa + rol + modulo. El codigo tecnico del modulo de plantillas sigue siendo `layout_management` para mantener compatibilidad de permisos.
 
 ## Bancos y cuentas
 
+### `public.monedas`
+
+Catalogo de monedas para cuentas bancarias.
+
+Campos principales:
+
+- `moneda_codigo`
+- `moneda_nombre`
+- `moneda_simbolo`
+- `moneda_decimales`
+- `moneda_activa`
+
+Seeds incluidos: `PYG`, `USD`, `EUR`, `BRL`, `ARS`.
+
 ### `public.bancos`
 
-Tabla raiz del dominio bancario operativo. Cada banco queda asociado a una empresa y a un usuario responsable. Desde esta tabla cuelgan:
+Banco operativo de una empresa, asignado a un usuario responsable.
 
-- layouts de conciliacion
-- cuentas bancarias de empresa
-- conciliaciones guardadas
+Campos principales:
 
-Campos funcionales principales:
+- `banco_id`
+- `empresa_id`
+- `usuario_id`
+- `banco_origen_id`
+- `banco_nombre`
+- `banco_alias`
+- `banco_descripcion`
+- `banco_sucursal`
+- `banco_activo`
 
-- `emp_id`: empresa del banco
-- `usr_id`: usuario responsable
-- `ban_source_bank_id`: banco origen cuando el registro fue espejado a un gestor
-- `ban_nombre`: nombre del banco
-- `ban_alias`: alias operativo
-- `ban_descripcion`: descripcion interna
-- `ban_sucursal`: sucursal
+### `public.cuentas_bancarias`
 
-### `public.empresas_cuentas_bancarias`
+Cuentas bancarias de una empresa dentro de un banco. Las conciliaciones se guardan por cuenta bancaria.
 
-Cuentas bancarias operativas de una empresa dentro de un banco. Guarda moneda, numero de cuenta, datos de integracion ERP y `ecb_source_account_id` cuando la cuenta fue replicada desde un banco admin hacia un gestor.
+Campos principales:
+
+- `cuenta_bancaria_id`
+- `empresa_id`
+- `banco_id`
+- `cuenta_bancaria_origen_id`
+- `cuenta_bancaria_nombre`
+- `moneda_codigo`
+- `cuenta_bancaria_numero`
+- `cuenta_bancaria_id_banco_erp`
+- `cuenta_bancaria_numero_mayor`
+- `cuenta_bancaria_numero_pago`
+- `cuenta_bancaria_activa`
+
+## Sistemas y plantillas
+
+### `public.sistemas`
+
+Catalogo dinamico de sistemas origen. Ejemplos: SAP, Softland, Bejerman. Cada sistema puede tener varias plantillas base y varias plantillas de conciliacion.
+
+### `public.plantillas_base`
+
+Plantillas reutilizables que el superadmin puede crear y copiar a bancos.
+
+Campos principales:
+
+- `plantilla_base_id`
+- `sistema_id`
+- `plantilla_base_nombre`
+- `plantilla_base_descripcion`
+- `plantilla_base_banco_referencia`
+- `plantilla_base_etiqueta_sistema`
+- `plantilla_base_etiqueta_banco`
+- `plantilla_base_umbral_auto_match`
+- `plantilla_base_activa`
+
+### `public.plantillas_base_mapeos`
+
+Mapeos de cada plantilla base. Define columnas, hojas, rangos, tipos de dato, pesos, tolerancias y operador de comparacion.
+
+### `public.plantillas_conciliacion`
+
+Plantillas asignadas a bancos. Reemplaza al concepto anterior de layout operativo. No conserva `lyt_source_layout_id`; la replica admin -> gestor se resuelve por banco, sistema, nombre y plantilla base.
+
+Campos principales:
+
+- `plantilla_id`
+- `banco_id`
+- `plantilla_base_id`
+- `sistema_id`
+- `plantilla_nombre`
+- `plantilla_descripcion`
+- `plantilla_etiqueta_sistema`
+- `plantilla_etiqueta_banco`
+- `plantilla_umbral_auto_match`
+- `plantilla_activa`
+
+### `public.plantillas_conciliacion_mapeos`
+
+Mapeos de cada plantilla de conciliacion asignada a un banco.
 
 ## Conciliacion
 
-### `public.conciliation_systems`
-
-Catalogo dinamico de sistemas origen. Un sistema puede tener N template layouts y N layouts operativos. Ejemplos: `SAP`, `Softland`, `Bejerman`.
-
-### `public.conciliacion_layouts`
-
-Layouts configurables de conciliacion asociados directamente a `bancos` por `ban_id`.
-
-Campos nuevos relevantes:
-
-- `sys_id`: sistema al que pertenece el layout
-- `lyt_source_layout_id`: layout origen cuando se espejo desde un admin a un gestor
-
-### `public.conciliacion_layout_mappings`
-
-Detalle de campos/mapeos de cada layout. Define columnas de sistema y banco, tipos de dato, pesos y operadores de comparacion.
-
-### `public.template_layout`
-
-Templates reutilizables para crear layouts rapidamente. Tambien quedan asociados a `sys_id` para soportar varios sistemas.
-
-### `public.template_layout_mapping`
-
-Mappings de cada template layout.
-
 ### `public.conciliaciones`
 
-Cabecera de cada conciliacion guardada. Relaciona usuario ejecutor, banco, cuenta bancaria, layout, archivos usados, metricas, estado funcional y snapshot resumido.
+Cabecera de cada conciliacion guardada. Relaciona usuario, banco, cuenta bancaria, plantilla, archivos usados, metricas, estado funcional y snapshot resumido.
 
-Campos nuevos relevantes:
+Campos principales:
 
-- `ecb_id`: cuenta bancaria principal de la conciliacion
-- `con_has_system_data`: indica si se guardo lado sistema
-- `con_has_bank_data`: indica si se guardo lado banco
+- `conciliacion_id`
+- `usuario_id`
+- `banco_id`
+- `cuenta_bancaria_id`
+- `plantilla_id`
+- `conciliacion_nombre`
+- `conciliacion_estado`
+- `conciliacion_tiene_datos_sistema`
+- `conciliacion_tiene_datos_banco`
+- `conciliacion_porcentaje_match`
 
-Estados funcionales usados por la app:
-
-- `draft_system_only`
-- `draft_bank_only`
-- `ready_to_compare`
-- `matched`
-- `matched_with_manual`
-- `compared_with_pending`
-- `compared_without_matches`
-
-### `public.conciliacion_matches`
+### `public.conciliacion_resultados`
 
 Detalle persistido de resultados de conciliacion: matches automaticos, manuales y filas no conciliadas.
 
@@ -109,16 +165,10 @@ Detalle persistido de resultados de conciliacion: matches automaticos, manuales 
 
 Configuraciones ERP por empresa. Hoy se usa principalmente para SAP B1 / Service Layer.
 
-### `public.conciliaciones_erp_envios`
+## Tablas eliminadas
 
-Historial de envios de conciliaciones al ERP, con endpoint, payload, respuesta y estado final.
-
-## Tablas eliminadas en este refactor
-
-### `public.usuarios_bancos`
-
-Eliminada. Su responsabilidad fue absorbida por `public.bancos`.
-
-### `public.migrations`
-
-Eliminada. El proyecto deja de depender de migraciones TypeORM y pasa a recrearse con scripts SQL.
+- `public.usuarios_bancos`: absorbida por `public.bancos`.
+- `public.usuarios_roles`: eliminada; el rol unico vive en `public.usuarios.rol_id`.
+- `public.conciliaciones_erp_envios`: ya no se persiste porque no estaba siendo usada por el flujo funcional.
+- `public.migrations`: el proyecto se recrea con scripts SQL.
+- Tablas legacy de layouts/template layouts/systems en ingles o abreviadas.

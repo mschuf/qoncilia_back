@@ -9,75 +9,75 @@ import {
 } from "typeorm";
 import { ReconciliationLayout } from "./reconciliation-layout.entity";
 
-@Entity({ name: "conciliacion_layout_mappings" })
+@Entity({ name: "plantillas_conciliacion_mapeos" })
 export class ReconciliationLayoutMapping {
-  @PrimaryGeneratedColumn({ name: "lmp_id" })
+  @PrimaryGeneratedColumn({ name: "mapeo_id" })
   id!: number;
 
   @ManyToOne(() => ReconciliationLayout, (layout) => layout.mappings, {
     nullable: false,
     onDelete: "CASCADE"
   })
-  @JoinColumn({ name: "lyt_id", referencedColumnName: "id" })
+  @JoinColumn({ name: "plantilla_id", referencedColumnName: "id" })
   layout!: ReconciliationLayout;
 
-  @Column({ name: "lmp_field_key", type: "varchar", length: 60 })
+  @Column({ name: "mapeo_clave_campo", type: "varchar", length: 60 })
   fieldKey!: string;
 
-  @Column({ name: "lmp_label", type: "varchar", length: 120 })
+  @Column({ name: "mapeo_etiqueta", type: "varchar", length: 120 })
   label!: string;
 
-  @Column({ name: "lmp_sort_order", type: "integer", default: 0 })
+  @Column({ name: "mapeo_orden", type: "integer", default: 0 })
   sortOrder!: number;
 
-  @Column({ name: "lmp_active", type: "boolean", default: true })
+  @Column({ name: "mapeo_activo", type: "boolean", default: true })
   active!: boolean;
 
-  @Column({ name: "lmp_required", type: "boolean", default: false })
+  @Column({ name: "mapeo_requerido", type: "boolean", default: false })
   required!: boolean;
 
-  @Column({ name: "lmp_compare_operator", type: "varchar", length: 40, default: "equals" })
+  @Column({ name: "mapeo_operador_comparacion", type: "varchar", length: 40, default: "equals" })
   compareOperator!: string;
 
-  @Column({ name: "lmp_weight", type: "double precision", default: 1 })
+  @Column({ name: "mapeo_peso", type: "double precision", default: 1 })
   weight!: number;
 
-  @Column({ name: "lmp_tolerance", type: "double precision", nullable: true })
+  @Column({ name: "mapeo_tolerancia", type: "double precision", nullable: true })
   tolerance!: number | null;
 
-  @Column({ name: "lmp_system_sheet", type: "varchar", length: 120, nullable: true })
+  @Column({ name: "sistema_hoja", type: "varchar", length: 120, nullable: true })
   systemSheet!: string | null;
 
-  @Column({ name: "lmp_system_column", type: "varchar", length: 10, nullable: true })
+  @Column({ name: "sistema_columna", type: "varchar", length: 30, nullable: true })
   systemColumn!: string | null;
 
-  @Column({ name: "lmp_system_start_row", type: "integer", nullable: true })
+  @Column({ name: "sistema_fila_inicio", type: "integer", nullable: true })
   systemStartRow!: number | null;
 
-  @Column({ name: "lmp_system_end_row", type: "integer", nullable: true })
+  @Column({ name: "sistema_fila_fin", type: "integer", nullable: true })
   systemEndRow!: number | null;
 
-  @Column({ name: "lmp_system_data_type", type: "varchar", length: 20, default: "text" })
+  @Column({ name: "sistema_tipo_dato", type: "varchar", length: 20, default: "text" })
   systemDataType!: string;
 
-  @Column({ name: "lmp_bank_sheet", type: "varchar", length: 120, nullable: true })
+  @Column({ name: "banco_hoja", type: "varchar", length: 120, nullable: true })
   bankSheet!: string | null;
 
-  @Column({ name: "lmp_bank_column", type: "varchar", length: 10, nullable: true })
+  @Column({ name: "banco_columna", type: "varchar", length: 30, nullable: true })
   bankColumn!: string | null;
 
-  @Column({ name: "lmp_bank_start_row", type: "integer", nullable: true })
+  @Column({ name: "banco_fila_inicio", type: "integer", nullable: true })
   bankStartRow!: number | null;
 
-  @Column({ name: "lmp_bank_end_row", type: "integer", nullable: true })
+  @Column({ name: "banco_fila_fin", type: "integer", nullable: true })
   bankEndRow!: number | null;
 
-  @Column({ name: "lmp_bank_data_type", type: "varchar", length: 20, default: "text" })
+  @Column({ name: "banco_tipo_dato", type: "varchar", length: 20, default: "text" })
   bankDataType!: string;
 
-  @CreateDateColumn({ name: "lmp_created_at", type: "timestamptz" })
+  @CreateDateColumn({ name: "mapeo_creado_en", type: "timestamptz" })
   createdAt!: Date;
 
-  @UpdateDateColumn({ name: "lmp_updated_at", type: "timestamptz" })
+  @UpdateDateColumn({ name: "mapeo_actualizado_en", type: "timestamptz" })
   updatedAt!: Date;
 }

@@ -28,7 +28,6 @@ import { ListCompanyErpConfigsQueryDto } from "./dto/list-company-erp-configs-qu
 import { SendSapDepositDto } from "./dto/send-sap-deposit.dto"
 import { UpdateCompanyErpConfigDto } from "./dto/update-company-erp-config.dto"
 import { CompanyErpConfig } from "./entities/company-erp-config.entity"
-import { ReconciliationErpShipment } from "./entities/reconciliation-erp-shipment.entity"
 import {
   ErpReferenceResponse,
   PublicCompanyErpConfig,
@@ -66,8 +65,6 @@ export class ErpService {
     private readonly reconciliationRepository: Repository<Reconciliation>,
     @InjectRepository(CompanyErpConfig)
     private readonly companyErpConfigRepository: Repository<CompanyErpConfig>,
-    @InjectRepository(ReconciliationErpShipment)
-    private readonly reconciliationErpShipmentRepository: Repository<ReconciliationErpShipment>,
     configService: ConfigService
   ) {
     this.credentialSecret =
@@ -326,46 +323,34 @@ export class ErpService {
     this.validateSapConfig(config, false)
 
     const endpoint = this.joinUrl(config.serviceLayerUrl, "Deposits")
-    const shipment = await this.reconciliationErpShipmentRepository.save(
-      this.reconciliationErpShipmentRepository.create({
-        reconciliation,
-        companyErpConfig: config,
-        sender,
-        documentType: "deposit",
-        status: "pending",
-        endpoint,
-        requestPayload: this.toJsonRecord(payload.payload)
-      })
-    )
-
     try {
       const sapResponse = await this.postSapDeposit(config, payload.payload)
+      const now = new Date()
 
-      shipment.status = "success"
-      shipment.httpStatus = sapResponse.statusCode
-      shipment.responsePayload = sapResponse.bodyJson
-      shipment.errorMessage = null
-      shipment.externalDocEntry = this.extractExternalReference(
-        sapResponse.bodyJson,
-        ["DocEntry", "AbsoluteEntry"]
-      )
-      shipment.externalDocNum = this.extractExternalReference(
-        sapResponse.bodyJson,
-        ["DepositNumber", "DepositsNumber", "DocNum"]
-      )
-
-      const persisted = await this.reconciliationErpShipmentRepository.save(shipment)
-      return this.toPublicErpShipmentResult(persisted, config.name)
+      return {
+        id: 0,
+        reconciliationId: reconciliation.id,
+        companyErpConfigId: config.id,
+        companyErpConfigName: config.name,
+        documentType: "deposit",
+        status: "success",
+        endpoint,
+        httpStatus: sapResponse.statusCode,
+        responsePayload: sapResponse.bodyJson,
+        errorMessage: null,
+        externalDocEntry: this.extractExternalReference(
+          sapResponse.bodyJson,
+          ["DocEntry", "AbsoluteEntry"]
+        ),
+        externalDocNum: this.extractExternalReference(
+          sapResponse.bodyJson,
+          ["DepositNumber", "DepositsNumber", "DocNum"]
+        ),
+        createdAt: now,
+        updatedAt: now
+      }
     } catch (error) {
       const mapped = this.mapExternalError(error)
-      shipment.status = "error"
-      shipment.httpStatus = mapped.statusCode ?? null
-      shipment.responsePayload = mapped.responsePayload
-      shipment.errorMessage = mapped.message
-      shipment.externalDocEntry = null
-      shipment.externalDocNum = null
-
-      await this.reconciliationErpShipmentRepository.save(shipment)
       throw mapped.exception
     }
   }
@@ -512,28 +497,6 @@ export class ErpService {
       hasPassword: Boolean(config.dbPasswordEncrypted),
       createdAt: config.createdAt,
       updatedAt: config.updatedAt
-    }
-  }
-
-  private toPublicErpShipmentResult(
-    shipment: ReconciliationErpShipment,
-    companyErpConfigName: string
-  ): PublicErpShipmentResult {
-    return {
-      id: shipment.id,
-      reconciliationId: shipment.reconciliation.id,
-      companyErpConfigId: shipment.companyErpConfig.id,
-      companyErpConfigName,
-      documentType: shipment.documentType,
-      status: shipment.status,
-      endpoint: shipment.endpoint,
-      httpStatus: shipment.httpStatus,
-      responsePayload: shipment.responsePayload,
-      errorMessage: shipment.errorMessage,
-      externalDocEntry: shipment.externalDocEntry,
-      externalDocNum: shipment.externalDocNum,
-      createdAt: shipment.createdAt,
-      updatedAt: shipment.updatedAt
     }
   }
 

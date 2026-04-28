@@ -1,240 +1,353 @@
 BEGIN;
 
+DROP TRIGGER IF EXISTS trg_conciliacion_resultados_touch_actualizado_en ON public.conciliacion_resultados;
+DROP TRIGGER IF EXISTS trg_conciliaciones_touch_actualizado_en ON public.conciliaciones;
+DROP TRIGGER IF EXISTS trg_plantillas_conciliacion_mapeos_touch_actualizado_en ON public.plantillas_conciliacion_mapeos;
+DROP TRIGGER IF EXISTS trg_plantillas_conciliacion_touch_actualizado_en ON public.plantillas_conciliacion;
+DROP TRIGGER IF EXISTS trg_plantillas_base_mapeos_touch_actualizado_en ON public.plantillas_base_mapeos;
+DROP TRIGGER IF EXISTS trg_plantillas_base_touch_actualizado_en ON public.plantillas_base;
+DROP TRIGGER IF EXISTS trg_sistemas_touch_actualizado_en ON public.sistemas;
+
 DROP TRIGGER IF EXISTS trg_conciliacion_matches_touch_updated_at ON public.conciliacion_matches;
 DROP TRIGGER IF EXISTS trg_conciliaciones_touch_updated_at ON public.conciliaciones;
 DROP TRIGGER IF EXISTS trg_conciliacion_layout_mappings_touch_updated_at ON public.conciliacion_layout_mappings;
 DROP TRIGGER IF EXISTS trg_conciliacion_layouts_touch_updated_at ON public.conciliacion_layouts;
+DROP TRIGGER IF EXISTS trg_template_layout_mapping_touch_updated_at ON public.template_layout_mapping;
+DROP TRIGGER IF EXISTS trg_template_layout_touch_updated_at ON public.template_layout;
 DROP TRIGGER IF EXISTS trg_conciliation_systems_touch_updated_at ON public.conciliation_systems;
 
+DROP TABLE IF EXISTS public.conciliacion_resultados CASCADE;
 DROP TABLE IF EXISTS public.conciliacion_matches CASCADE;
 DROP TABLE IF EXISTS public.conciliaciones CASCADE;
+DROP TABLE IF EXISTS public.plantillas_conciliacion_mapeos CASCADE;
 DROP TABLE IF EXISTS public.conciliacion_layout_mappings CASCADE;
+DROP TABLE IF EXISTS public.plantillas_conciliacion CASCADE;
 DROP TABLE IF EXISTS public.conciliacion_layouts CASCADE;
+DROP TABLE IF EXISTS public.plantillas_base_mapeos CASCADE;
+DROP TABLE IF EXISTS public.template_layout_mapping CASCADE;
+DROP TABLE IF EXISTS public.plantillas_base CASCADE;
+DROP TABLE IF EXISTS public.template_layout CASCADE;
+DROP TABLE IF EXISTS public.sistemas CASCADE;
 DROP TABLE IF EXISTS public.conciliation_systems CASCADE;
 DROP TABLE IF EXISTS public.migrations CASCADE;
 
-CREATE TABLE public.conciliation_systems (
-  sys_id SERIAL PRIMARY KEY,
-  sys_nombre VARCHAR(120) NOT NULL,
-  sys_descripcion VARCHAR(255) NULL,
-  sys_activo BOOLEAN NOT NULL DEFAULT TRUE,
-  sys_created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  sys_updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  CONSTRAINT chk_conciliation_systems_nombre_not_blank CHECK (length(trim(sys_nombre)) > 0)
+CREATE TABLE public.sistemas (
+  sistema_id SERIAL PRIMARY KEY,
+  sistema_nombre VARCHAR(120) NOT NULL,
+  sistema_descripcion VARCHAR(255) NULL,
+  sistema_activo BOOLEAN NOT NULL DEFAULT TRUE,
+  sistema_creado_en TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  sistema_actualizado_en TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT chk_sistemas_nombre_not_blank CHECK (length(trim(sistema_nombre)) > 0)
 );
 
-CREATE UNIQUE INDEX uq_conciliation_systems_name
-  ON public.conciliation_systems ((LOWER(sys_nombre)));
+CREATE UNIQUE INDEX uq_sistemas_nombre
+  ON public.sistemas ((LOWER(sistema_nombre)));
 
-CREATE TABLE public.conciliacion_layouts (
-  lyt_id SERIAL PRIMARY KEY,
-  ban_id INTEGER NOT NULL,
-  sys_id INTEGER NOT NULL,
-  lyt_source_layout_id INTEGER NULL,
-  lyt_nombre VARCHAR(120) NOT NULL,
-  lyt_descripcion VARCHAR(255) NULL,
-  lyt_system_label VARCHAR(120) NOT NULL DEFAULT 'Sistema',
-  lyt_bank_label VARCHAR(120) NOT NULL DEFAULT 'Banco',
-  lyt_auto_match_threshold DOUBLE PRECISION NOT NULL DEFAULT 1,
-  lyt_activo BOOLEAN NOT NULL DEFAULT FALSE,
-  lyt_created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  lyt_updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  CONSTRAINT chk_conciliacion_layouts_nombre_not_blank CHECK (length(trim(lyt_nombre)) > 0),
-  CONSTRAINT chk_conciliacion_layouts_threshold_range CHECK (lyt_auto_match_threshold >= 0 AND lyt_auto_match_threshold <= 1),
-  CONSTRAINT fk_conciliacion_layouts_bancos FOREIGN KEY (ban_id) REFERENCES public.bancos (ban_id) ON DELETE CASCADE,
-  CONSTRAINT fk_conciliacion_layouts_systems FOREIGN KEY (sys_id)
-    REFERENCES public.conciliation_systems (sys_id) ON DELETE RESTRICT,
-  CONSTRAINT fk_conciliacion_layouts_source_layout FOREIGN KEY (lyt_source_layout_id)
-    REFERENCES public.conciliacion_layouts (lyt_id) ON DELETE SET NULL
+CREATE TABLE public.plantillas_base (
+  plantilla_base_id SERIAL PRIMARY KEY,
+  plantilla_base_nombre VARCHAR(120) NOT NULL,
+  plantilla_base_descripcion VARCHAR(255) NULL,
+  plantilla_base_banco_referencia VARCHAR(120) NULL,
+  sistema_id INTEGER NOT NULL,
+  plantilla_base_etiqueta_sistema VARCHAR(120) NOT NULL DEFAULT 'Sistema',
+  plantilla_base_etiqueta_banco VARCHAR(120) NOT NULL DEFAULT 'Banco',
+  plantilla_base_umbral_auto_match DOUBLE PRECISION NOT NULL DEFAULT 1,
+  plantilla_base_activa BOOLEAN NOT NULL DEFAULT TRUE,
+  plantilla_base_creada_en TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  plantilla_base_actualizada_en TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT chk_plantillas_base_nombre_not_blank CHECK (length(trim(plantilla_base_nombre)) > 0),
+  CONSTRAINT chk_plantillas_base_threshold_range CHECK (
+    plantilla_base_umbral_auto_match >= 0 AND plantilla_base_umbral_auto_match <= 1
+  ),
+  CONSTRAINT fk_plantillas_base_sistemas FOREIGN KEY (sistema_id)
+    REFERENCES public.sistemas (sistema_id) ON DELETE RESTRICT
 );
 
-CREATE TABLE public.conciliacion_layout_mappings (
-  lmp_id SERIAL PRIMARY KEY,
-  lyt_id INTEGER NOT NULL,
-  lmp_field_key VARCHAR(60) NOT NULL,
-  lmp_label VARCHAR(120) NOT NULL,
-  lmp_sort_order INTEGER NOT NULL DEFAULT 0,
-  lmp_active BOOLEAN NOT NULL DEFAULT TRUE,
-  lmp_required BOOLEAN NOT NULL DEFAULT FALSE,
-  lmp_compare_operator VARCHAR(40) NOT NULL DEFAULT 'equals',
-  lmp_weight DOUBLE PRECISION NOT NULL DEFAULT 1,
-  lmp_tolerance DOUBLE PRECISION NULL,
-  lmp_system_sheet VARCHAR(120) NULL,
-  lmp_system_column VARCHAR(30) NULL,
-  lmp_system_start_row INTEGER NULL,
-  lmp_system_end_row INTEGER NULL,
-  lmp_system_data_type VARCHAR(20) NOT NULL DEFAULT 'text',
-  lmp_bank_sheet VARCHAR(120) NULL,
-  lmp_bank_column VARCHAR(30) NULL,
-  lmp_bank_start_row INTEGER NULL,
-  lmp_bank_end_row INTEGER NULL,
-  lmp_bank_data_type VARCHAR(20) NOT NULL DEFAULT 'text',
-  lmp_created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  lmp_updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  CONSTRAINT chk_conciliacion_layout_mappings_field_not_blank CHECK (length(trim(lmp_field_key)) > 0),
-  CONSTRAINT chk_conciliacion_layout_mappings_label_not_blank CHECK (length(trim(lmp_label)) > 0),
-  CONSTRAINT chk_conciliacion_layout_mappings_weight_non_negative CHECK (lmp_weight >= 0),
-  CONSTRAINT fk_conciliacion_layout_mappings_layouts FOREIGN KEY (lyt_id) REFERENCES public.conciliacion_layouts (lyt_id) ON DELETE CASCADE
+CREATE UNIQUE INDEX uq_plantillas_base_nombre
+  ON public.plantillas_base ((LOWER(plantilla_base_nombre)));
+
+CREATE INDEX idx_plantillas_base_sistema_id
+  ON public.plantillas_base (sistema_id);
+
+CREATE TABLE public.plantillas_base_mapeos (
+  mapeo_base_id SERIAL PRIMARY KEY,
+  plantilla_base_id INTEGER NOT NULL,
+  mapeo_base_clave_campo VARCHAR(60) NOT NULL,
+  mapeo_base_etiqueta VARCHAR(120) NOT NULL,
+  mapeo_base_orden INTEGER NOT NULL DEFAULT 0,
+  mapeo_base_activo BOOLEAN NOT NULL DEFAULT TRUE,
+  mapeo_base_requerido BOOLEAN NOT NULL DEFAULT FALSE,
+  mapeo_base_operador_comparacion VARCHAR(40) NOT NULL DEFAULT 'equals',
+  mapeo_base_peso DOUBLE PRECISION NOT NULL DEFAULT 1,
+  mapeo_base_tolerancia DOUBLE PRECISION NULL,
+  sistema_hoja VARCHAR(120) NULL,
+  sistema_columna VARCHAR(30) NULL,
+  sistema_fila_inicio INTEGER NULL,
+  sistema_fila_fin INTEGER NULL,
+  sistema_tipo_dato VARCHAR(20) NOT NULL DEFAULT 'text',
+  banco_hoja VARCHAR(120) NULL,
+  banco_columna VARCHAR(30) NULL,
+  banco_fila_inicio INTEGER NULL,
+  banco_fila_fin INTEGER NULL,
+  banco_tipo_dato VARCHAR(20) NOT NULL DEFAULT 'text',
+  mapeo_base_creado_en TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  mapeo_base_actualizado_en TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT chk_plantillas_base_mapeos_field_not_blank CHECK (length(trim(mapeo_base_clave_campo)) > 0),
+  CONSTRAINT chk_plantillas_base_mapeos_label_not_blank CHECK (length(trim(mapeo_base_etiqueta)) > 0),
+  CONSTRAINT chk_plantillas_base_mapeos_weight_non_negative CHECK (mapeo_base_peso >= 0),
+  CONSTRAINT fk_plantillas_base_mapeos_plantillas_base FOREIGN KEY (plantilla_base_id)
+    REFERENCES public.plantillas_base (plantilla_base_id) ON DELETE CASCADE
 );
+
+CREATE UNIQUE INDEX uq_plantillas_base_mapeos_campo
+  ON public.plantillas_base_mapeos (plantilla_base_id, LOWER(mapeo_base_clave_campo));
+
+CREATE INDEX idx_plantillas_base_mapeos_plantilla_base_id
+  ON public.plantillas_base_mapeos (plantilla_base_id);
+
+CREATE TABLE public.plantillas_conciliacion (
+  plantilla_id SERIAL PRIMARY KEY,
+  banco_id INTEGER NOT NULL,
+  plantilla_base_id INTEGER NULL,
+  sistema_id INTEGER NOT NULL,
+  plantilla_nombre VARCHAR(120) NOT NULL,
+  plantilla_descripcion VARCHAR(255) NULL,
+  plantilla_etiqueta_sistema VARCHAR(120) NOT NULL DEFAULT 'Sistema',
+  plantilla_etiqueta_banco VARCHAR(120) NOT NULL DEFAULT 'Banco',
+  plantilla_umbral_auto_match DOUBLE PRECISION NOT NULL DEFAULT 1,
+  plantilla_activa BOOLEAN NOT NULL DEFAULT FALSE,
+  plantilla_creada_en TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  plantilla_actualizada_en TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT chk_plantillas_conciliacion_nombre_not_blank CHECK (length(trim(plantilla_nombre)) > 0),
+  CONSTRAINT chk_plantillas_conciliacion_threshold_range CHECK (plantilla_umbral_auto_match >= 0 AND plantilla_umbral_auto_match <= 1),
+  CONSTRAINT fk_plantillas_conciliacion_bancos FOREIGN KEY (banco_id) REFERENCES public.bancos (banco_id) ON DELETE CASCADE,
+  CONSTRAINT fk_plantillas_conciliacion_sistemas FOREIGN KEY (sistema_id)
+    REFERENCES public.sistemas (sistema_id) ON DELETE RESTRICT,
+  CONSTRAINT fk_plantillas_conciliacion_plantillas_base FOREIGN KEY (plantilla_base_id)
+    REFERENCES public.plantillas_base (plantilla_base_id) ON DELETE SET NULL
+);
+
+CREATE UNIQUE INDEX uq_plantillas_conciliacion_activa
+  ON public.plantillas_conciliacion (banco_id)
+  WHERE plantilla_activa = TRUE;
+
+CREATE UNIQUE INDEX uq_plantillas_conciliacion_banco_base
+  ON public.plantillas_conciliacion (banco_id, plantilla_base_id)
+  WHERE plantilla_base_id IS NOT NULL;
+
+CREATE INDEX idx_plantillas_conciliacion_banco_id
+  ON public.plantillas_conciliacion (banco_id);
+
+CREATE INDEX idx_plantillas_conciliacion_sistema_id
+  ON public.plantillas_conciliacion (sistema_id);
+
+CREATE INDEX idx_plantillas_conciliacion_plantilla_base_id
+  ON public.plantillas_conciliacion (plantilla_base_id);
+
+CREATE TABLE public.plantillas_conciliacion_mapeos (
+  mapeo_id SERIAL PRIMARY KEY,
+  plantilla_id INTEGER NOT NULL,
+  mapeo_clave_campo VARCHAR(60) NOT NULL,
+  mapeo_etiqueta VARCHAR(120) NOT NULL,
+  mapeo_orden INTEGER NOT NULL DEFAULT 0,
+  mapeo_activo BOOLEAN NOT NULL DEFAULT TRUE,
+  mapeo_requerido BOOLEAN NOT NULL DEFAULT FALSE,
+  mapeo_operador_comparacion VARCHAR(40) NOT NULL DEFAULT 'equals',
+  mapeo_peso DOUBLE PRECISION NOT NULL DEFAULT 1,
+  mapeo_tolerancia DOUBLE PRECISION NULL,
+  sistema_hoja VARCHAR(120) NULL,
+  sistema_columna VARCHAR(30) NULL,
+  sistema_fila_inicio INTEGER NULL,
+  sistema_fila_fin INTEGER NULL,
+  sistema_tipo_dato VARCHAR(20) NOT NULL DEFAULT 'text',
+  banco_hoja VARCHAR(120) NULL,
+  banco_columna VARCHAR(30) NULL,
+  banco_fila_inicio INTEGER NULL,
+  banco_fila_fin INTEGER NULL,
+  banco_tipo_dato VARCHAR(20) NOT NULL DEFAULT 'text',
+  mapeo_creado_en TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  mapeo_actualizado_en TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT chk_plantillas_conciliacion_mapeos_field_not_blank CHECK (length(trim(mapeo_clave_campo)) > 0),
+  CONSTRAINT chk_plantillas_conciliacion_mapeos_label_not_blank CHECK (length(trim(mapeo_etiqueta)) > 0),
+  CONSTRAINT chk_plantillas_conciliacion_mapeos_weight_non_negative CHECK (mapeo_peso >= 0),
+  CONSTRAINT fk_plantillas_conciliacion_mapeos_plantillas FOREIGN KEY (plantilla_id)
+    REFERENCES public.plantillas_conciliacion (plantilla_id) ON DELETE CASCADE
+);
+
+CREATE UNIQUE INDEX uq_plantillas_conciliacion_mapeos_campo
+  ON public.plantillas_conciliacion_mapeos (plantilla_id, LOWER(mapeo_clave_campo));
+
+CREATE INDEX idx_plantillas_conciliacion_mapeos_plantilla_id
+  ON public.plantillas_conciliacion_mapeos (plantilla_id);
 
 CREATE TABLE public.conciliaciones (
-  con_id SERIAL PRIMARY KEY,
-  usr_id INTEGER NOT NULL,
-  ban_id INTEGER NOT NULL,
-  lyt_id INTEGER NOT NULL,
-  ecb_id INTEGER NULL,
-  con_nombre VARCHAR(160) NOT NULL,
-  con_estado VARCHAR(40) NOT NULL DEFAULT 'saved',
-  con_update_count INTEGER NOT NULL DEFAULT 0,
-  con_has_system_data BOOLEAN NOT NULL DEFAULT FALSE,
-  con_has_bank_data BOOLEAN NOT NULL DEFAULT FALSE,
-  con_system_filename VARCHAR(255) NULL,
-  con_bank_filename VARCHAR(255) NULL,
-  con_total_system_rows INTEGER NOT NULL DEFAULT 0,
-  con_total_bank_rows INTEGER NOT NULL DEFAULT 0,
-  con_auto_matches INTEGER NOT NULL DEFAULT 0,
-  con_manual_matches INTEGER NOT NULL DEFAULT 0,
-  con_unmatched_system INTEGER NOT NULL DEFAULT 0,
-  con_unmatched_bank INTEGER NOT NULL DEFAULT 0,
-  con_match_percentage DOUBLE PRECISION NOT NULL DEFAULT 0,
-  con_summary_snapshot JSONB NULL,
-  con_created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  con_updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  CONSTRAINT chk_conciliaciones_nombre_not_blank CHECK (length(trim(con_nombre)) > 0),
-  CONSTRAINT fk_conciliaciones_usuarios FOREIGN KEY (usr_id) REFERENCES public.usuarios (usr_id) ON DELETE CASCADE,
-  CONSTRAINT fk_conciliaciones_bancos FOREIGN KEY (ban_id) REFERENCES public.bancos (ban_id) ON DELETE CASCADE,
-  CONSTRAINT fk_conciliaciones_layouts FOREIGN KEY (lyt_id) REFERENCES public.conciliacion_layouts (lyt_id) ON DELETE RESTRICT,
-  CONSTRAINT fk_conciliaciones_ecb FOREIGN KEY (ecb_id)
-    REFERENCES public.empresas_cuentas_bancarias (ecb_id) ON DELETE SET NULL
+  conciliacion_id SERIAL PRIMARY KEY,
+  usuario_id INTEGER NOT NULL,
+  banco_id INTEGER NOT NULL,
+  plantilla_id INTEGER NOT NULL,
+  cuenta_bancaria_id INTEGER NOT NULL,
+  conciliacion_nombre VARCHAR(160) NOT NULL,
+  conciliacion_estado VARCHAR(40) NOT NULL DEFAULT 'saved',
+  conciliacion_cantidad_actualizaciones INTEGER NOT NULL DEFAULT 0,
+  conciliacion_tiene_datos_sistema BOOLEAN NOT NULL DEFAULT FALSE,
+  conciliacion_tiene_datos_banco BOOLEAN NOT NULL DEFAULT FALSE,
+  conciliacion_archivo_sistema VARCHAR(255) NULL,
+  conciliacion_archivo_banco VARCHAR(255) NULL,
+  conciliacion_total_filas_sistema INTEGER NOT NULL DEFAULT 0,
+  conciliacion_total_filas_banco INTEGER NOT NULL DEFAULT 0,
+  conciliacion_matches_automaticos INTEGER NOT NULL DEFAULT 0,
+  conciliacion_matches_manuales INTEGER NOT NULL DEFAULT 0,
+  conciliacion_pendientes_sistema INTEGER NOT NULL DEFAULT 0,
+  conciliacion_pendientes_banco INTEGER NOT NULL DEFAULT 0,
+  conciliacion_porcentaje_match DOUBLE PRECISION NOT NULL DEFAULT 0,
+  conciliacion_resumen_snapshot JSONB NULL,
+  conciliacion_creada_en TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  conciliacion_actualizada_en TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT chk_conciliaciones_nombre_not_blank CHECK (length(trim(conciliacion_nombre)) > 0),
+  CONSTRAINT fk_conciliaciones_usuarios FOREIGN KEY (usuario_id) REFERENCES public.usuarios (usr_id) ON DELETE CASCADE,
+  CONSTRAINT fk_conciliaciones_bancos FOREIGN KEY (banco_id) REFERENCES public.bancos (banco_id) ON DELETE CASCADE,
+  CONSTRAINT fk_conciliaciones_plantillas FOREIGN KEY (plantilla_id) REFERENCES public.plantillas_conciliacion (plantilla_id) ON DELETE RESTRICT,
+  CONSTRAINT fk_conciliaciones_cuentas_bancarias FOREIGN KEY (cuenta_bancaria_id)
+    REFERENCES public.cuentas_bancarias (cuenta_bancaria_id) ON DELETE RESTRICT
 );
 
-CREATE TABLE public.conciliacion_matches (
-  cmt_id SERIAL PRIMARY KEY,
-  con_id INTEGER NOT NULL,
-  cmt_status VARCHAR(40) NOT NULL,
-  cmt_system_row_id VARCHAR(80) NULL,
-  cmt_bank_row_id VARCHAR(80) NULL,
-  cmt_system_row_number INTEGER NULL,
-  cmt_bank_row_number INTEGER NULL,
-  cmt_score DOUBLE PRECISION NULL,
-  cmt_details JSONB NULL,
-  cmt_system_payload JSONB NULL,
-  cmt_bank_payload JSONB NULL,
-  cmt_created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  CONSTRAINT fk_conciliacion_matches_conciliaciones FOREIGN KEY (con_id) REFERENCES public.conciliaciones (con_id) ON DELETE CASCADE
+CREATE INDEX idx_conciliaciones_usuario_id
+  ON public.conciliaciones (usuario_id);
+
+CREATE INDEX idx_conciliaciones_banco_id
+  ON public.conciliaciones (banco_id);
+
+CREATE INDEX idx_conciliaciones_plantilla_id
+  ON public.conciliaciones (plantilla_id);
+
+CREATE INDEX idx_conciliaciones_cuenta_bancaria_id
+  ON public.conciliaciones (cuenta_bancaria_id);
+
+CREATE INDEX idx_conciliaciones_creada_en
+  ON public.conciliaciones (conciliacion_creada_en DESC);
+
+CREATE TABLE public.conciliacion_resultados (
+  resultado_id SERIAL PRIMARY KEY,
+  conciliacion_id INTEGER NOT NULL,
+  resultado_estado VARCHAR(40) NOT NULL,
+  sistema_fila_id VARCHAR(80) NULL,
+  banco_fila_id VARCHAR(80) NULL,
+  sistema_numero_fila INTEGER NULL,
+  banco_numero_fila INTEGER NULL,
+  resultado_score DOUBLE PRECISION NULL,
+  resultado_detalle JSONB NULL,
+  sistema_payload JSONB NULL,
+  banco_payload JSONB NULL,
+  resultado_creado_en TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT chk_conciliacion_resultados_estado_not_blank CHECK (length(trim(resultado_estado)) > 0),
+  CONSTRAINT fk_conciliacion_resultados_conciliaciones FOREIGN KEY (conciliacion_id)
+    REFERENCES public.conciliaciones (conciliacion_id) ON DELETE CASCADE
 );
 
-CREATE UNIQUE INDEX uq_conciliacion_layouts_active
-  ON public.conciliacion_layouts (ban_id)
-  WHERE lyt_activo = TRUE;
+CREATE INDEX idx_conciliacion_resultados_conciliacion_id
+  ON public.conciliacion_resultados (conciliacion_id);
 
-CREATE UNIQUE INDEX uq_conciliacion_layouts_source_layout
-  ON public.conciliacion_layouts (ban_id, lyt_source_layout_id)
-  WHERE lyt_source_layout_id IS NOT NULL;
-
-CREATE UNIQUE INDEX uq_conciliacion_layout_mappings_layout_field
-  ON public.conciliacion_layout_mappings (lyt_id, LOWER(lmp_field_key));
-
-CREATE INDEX idx_conciliacion_layouts_ban_id
-  ON public.conciliacion_layouts (ban_id);
-
-CREATE INDEX idx_conciliacion_layouts_sys_id
-  ON public.conciliacion_layouts (sys_id);
-
-CREATE INDEX idx_conciliacion_layouts_source_layout_id
-  ON public.conciliacion_layouts (lyt_source_layout_id);
-
-CREATE INDEX idx_conciliacion_layout_mappings_lyt_id
-  ON public.conciliacion_layout_mappings (lyt_id);
-
-CREATE INDEX idx_conciliaciones_usr_id
-  ON public.conciliaciones (usr_id);
-
-CREATE INDEX idx_conciliaciones_ban_id
-  ON public.conciliaciones (ban_id);
-
-CREATE INDEX idx_conciliaciones_lyt_id
-  ON public.conciliaciones (lyt_id);
-
-CREATE INDEX idx_conciliaciones_ecb_id
-  ON public.conciliaciones (ecb_id);
-
-CREATE INDEX idx_conciliaciones_created_at
-  ON public.conciliaciones (con_created_at DESC);
-
-CREATE INDEX idx_conciliacion_matches_con_id
-  ON public.conciliacion_matches (con_id);
-
-INSERT INTO public.conciliation_systems (
-  sys_nombre,
-  sys_descripcion,
-  sys_activo
+INSERT INTO public.sistemas (
+  sistema_nombre,
+  sistema_descripcion,
+  sistema_activo
 )
 VALUES (
   'SAP',
-  'Sistema base para seeds y layouts iniciales de conciliacion.',
+  'Sistema base para seeds y plantillas iniciales de conciliacion.',
   TRUE
 )
-ON CONFLICT ((LOWER(sys_nombre))) DO NOTHING;
+ON CONFLICT DO NOTHING;
 
-CREATE OR REPLACE FUNCTION public.fn_touch_sys_updated_at()
+CREATE OR REPLACE FUNCTION public.fn_touch_sistemas_actualizado_en()
 RETURNS TRIGGER
 LANGUAGE plpgsql
 AS $$
 BEGIN
-  NEW.sys_updated_at = NOW();
+  NEW.sistema_actualizado_en = NOW();
   RETURN NEW;
 END;
 $$;
 
-CREATE OR REPLACE FUNCTION public.fn_touch_lyt_updated_at()
+CREATE OR REPLACE FUNCTION public.fn_touch_plantillas_base_actualizado_en()
 RETURNS TRIGGER
 LANGUAGE plpgsql
 AS $$
 BEGIN
-  NEW.lyt_updated_at = NOW();
+  NEW.plantilla_base_actualizada_en = NOW();
   RETURN NEW;
 END;
 $$;
 
-CREATE OR REPLACE FUNCTION public.fn_touch_lmp_updated_at()
+CREATE OR REPLACE FUNCTION public.fn_touch_plantillas_base_mapeos_actualizado_en()
 RETURNS TRIGGER
 LANGUAGE plpgsql
 AS $$
 BEGIN
-  NEW.lmp_updated_at = NOW();
+  NEW.mapeo_base_actualizado_en = NOW();
   RETURN NEW;
 END;
 $$;
 
-CREATE OR REPLACE FUNCTION public.fn_touch_con_updated_at()
+CREATE OR REPLACE FUNCTION public.fn_touch_plantillas_conciliacion_actualizado_en()
 RETURNS TRIGGER
 LANGUAGE plpgsql
 AS $$
 BEGIN
-  NEW.con_updated_at = NOW();
+  NEW.plantilla_actualizada_en = NOW();
   RETURN NEW;
 END;
 $$;
 
-CREATE TRIGGER trg_conciliacion_layouts_touch_updated_at
-BEFORE UPDATE ON public.conciliacion_layouts
+CREATE OR REPLACE FUNCTION public.fn_touch_plantillas_conciliacion_mapeos_actualizado_en()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  NEW.mapeo_actualizado_en = NOW();
+  RETURN NEW;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.fn_touch_conciliaciones_actualizado_en()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  NEW.conciliacion_actualizada_en = NOW();
+  RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER trg_sistemas_touch_actualizado_en
+BEFORE UPDATE ON public.sistemas
 FOR EACH ROW
-EXECUTE FUNCTION public.fn_touch_lyt_updated_at();
+EXECUTE FUNCTION public.fn_touch_sistemas_actualizado_en();
 
-CREATE TRIGGER trg_conciliacion_layout_mappings_touch_updated_at
-BEFORE UPDATE ON public.conciliacion_layout_mappings
+CREATE TRIGGER trg_plantillas_base_touch_actualizado_en
+BEFORE UPDATE ON public.plantillas_base
 FOR EACH ROW
-EXECUTE FUNCTION public.fn_touch_lmp_updated_at();
+EXECUTE FUNCTION public.fn_touch_plantillas_base_actualizado_en();
 
-CREATE TRIGGER trg_conciliaciones_touch_updated_at
+CREATE TRIGGER trg_plantillas_base_mapeos_touch_actualizado_en
+BEFORE UPDATE ON public.plantillas_base_mapeos
+FOR EACH ROW
+EXECUTE FUNCTION public.fn_touch_plantillas_base_mapeos_actualizado_en();
+
+CREATE TRIGGER trg_plantillas_conciliacion_touch_actualizado_en
+BEFORE UPDATE ON public.plantillas_conciliacion
+FOR EACH ROW
+EXECUTE FUNCTION public.fn_touch_plantillas_conciliacion_actualizado_en();
+
+CREATE TRIGGER trg_plantillas_conciliacion_mapeos_touch_actualizado_en
+BEFORE UPDATE ON public.plantillas_conciliacion_mapeos
+FOR EACH ROW
+EXECUTE FUNCTION public.fn_touch_plantillas_conciliacion_mapeos_actualizado_en();
+
+CREATE TRIGGER trg_conciliaciones_touch_actualizado_en
 BEFORE UPDATE ON public.conciliaciones
 FOR EACH ROW
-EXECUTE FUNCTION public.fn_touch_con_updated_at();
-
-CREATE TRIGGER trg_conciliation_systems_touch_updated_at
-BEFORE UPDATE ON public.conciliation_systems
-FOR EACH ROW
-EXECUTE FUNCTION public.fn_touch_sys_updated_at();
+EXECUTE FUNCTION public.fn_touch_conciliaciones_actualizado_en();
 
 COMMIT;

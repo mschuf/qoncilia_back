@@ -29,8 +29,18 @@ export interface PublicCompanyBankAccount {
   active: boolean;
 }
 
+export interface PublicCurrency {
+  id: number;
+  code: string;
+  name: string;
+  symbol: string | null;
+  decimals: number;
+  active: boolean;
+}
+
 export interface CompanyBankingReferenceResponse {
   companies: PublicCompany[];
   banks: PublicBank[];
   accounts: PublicCompanyBankAccount[];
+  currencies: PublicCurrency[];
 }

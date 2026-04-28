@@ -62,28 +62,28 @@ export class ConciliationController {
     return this.conciliationService.listCatalog(actor, query.userId);
   }
 
-  @Get("template-layouts")
+  @Get(["plantillas-base", "template-layouts"])
   @Roles(Role.IS_SUPER_ADMIN)
   @RequiredModule(AppModuleCode.LAYOUT_MANAGEMENT)
   listTemplateLayouts(@CurrentUser() actor: AuthUser) {
     return this.conciliationService.listTemplateLayouts(actor);
   }
 
-  @Get("systems")
+  @Get(["sistemas", "systems"])
   @Roles(Role.ADMIN, Role.IS_SUPER_ADMIN)
   @RequiredModule(AppModuleCode.LAYOUT_MANAGEMENT)
   listSystems(@CurrentUser() actor: AuthUser) {
     return this.conciliationService.listSystems(actor);
   }
 
-  @Post("systems")
+  @Post(["sistemas", "systems"])
   @Roles(Role.IS_SUPER_ADMIN)
   @RequiredModule(AppModuleCode.LAYOUT_MANAGEMENT)
   createSystem(@Body() body: CreateConciliationSystemDto, @CurrentUser() actor: AuthUser) {
     return this.conciliationService.createSystem(body, actor);
   }
 
-  @Patch("systems/:systemId")
+  @Patch(["sistemas/:systemId", "systems/:systemId"])
   @Roles(Role.IS_SUPER_ADMIN)
   @RequiredModule(AppModuleCode.LAYOUT_MANAGEMENT)
   updateSystem(
@@ -94,7 +94,7 @@ export class ConciliationController {
     return this.conciliationService.updateSystem(systemId, body, actor);
   }
 
-  @Delete("systems/:systemId")
+  @Delete(["sistemas/:systemId", "systems/:systemId"])
   @Roles(Role.IS_SUPER_ADMIN)
   @RequiredModule(AppModuleCode.LAYOUT_MANAGEMENT)
   deleteSystem(@Param("systemId", ParseIntPipe) systemId: number, @CurrentUser() actor: AuthUser) {
@@ -125,32 +125,32 @@ export class ConciliationController {
     );
   }
 
-  @Post("template-layouts")
+  @Post(["plantillas-base", "template-layouts"])
   @Roles(Role.IS_SUPER_ADMIN)
   @RequiredModule(AppModuleCode.LAYOUT_MANAGEMENT)
   createTemplateLayout(@Body() body: CreateTemplateLayoutDto, @CurrentUser() actor: AuthUser) {
     return this.conciliationService.createTemplateLayout(body, actor);
   }
 
-  @Patch("template-layouts/:templateLayoutId")
+  @Patch(["plantillas-base/:plantillaBaseId", "template-layouts/:plantillaBaseId"])
   @Roles(Role.IS_SUPER_ADMIN)
   @RequiredModule(AppModuleCode.LAYOUT_MANAGEMENT)
   updateTemplateLayout(
-    @Param("templateLayoutId", ParseIntPipe) templateLayoutId: number,
+    @Param("plantillaBaseId", ParseIntPipe) plantillaBaseId: number,
     @Body() body: UpdateTemplateLayoutDto,
     @CurrentUser() actor: AuthUser
   ) {
-    return this.conciliationService.updateTemplateLayout(templateLayoutId, body, actor);
+    return this.conciliationService.updateTemplateLayout(plantillaBaseId, body, actor);
   }
 
-  @Delete("template-layouts/:templateLayoutId")
+  @Delete(["plantillas-base/:plantillaBaseId", "template-layouts/:plantillaBaseId"])
   @Roles(Role.IS_SUPER_ADMIN)
   @RequiredModule(AppModuleCode.LAYOUT_MANAGEMENT)
   deleteTemplateLayout(
-    @Param("templateLayoutId", ParseIntPipe) templateLayoutId: number,
+    @Param("plantillaBaseId", ParseIntPipe) plantillaBaseId: number,
     @CurrentUser() actor: AuthUser
   ) {
-    return this.conciliationService.deleteTemplateLayout(templateLayoutId, actor);
+    return this.conciliationService.deleteTemplateLayout(plantillaBaseId, actor);
   }
 
   @Post("users/:userId/banks")
@@ -198,7 +198,7 @@ export class ConciliationController {
     return this.conciliationService.deleteUserBank(userId, bankId, actor);
   }
 
-  @Post("users/:userId/banks/:bankId/layouts")
+  @Post(["users/:userId/banks/:bankId/plantillas", "users/:userId/banks/:bankId/layouts"])
   @Roles(Role.IS_SUPER_ADMIN)
   @RequiredModule(AppModuleCode.LAYOUT_MANAGEMENT)
   createLayout(
@@ -210,48 +210,57 @@ export class ConciliationController {
     return this.conciliationService.createLayout(userId, bankId, body, actor);
   }
 
-  @Post("users/:userId/banks/:bankId/template-layouts/:templateLayoutId/apply")
+  @Post([
+    "users/:userId/banks/:bankId/plantillas-base/:plantillaBaseId/aplicar",
+    "users/:userId/banks/:bankId/template-layouts/:plantillaBaseId/apply"
+  ])
   @Roles(Role.IS_SUPER_ADMIN)
   @RequiredModule(AppModuleCode.LAYOUT_MANAGEMENT)
   applyTemplateLayoutToBank(
     @Param("userId", ParseIntPipe) userId: number,
     @Param("bankId", ParseIntPipe) bankId: number,
-    @Param("templateLayoutId", ParseIntPipe) templateLayoutId: number,
+    @Param("plantillaBaseId", ParseIntPipe) plantillaBaseId: number,
     @Body() body: ApplyTemplateLayoutDto,
     @CurrentUser() actor: AuthUser
   ) {
     return this.conciliationService.applyTemplateLayoutToBank(
       userId,
       bankId,
-      templateLayoutId,
+      plantillaBaseId,
       body,
       actor
     );
   }
 
-  @Patch("users/:userId/banks/:bankId/layouts/:layoutId")
+  @Patch([
+    "users/:userId/banks/:bankId/plantillas/:plantillaId",
+    "users/:userId/banks/:bankId/layouts/:plantillaId"
+  ])
   @Roles(Role.IS_SUPER_ADMIN)
   @RequiredModule(AppModuleCode.LAYOUT_MANAGEMENT)
   updateLayout(
     @Param("userId", ParseIntPipe) userId: number,
     @Param("bankId", ParseIntPipe) bankId: number,
-    @Param("layoutId", ParseIntPipe) layoutId: number,
+    @Param("plantillaId", ParseIntPipe) plantillaId: number,
     @Body() body: UpdateLayoutDto,
     @CurrentUser() actor: AuthUser
   ) {
-    return this.conciliationService.updateLayout(userId, bankId, layoutId, body, actor);
+    return this.conciliationService.updateLayout(userId, bankId, plantillaId, body, actor);
   }
 
-  @Delete("users/:userId/banks/:bankId/layouts/:layoutId")
+  @Delete([
+    "users/:userId/banks/:bankId/plantillas/:plantillaId",
+    "users/:userId/banks/:bankId/layouts/:plantillaId"
+  ])
   @Roles(Role.IS_SUPER_ADMIN)
   @RequiredModule(AppModuleCode.LAYOUT_MANAGEMENT)
   deleteLayout(
     @Param("userId", ParseIntPipe) userId: number,
     @Param("bankId", ParseIntPipe) bankId: number,
-    @Param("layoutId", ParseIntPipe) layoutId: number,
+    @Param("plantillaId", ParseIntPipe) plantillaId: number,
     @CurrentUser() actor: AuthUser
   ) {
-    return this.conciliationService.deleteLayout(userId, bankId, layoutId, actor);
+    return this.conciliationService.deleteLayout(userId, bankId, plantillaId, actor);
   }
 
   @Post("preview")
@@ -283,21 +292,21 @@ export class ConciliationController {
     );
   }
 
-  @Post("reconciliations")
+  @Post(["conciliaciones", "reconciliations"])
   @Roles(Role.ADMIN, Role.IS_SUPER_ADMIN, Role.GESTOR_COBRANZA, Role.GESTOR_PAGOS)
   @RequiredModule(AppModuleCode.CONCILIATION)
   saveReconciliation(@Body() body: SaveReconciliationDto, @CurrentUser() actor: AuthUser) {
     return this.conciliationService.saveReconciliation(actor, body);
   }
 
-  @Get("reconciliations")
+  @Get(["conciliaciones", "reconciliations"])
   @Roles(Role.ADMIN, Role.IS_SUPER_ADMIN, Role.GESTOR_COBRANZA, Role.GESTOR_PAGOS)
   @RequiredModule(AppModuleCode.CONCILIATION)
   listReconciliations(@CurrentUser() actor: AuthUser, @Query() query: ListReconciliationsQueryDto) {
     return this.conciliationService.listReconciliations(actor, query);
   }
 
-  @Get("reconciliations/:id")
+  @Get(["conciliaciones/:id", "reconciliations/:id"])
   @Roles(Role.ADMIN, Role.IS_SUPER_ADMIN, Role.GESTOR_COBRANZA, Role.GESTOR_PAGOS)
   @RequiredModule(AppModuleCode.CONCILIATION)
   getReconciliation(@Param("id", ParseIntPipe) id: number, @CurrentUser() actor: AuthUser) {

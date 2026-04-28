@@ -8,7 +8,6 @@ import { RolesGuard } from "../common/guards/roles.guard"
 import { Reconciliation } from "../conciliation/entities/reconciliation.entity"
 import { User } from "../users/entities/user.entity"
 import { CompanyErpConfig } from "./entities/company-erp-config.entity"
-import { ReconciliationErpShipment } from "./entities/reconciliation-erp-shipment.entity"
 import { ErpController } from "./erp.controller"
 import { ErpService } from "./erp.service"
 
@@ -19,8 +18,7 @@ import { ErpService } from "./erp.service"
       Company,
       User,
       Reconciliation,
-      CompanyErpConfig,
-      ReconciliationErpShipment
+      CompanyErpConfig
     ])
   ],
   controllers: [ErpController],

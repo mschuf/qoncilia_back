@@ -20,10 +20,12 @@ import { UpdateBankDto } from "./dto/update-bank.dto";
 import { UpdateCompanyBankAccountDto } from "./dto/update-company-bank-account.dto";
 import { BankEntity } from "./entities/bank.entity";
 import { CompanyBankAccount } from "./entities/company-bank-account.entity";
+import { Currency } from "./entities/currency.entity";
 import {
   CompanyBankingReferenceResponse,
   PublicBank,
-  PublicCompanyBankAccount
+  PublicCompanyBankAccount,
+  PublicCurrency
 } from "./interfaces/banking.interfaces";
 
 @Injectable()
@@ -36,7 +38,9 @@ export class BankingService {
     @InjectRepository(BankEntity)
     private readonly bankRepository: Repository<BankEntity>,
     @InjectRepository(CompanyBankAccount)
-    private readonly companyBankAccountRepository: Repository<CompanyBankAccount>
+    private readonly companyBankAccountRepository: Repository<CompanyBankAccount>,
+    @InjectRepository(Currency)
+    private readonly currencyRepository: Repository<Currency>
   ) {}
 
   async listReference(
@@ -44,7 +48,7 @@ export class BankingService {
     query: ListCompanyBankingQueryDto
   ): Promise<CompanyBankingReferenceResponse> {
     const companyId = await this.resolveAccessibleCompanyId(actor, query.companyId);
-    const [companies, banks, accounts] = await Promise.all([
+    const [companies, banks, accounts, currencies] = await Promise.all([
       this.listCompaniesForActor(actor),
       this.bankRepository.find({
         where: { company: { id: companyId } },
@@ -55,13 +59,18 @@ export class BankingService {
         where: { company: { id: companyId } },
         relations: { company: true, bank: { user: true, company: true } },
         order: { name: "ASC", id: "ASC" }
+      }),
+      this.currencyRepository.find({
+        where: { active: true },
+        order: { code: "ASC", id: "ASC" }
       })
     ]);
 
     return {
       companies: companies.map((item) => this.toPublicCompany(item)),
       banks: banks.map((item) => this.toPublicBank(item)),
-      accounts: accounts.map((item) => this.toPublicCompanyBankAccount(item))
+      accounts: accounts.map((item) => this.toPublicCompanyBankAccount(item)),
+      currencies: currencies.map((item) => this.toPublicCurrency(item))
     };
   }
 
@@ -146,11 +155,13 @@ export class BankingService {
 
     this.ensureBankBelongsToCompany(bank, company.id);
 
+    const currency = await this.requireActiveCurrency(payload.currency);
+
     const account = this.companyBankAccountRepository.create({
       company,
       bank,
       name: this.normalizeRequired(payload.name, "name"),
-      currency: this.normalizeRequired(payload.currency, "currency").toUpperCase(),
+      currency: currency.code,
       accountNumber: this.normalizeRequired(payload.accountNumber, "accountNumber"),
       bankErpId: this.normalizeRequired(payload.bankErpId, "bankErpId"),
       majorAccountNumber: this.normalizeRequired(payload.majorAccountNumber, "majorAccountNumber"),
@@ -192,7 +203,8 @@ export class BankingService {
       account.name = this.normalizeRequired(payload.name, "name");
     }
     if (payload.currency !== undefined) {
-      account.currency = this.normalizeRequired(payload.currency, "currency").toUpperCase();
+      const currency = await this.requireActiveCurrency(payload.currency);
+      account.currency = currency.code;
     }
     if (payload.accountNumber !== undefined) {
       account.accountNumber = this.normalizeRequired(payload.accountNumber, "accountNumber");
@@ -347,6 +359,22 @@ export class BankingService {
     return account;
   }
 
+  private async requireActiveCurrency(value: string): Promise<Currency> {
+    const code = this.normalizeRequired(value, "currency").toUpperCase();
+    const currency = await this.currencyRepository.findOne({
+      where: {
+        code,
+        active: true
+      }
+    });
+
+    if (!currency) {
+      throw new BadRequestException("La moneda seleccionada no existe o esta inactiva.");
+    }
+
+    return currency;
+  }
+
   private toPublicCompany(company: Company): PublicCompany {
     return {
       id: company.id,
@@ -394,6 +422,17 @@ export class BankingService {
     };
   }
 
+  private toPublicCurrency(currency: Currency): PublicCurrency {
+    return {
+      id: currency.id,
+      code: currency.code,
+      name: currency.name,
+      symbol: currency.symbol,
+      decimals: currency.decimals,
+      active: currency.active
+    };
+  }
+
   private normalizeOptional(value?: string | null): string | null {
     if (value === undefined || value === null) return null;
     const trimmed = value.trim();
@@ -419,11 +458,11 @@ export class BankingService {
         const detail = String(driverError.detail ?? "").toLowerCase();
         const constraint = String(driverError.constraint ?? "").toLowerCase();
 
-        if (detail.includes("ban_nombre") || constraint.includes("bancos")) {
+        if (detail.includes("banco_nombre") || constraint.includes("bancos")) {
           throw new ConflictException("Ya existe un banco con ese nombre para el usuario.");
         }
 
-        if (constraint.includes("uq_empresas_cuentas_bancarias_empresa_banco_cuenta")) {
+        if (constraint.includes("uq_cuentas_bancarias_empresa_banco_numero")) {
           throw new ConflictException("Ya existe una cuenta bancaria con esos datos en la empresa.");
         }
 

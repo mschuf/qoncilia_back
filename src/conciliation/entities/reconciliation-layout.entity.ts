@@ -14,66 +14,56 @@ import { ReconciliationLayoutMapping } from "./reconciliation-layout-mapping.ent
 import { TemplateLayout } from "./template-layout.entity";
 import { BankEntity } from "./bank.entity";
 
-@Entity({ name: "conciliacion_layouts" })
+@Entity({ name: "plantillas_conciliacion" })
 export class ReconciliationLayout {
-  @PrimaryGeneratedColumn({ name: "lyt_id" })
+  @PrimaryGeneratedColumn({ name: "plantilla_id" })
   id!: number;
 
   @ManyToOne(() => BankEntity, (bank) => bank.layouts, { nullable: false, onDelete: "CASCADE" })
-  @JoinColumn({ name: "ban_id", referencedColumnName: "id" })
+  @JoinColumn({ name: "banco_id", referencedColumnName: "id" })
   userBank!: BankEntity;
 
   @ManyToOne(() => TemplateLayout, (templateLayout) => templateLayout.layouts, {
     nullable: true,
     onDelete: "SET NULL"
   })
-  @JoinColumn({ name: "tpl_id", referencedColumnName: "id" })
+  @JoinColumn({ name: "plantilla_base_id", referencedColumnName: "id" })
   templateLayout!: TemplateLayout | null;
 
   @ManyToOne(() => ConciliationSystem, (system) => system.layouts, {
     nullable: false,
     onDelete: "RESTRICT"
   })
-  @JoinColumn({ name: "sys_id", referencedColumnName: "id" })
+  @JoinColumn({ name: "sistema_id", referencedColumnName: "id" })
   system!: ConciliationSystem;
 
-  @ManyToOne(() => ReconciliationLayout, (layout) => layout.assignedLayouts, {
-    nullable: true,
-    onDelete: "SET NULL"
-  })
-  @JoinColumn({ name: "lyt_source_layout_id", referencedColumnName: "id" })
-  sourceLayout!: ReconciliationLayout | null;
-
-  @Column({ name: "lyt_nombre", type: "varchar", length: 120 })
+  @Column({ name: "plantilla_nombre", type: "varchar", length: 120 })
   name!: string;
 
-  @Column({ name: "lyt_descripcion", type: "varchar", length: 255, nullable: true })
+  @Column({ name: "plantilla_descripcion", type: "varchar", length: 255, nullable: true })
   description!: string | null;
 
-  @Column({ name: "lyt_system_label", type: "varchar", length: 120, default: "Sistema" })
+  @Column({ name: "plantilla_etiqueta_sistema", type: "varchar", length: 120, default: "Sistema" })
   systemLabel!: string;
 
-  @Column({ name: "lyt_bank_label", type: "varchar", length: 120, default: "Banco" })
+  @Column({ name: "plantilla_etiqueta_banco", type: "varchar", length: 120, default: "Banco" })
   bankLabel!: string;
 
-  @Column({ name: "lyt_auto_match_threshold", type: "double precision", default: 1 })
+  @Column({ name: "plantilla_umbral_auto_match", type: "double precision", default: 1 })
   autoMatchThreshold!: number;
 
-  @Column({ name: "lyt_activo", type: "boolean", default: false })
+  @Column({ name: "plantilla_activa", type: "boolean", default: false })
   active!: boolean;
 
   @OneToMany(() => ReconciliationLayoutMapping, (mapping) => mapping.layout)
   mappings!: ReconciliationLayoutMapping[];
 
-  @OneToMany(() => ReconciliationLayout, (layout) => layout.sourceLayout)
-  assignedLayouts!: ReconciliationLayout[];
-
   @OneToMany(() => Reconciliation, (reconciliation) => reconciliation.layout)
   reconciliations!: Reconciliation[];
 
-  @CreateDateColumn({ name: "lyt_created_at", type: "timestamptz" })
+  @CreateDateColumn({ name: "plantilla_creada_en", type: "timestamptz" })
   createdAt!: Date;
 
-  @UpdateDateColumn({ name: "lyt_updated_at", type: "timestamptz" })
+  @UpdateDateColumn({ name: "plantilla_actualizada_en", type: "timestamptz" })
   updatedAt!: Date;
 }

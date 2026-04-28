@@ -1,8 +1,6 @@
--- Script opcional.
--- Reemplazar <<BCRYPT_HASH>> por hash real de una contrasena fuerte.
--- Ejemplo de login: superadmin.
--- Si luego ejecutas 05_rbac_empresas_roles_modulos.sql, este usuario se migrara a rol
--- is_super_admin cuando el login sea 'superadmin'.
+-- Script opcional para crear el usuario raiz antes del modelo RBAC.
+-- Si luego ejecutas 05_rbac_empresas_roles_modulos.sql, este usuario se enlaza
+-- a la empresa Qoncilia y al rol is_super_admin.
 
 INSERT INTO public.usuarios (
   usr_nombre,
@@ -14,13 +12,13 @@ INSERT INTO public.usuarios (
   usr_password_hash,
   usr_activo
 ) VALUES (
-  'Super',
-  'Admin',
-  'superadmin@qoncilia.local',
+  'morteira',
+  'morteira',
+  'morteira@gmail.com',
   '+595000000000',
-  'superadmin',
+  'morteira',
   'ROOT-0001',
-  '<<BCRYPT_HASH>>',
+  '$2a$12$SszeZLhMNMA0zB64ROhNh.sgfdtDmpUpliS951CQJPYtC/6EUf7JS',
   TRUE
 )
 ON CONFLICT (usr_login) DO NOTHING;
