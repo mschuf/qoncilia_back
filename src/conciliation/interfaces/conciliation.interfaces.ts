@@ -177,6 +177,8 @@ export interface DeleteUserBankResponse {
   deletedReconciliations: number;
 }
 
+export type ReconciliationSource = "system" | "bank";
+
 export interface PublicReconciliationSummary {
   id: number;
   name: string;
@@ -233,6 +235,11 @@ export interface ReconciliationSnapshot {
 
 export interface PublicReconciliationDetail extends PublicReconciliationSummary {
   summarySnapshot: ReconciliationSnapshot | null;
+}
+
+export interface DeleteReconciliationResponse {
+  id: number;
+  message: string;
 }
 
 export interface PublicGestorAssignmentCatalog {

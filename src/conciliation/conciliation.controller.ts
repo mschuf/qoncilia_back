@@ -313,6 +313,24 @@ export class ConciliationController {
     return this.conciliationService.getReconciliation(actor, id);
   }
 
+  @Delete(["conciliaciones/:id/fuentes/:source", "reconciliations/:id/sources/:source"])
+  @Roles(Role.ADMIN, Role.IS_SUPER_ADMIN, Role.GESTOR_COBRANZA, Role.GESTOR_PAGOS)
+  @RequiredModule(AppModuleCode.CONCILIATION)
+  deleteReconciliationSource(
+    @Param("id", ParseIntPipe) id: number,
+    @Param("source") source: "system" | "bank",
+    @CurrentUser() actor: AuthUser
+  ) {
+    return this.conciliationService.deleteReconciliationSource(actor, id, source);
+  }
+
+  @Delete(["conciliaciones/:id", "reconciliations/:id"])
+  @Roles(Role.ADMIN, Role.IS_SUPER_ADMIN, Role.GESTOR_COBRANZA, Role.GESTOR_PAGOS)
+  @RequiredModule(AppModuleCode.CONCILIATION)
+  deleteReconciliation(@Param("id", ParseIntPipe) id: number, @CurrentUser() actor: AuthUser) {
+    return this.conciliationService.deleteReconciliation(actor, id);
+  }
+
   @Get("kpis")
   @Roles(Role.ADMIN, Role.IS_SUPER_ADMIN, Role.GESTOR_COBRANZA, Role.GESTOR_PAGOS)
   @RequiredModule(AppModuleCode.CONCILIATION)

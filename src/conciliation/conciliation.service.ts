@@ -48,6 +48,7 @@ import {
   ConciliationPreviewResponse,
   ConciliationPreviewRow,
   ConciliationRuleResult,
+  DeleteReconciliationResponse,
   DeleteUserBankResponse,
   PublicCompanyBankAccountSummary,
   PublicConciliationSystem,
@@ -61,6 +62,7 @@ import {
   PublicUserBankDeletionAccount,
   PublicUserBankDeletionLayout,
   PublicUserBankDeletionPreview,
+  ReconciliationSource,
   ReconciliationSnapshot,
   PublicUserBank,
   PublicUserBankSummary,
@@ -1146,6 +1148,117 @@ export class ConciliationService {
     return this.toPublicReconciliationDetail(reconciliation);
   }
 
+  async deleteReconciliationSource(
+    actor: AuthUser,
+    reconciliationId: number,
+    source: ReconciliationSource
+  ): Promise<PublicReconciliationDetail> {
+    if (source !== "system" && source !== "bank") {
+      throw new BadRequestException("La fuente a eliminar debe ser system o bank.");
+    }
+
+    const reconciliation = await this.requireAccessibleReconciliation(actor, reconciliationId);
+    const snapshot = this.readSnapshot(reconciliation);
+    const systemRows = source === "system" ? [] : snapshot.systemRows;
+    const bankRows = source === "bank" ? [] : snapshot.bankRows;
+    const nextSnapshot = this.buildSnapshot(
+      reconciliation.userBank,
+      reconciliation.companyBankAccount,
+      reconciliation.layout,
+      systemRows,
+      bankRows,
+      [],
+      []
+    );
+
+    return this.reconciliationRepository.manager.transaction(async (manager) => {
+      const reconciliationRepository = manager.getRepository(Reconciliation);
+
+      const target = await reconciliationRepository.findOne({
+        where: { id: reconciliationId },
+        relations: {
+          user: {
+            company: true
+          },
+          userBank: {
+            user: {
+              company: true
+            }
+          },
+          companyBankAccount: {
+            bank: true
+          },
+          layout: {
+            system: true,
+            mappings: true,
+            templateLayout: true
+          }
+        }
+      });
+
+      if (!target) {
+        throw new NotFoundException("Conciliacion no encontrada.");
+      }
+
+      this.ensureActorCanAccessTargetUser(actor, target.user);
+
+      target.status = this.resolveReconciliationStatus(nextSnapshot, false);
+      target.hasSystemData = nextSnapshot.metrics.totalSystemRows > 0;
+      target.hasBankData = nextSnapshot.metrics.totalBankRows > 0;
+      target.systemFileName = source === "system" ? null : target.systemFileName;
+      target.bankFileName = source === "bank" ? null : target.bankFileName;
+      target.totalSystemRows = nextSnapshot.metrics.totalSystemRows;
+      target.totalBankRows = nextSnapshot.metrics.totalBankRows;
+      target.autoMatches = nextSnapshot.metrics.autoMatches;
+      target.manualMatches = nextSnapshot.metrics.manualMatches;
+      target.unmatchedSystem = nextSnapshot.metrics.unmatchedSystem;
+      target.unmatchedBank = nextSnapshot.metrics.unmatchedBank;
+      target.matchPercentage = nextSnapshot.metrics.matchPercentage;
+      target.updateCount = (target.updateCount ?? 0) + 1;
+      target.summarySnapshot = nextSnapshot as unknown as Record<string, unknown>;
+
+      await reconciliationRepository.save(target);
+      await this.replaceReconciliationMatches(manager, target, nextSnapshot);
+
+      return this.requirePersistedReconciliation(
+        manager,
+        target.id,
+        "No se pudo recuperar la conciliacion luego de eliminar la fuente."
+      );
+    });
+  }
+
+  async deleteReconciliation(
+    actor: AuthUser,
+    reconciliationId: number
+  ): Promise<DeleteReconciliationResponse> {
+    const reconciliation = await this.requireAccessibleReconciliation(actor, reconciliationId);
+
+    await this.reconciliationRepository.manager.transaction(async (manager) => {
+      const repository = manager.getRepository(Reconciliation);
+      const target = await repository.findOne({
+        where: { id: reconciliationId },
+        relations: {
+          user: {
+            company: true
+          }
+        }
+      });
+
+      if (!target) {
+        throw new NotFoundException("Conciliacion no encontrada.");
+      }
+
+      this.ensureActorCanAccessTargetUser(actor, target.user);
+      await repository.remove(target);
+    });
+
+    return {
+      id: reconciliation.id,
+      message: "Conciliacion eliminada."
+    };
+  }
+
   async getKpis(actor: AuthUser, requestedUserId?: number): Promise<ConciliationKpiResponse> {
     const query = new ListReconciliationsQueryDto();
     query.userId = requestedUserId;
@@ -1848,21 +1961,26 @@ export class ConciliationService {
         previousSnapshot.bankRows,
         payload.bankRows
       );
-      const mergedManualMatches = this.mergeManualMatches(
-        layout.mappings,
-        mergedSystemRows,
-        mergedBankRows,
-        [...previousSnapshot.manualMatches, ...payload.manualMatches]
-      );
+      const comparisonPerformed = payload.comparisonPerformed ?? false;
+      const mergedManualMatches = comparisonPerformed
+        ? this.mergeManualMatches(
+            layout.mappings,
+            mergedSystemRows,
+            mergedBankRows,
+            [...previousSnapshot.manualMatches, ...payload.manualMatches]
+          )
+        : [];
       const lockedSystemIds = new Set(mergedManualMatches.map((item) => item.systemRowId));
       const lockedBankIds = new Set(mergedManualMatches.map((item) => item.bankRowId));
-      const mergedAutoMatches = this.buildAutoMatches(
-        layout,
-        mergedSystemRows.rows,
-        mergedBankRows.rows,
-        lockedSystemIds,
-        lockedBankIds
-      );
+      const mergedAutoMatches = comparisonPerformed
+        ? this.buildAutoMatches(
+            layout,
+            mergedSystemRows.rows,
+            mergedBankRows.rows,
+            lockedSystemIds,
+            lockedBankIds
+          )
+        : [];
       const snapshot = this.buildSnapshot(
         userBank,
         companyBankAccount,
@@ -1877,10 +1995,7 @@ export class ConciliationService {
       reconciliation.companyBankAccount = companyBankAccount;
       reconciliation.layout = layout;
       reconciliation.name = this.normalizeRequired(payload.name, "name");
-      reconciliation.status = this.resolveReconciliationStatus(
-        snapshot,
-        payload.comparisonPerformed ?? false
-      );
+      reconciliation.status = this.resolveReconciliationStatus(snapshot, comparisonPerformed);
       reconciliation.hasSystemData = snapshot.metrics.totalSystemRows > 0;
       reconciliation.hasBankData = snapshot.metrics.totalBankRows > 0;
       reconciliation.systemFileName =
