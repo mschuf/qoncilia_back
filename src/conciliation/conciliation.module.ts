@@ -8,6 +8,8 @@ import { BankingController } from "./banking.controller";
 import { BankingService } from "./banking.service";
 import { User } from "../users/entities/user.entity";
 import { BankEntity } from "./entities/bank.entity";
+import { BankStatement } from "./entities/bank-statement.entity";
+import { BankStatementRow } from "./entities/bank-statement-row.entity";
 import { ConciliationSystem } from "./entities/conciliation-system.entity";
 import { CompanyBankAccount } from "./entities/company-bank-account.entity";
 import { ConciliationController } from "./conciliation.controller";
@@ -26,6 +28,8 @@ import { Currency } from "./entities/currency.entity";
       User,
       Company,
       BankEntity,
+      BankStatement,
+      BankStatementRow,
       Currency,
       ConciliationSystem,
       CompanyBankAccount,

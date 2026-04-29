@@ -23,9 +23,9 @@ Estos scripts estan pensados para un `DROP`/recreacion limpia. Los scripts princ
 - `08_company_profile_and_admin_banking.sql` crea `monedas`, `bancos` y `cuentas_bancarias`.
 - El rol unico del usuario vive en `usuarios.rol_id`. `usuarios_roles` fue eliminado para evitar inconsistencias en login y permisos.
 - `04_seed_superadmin_template.sql` crea el usuario `morteira`; `05` lo enlaza con empresa Qoncilia y rol `is_super_admin`.
-- `09_create_conciliation_tables.sql` crea `sistemas`, `plantillas_base`, `plantillas_conciliacion`, `conciliaciones` y `conciliacion_resultados`.
-- Las conciliaciones requieren `cuenta_bancaria_id` y `plantilla_id`.
+- `09_create_conciliation_tables.sql` crea `sistemas`, `plantillas_base`, `plantillas_conciliacion`, `extractos_bancarios` y `extractos_bancarios_filas`.
+- Los extractos bancarios requieren `cuenta_bancaria_id` y `plantilla_id`; ya no se crean tablas para guardar Excel del sistema ni resultados de comparacion.
 - `lyt_source_layout_id` fue eliminado. La sincronizacion de plantillas admin -> gestor se hace por empresa, banco, sistema y plantilla base.
-- `conciliaciones_erp_envios` fue eliminada del esquema porque no participa del flujo actual.
+- `conciliaciones`, `conciliacion_resultados` y `conciliaciones_erp_envios` fueron eliminadas del esquema operativo porque la comparacion ya es temporal.
 - `13_seed_default_templates_from_existing_layouts.sql` y `15_upgrade_conciliation_accounts_systems_and_gestors.sql` fueron retirados porque este flujo ya no migra estructuras intermedias.
 - Los seeds `11` y `12` cargan bancos, cuentas, sistemas y plantillas sobre el esquema nuevo.

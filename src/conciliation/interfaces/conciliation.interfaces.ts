@@ -121,6 +121,7 @@ export interface ConciliationPreviewResponse {
   userBank: PublicUserBankSummary;
   companyBankAccount: PublicCompanyBankAccountSummary;
   layout: PublicLayout;
+  bankStatement?: PublicBankStatementSummary;
   systemFileName: string;
   bankFileName: string;
   systemRows: ConciliationPreviewRow[];
@@ -168,6 +169,7 @@ export interface PublicUserBankDeletionPreview {
   layouts: PublicUserBankDeletionLayout[];
   accounts: PublicUserBankDeletionAccount[];
   reconciliationCount: number;
+  bankStatementCount: number;
 }
 
 export interface DeleteUserBankResponse {
@@ -175,6 +177,7 @@ export interface DeleteUserBankResponse {
   deletedLayouts: number;
   deletedAccounts: number;
   deletedReconciliations: number;
+  deletedBankStatements: number;
 }
 
 export type ReconciliationSource = "system" | "bank";
@@ -292,4 +295,43 @@ export interface ConciliationKpiResponse {
     unmatchedBank: number;
     createdAt: Date;
   }>;
+}
+
+export interface PublicBankStatementSummary {
+  id: number;
+  name: string;
+  fileName: string;
+  status: string;
+  rowCount: number;
+  userId: number;
+  userLogin: string;
+  userBankId: number;
+  bankName: string;
+  bankAlias: string | null;
+  companyBankAccountId: number;
+  companyBankAccountName: string;
+  companyBankAccountNumber: string;
+  companyBankAccountCurrency: string;
+  layoutId: number;
+  layoutName: string;
+  systemId: number;
+  systemName: string;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface PublicBankStatementDetail extends PublicBankStatementSummary {
+  userBank: PublicUserBankSummary;
+  companyBankAccount: PublicCompanyBankAccountSummary;
+  layout: PublicLayout;
+  rows: ConciliationPreviewRow[];
+}
+
+export interface BankStatementPreviewResponse {
+  userBank: PublicUserBankSummary;
+  companyBankAccount: PublicCompanyBankAccountSummary;
+  layout: PublicLayout;
+  fileName: string;
+  rowCount: number;
+  rows: ConciliationPreviewRow[];
 }

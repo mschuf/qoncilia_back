@@ -11,6 +11,7 @@ import {
 import { Company } from "../../access-control/entities/company.entity";
 import { User } from "../../users/entities/user.entity";
 import { CompanyBankAccount } from "./company-bank-account.entity";
+import { BankStatement } from "./bank-statement.entity";
 import { ReconciliationLayout } from "./reconciliation-layout.entity";
 import { Reconciliation } from "./reconciliation.entity";
 
@@ -57,6 +58,9 @@ export class BankEntity {
 
   @OneToMany(() => ReconciliationLayout, (layout) => layout.userBank)
   layouts!: ReconciliationLayout[];
+
+  @OneToMany(() => BankStatement, (statement) => statement.userBank)
+  statements!: BankStatement[];
 
   @OneToMany(() => Reconciliation, (reconciliation) => reconciliation.userBank)
   reconciliations!: Reconciliation[];

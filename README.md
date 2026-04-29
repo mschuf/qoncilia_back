@@ -20,4 +20,11 @@
 - `POST /users`
 - `PATCH /users/:id`
 - `POST /users/:id/reset-password`
+- `POST /conciliation/bank-statements/preview`
+- `POST /conciliation/bank-statements`
+- `GET /conciliation/bank-statements`
+- `POST /conciliation/compare-bank-statement`
 
+## Documentacion funcional
+- `docs/tablas-del-proyecto.md`: diccionario de tablas y columnas.
+- `docs/flujo-extractos-y-conciliacion.md`: flujo nuevo de extractos bancarios y comparacion temporal.

@@ -26,10 +26,13 @@ import { AuthUser } from "../common/interfaces/auth-user.interface";
 import { ConciliationKpiQueryDto } from "./dto/conciliation-kpi-query.dto";
 import { ApplyTemplateLayoutDto } from "./dto/apply-template-layout.dto";
 import { AssignGestorBankDto } from "./dto/assign-gestor-bank.dto";
+import { CompareBankStatementDto } from "./dto/compare-bank-statement.dto";
+import { CreateBankStatementDto, PreviewBankStatementDto } from "./dto/create-bank-statement.dto";
 import { CreateBankDto } from "./dto/create-bank.dto";
 import { CreateConciliationSystemDto } from "./dto/create-conciliation-system.dto";
 import { CreateLayoutDto } from "./dto/create-layout.dto";
 import { CreateTemplateLayoutDto } from "./dto/create-template-layout.dto";
+import { ListBankStatementsQueryDto } from "./dto/list-bank-statements-query.dto";
 import { ListReconciliationsQueryDto } from "./dto/list-reconciliations-query.dto";
 import { ParseFileDto } from "./dto/parse-file.dto";
 import { PreviewReconciliationDto } from "./dto/preview-reconciliation.dto";
@@ -263,74 +266,6 @@ export class ConciliationController {
     return this.conciliationService.deleteLayout(userId, bankId, plantillaId, actor);
   }
 
-  @Post("preview")
-  @Roles(Role.ADMIN, Role.IS_SUPER_ADMIN, Role.GESTOR_COBRANZA, Role.GESTOR_PAGOS)
-  @RequiredModule(AppModuleCode.CONCILIATION)
-  @UseInterceptors(
-    FileFieldsInterceptor(
-      [
-        { name: "systemFile", maxCount: 1 },
-        { name: "bankFile", maxCount: 1 }
-      ],
-      {
-        limits: {
-          fileSize: 10 * 1024 * 1024
-        }
-      }
-    )
-  )
-  preview(
-    @Body() body: PreviewReconciliationDto,
-    @UploadedFiles() files: UploadedFilesMap,
-    @CurrentUser() actor: AuthUser
-  ) {
-    return this.conciliationService.buildPreview(
-      actor,
-      body,
-      files?.systemFile?.[0],
-      files?.bankFile?.[0]
-    );
-  }
-
-  @Post(["conciliaciones", "reconciliations"])
-  @Roles(Role.ADMIN, Role.IS_SUPER_ADMIN, Role.GESTOR_COBRANZA, Role.GESTOR_PAGOS)
-  @RequiredModule(AppModuleCode.CONCILIATION)
-  saveReconciliation(@Body() body: SaveReconciliationDto, @CurrentUser() actor: AuthUser) {
-    return this.conciliationService.saveReconciliation(actor, body);
-  }
-
-  @Get(["conciliaciones", "reconciliations"])
-  @Roles(Role.ADMIN, Role.IS_SUPER_ADMIN, Role.GESTOR_COBRANZA, Role.GESTOR_PAGOS)
-  @RequiredModule(AppModuleCode.CONCILIATION)
-  listReconciliations(@CurrentUser() actor: AuthUser, @Query() query: ListReconciliationsQueryDto) {
-    return this.conciliationService.listReconciliations(actor, query);
-  }
-
-  @Get(["conciliaciones/:id", "reconciliations/:id"])
-  @Roles(Role.ADMIN, Role.IS_SUPER_ADMIN, Role.GESTOR_COBRANZA, Role.GESTOR_PAGOS)
-  @RequiredModule(AppModuleCode.CONCILIATION)
-  getReconciliation(@Param("id", ParseIntPipe) id: number, @CurrentUser() actor: AuthUser) {
-    return this.conciliationService.getReconciliation(actor, id);
-  }
-
-  @Delete(["conciliaciones/:id/fuentes/:source", "reconciliations/:id/sources/:source"])
-  @Roles(Role.ADMIN, Role.IS_SUPER_ADMIN, Role.GESTOR_COBRANZA, Role.GESTOR_PAGOS)
-  @RequiredModule(AppModuleCode.CONCILIATION)
-  deleteReconciliationSource(
-    @Param("id", ParseIntPipe) id: number,
-    @Param("source") source: "system" | "bank",
-    @CurrentUser() actor: AuthUser
-  ) {
-    return this.conciliationService.deleteReconciliationSource(actor, id, source);
-  }
-
-  @Delete(["conciliaciones/:id", "reconciliations/:id"])
-  @Roles(Role.ADMIN, Role.IS_SUPER_ADMIN, Role.GESTOR_COBRANZA, Role.GESTOR_PAGOS)
-  @RequiredModule(AppModuleCode.CONCILIATION)
-  deleteReconciliation(@Param("id", ParseIntPipe) id: number, @CurrentUser() actor: AuthUser) {
-    return this.conciliationService.deleteReconciliation(actor, id);
-  }
-
   @Get("kpis")
   @Roles(Role.ADMIN, Role.IS_SUPER_ADMIN, Role.GESTOR_COBRANZA, Role.GESTOR_PAGOS)
   @RequiredModule(AppModuleCode.CONCILIATION)
@@ -338,7 +273,7 @@ export class ConciliationController {
     return this.conciliationService.getKpis(actor, query.userId);
   }
 
-  @Post("parse-file")
+  @Post(["extractos-bancarios/preview", "bank-statements/preview"])
   @Roles(Role.ADMIN, Role.IS_SUPER_ADMIN, Role.GESTOR_COBRANZA, Role.GESTOR_PAGOS)
   @RequiredModule(AppModuleCode.CONCILIATION)
   @UseInterceptors(
@@ -348,13 +283,68 @@ export class ConciliationController {
       }
     })
   )
-  parseFile(
-    @Query("userBankId", ParseIntPipe) userBankId: number,
-    @Query("layoutId", ParseIntPipe) layoutId: number,
-    @Query("source") source: "system" | "bank",
+  previewBankStatement(
+    @Body() body: PreviewBankStatementDto,
     @UploadedFile() file: UploadedMemoryFile,
     @CurrentUser() actor: AuthUser
   ) {
-    return this.conciliationService.parseFile(actor, { userBankId, layoutId, source }, file);
+    return this.conciliationService.previewBankStatement(actor, body, file);
+  }
+
+  @Post(["extractos-bancarios", "bank-statements"])
+  @Roles(Role.ADMIN, Role.IS_SUPER_ADMIN, Role.GESTOR_COBRANZA, Role.GESTOR_PAGOS)
+  @RequiredModule(AppModuleCode.CONCILIATION)
+  @UseInterceptors(
+    FileInterceptor("file", {
+      limits: {
+        fileSize: 10 * 1024 * 1024
+      }
+    })
+  )
+  createBankStatement(
+    @Body() body: CreateBankStatementDto,
+    @UploadedFile() file: UploadedMemoryFile,
+    @CurrentUser() actor: AuthUser
+  ) {
+    return this.conciliationService.createBankStatement(actor, body, file);
+  }
+
+  @Get(["extractos-bancarios", "bank-statements"])
+  @Roles(Role.ADMIN, Role.IS_SUPER_ADMIN, Role.GESTOR_COBRANZA, Role.GESTOR_PAGOS)
+  @RequiredModule(AppModuleCode.CONCILIATION)
+  listBankStatements(@CurrentUser() actor: AuthUser, @Query() query: ListBankStatementsQueryDto) {
+    return this.conciliationService.listBankStatements(actor, query);
+  }
+
+  @Get(["extractos-bancarios/:id", "bank-statements/:id"])
+  @Roles(Role.ADMIN, Role.IS_SUPER_ADMIN, Role.GESTOR_COBRANZA, Role.GESTOR_PAGOS)
+  @RequiredModule(AppModuleCode.CONCILIATION)
+  getBankStatement(@Param("id", ParseIntPipe) id: number, @CurrentUser() actor: AuthUser) {
+    return this.conciliationService.getBankStatement(actor, id);
+  }
+
+  @Delete(["extractos-bancarios/:id", "bank-statements/:id"])
+  @Roles(Role.ADMIN, Role.IS_SUPER_ADMIN, Role.GESTOR_COBRANZA, Role.GESTOR_PAGOS)
+  @RequiredModule(AppModuleCode.CONCILIATION)
+  deleteBankStatement(@Param("id", ParseIntPipe) id: number, @CurrentUser() actor: AuthUser) {
+    return this.conciliationService.deleteBankStatement(actor, id);
+  }
+
+  @Post(["comparar-extracto-bancario", "compare-bank-statement"])
+  @Roles(Role.ADMIN, Role.IS_SUPER_ADMIN, Role.GESTOR_COBRANZA, Role.GESTOR_PAGOS)
+  @RequiredModule(AppModuleCode.CONCILIATION)
+  @UseInterceptors(
+    FileInterceptor("systemFile", {
+      limits: {
+        fileSize: 10 * 1024 * 1024
+      }
+    })
+  )
+  compareBankStatement(
+    @Body() body: CompareBankStatementDto,
+    @UploadedFile() systemFile: UploadedMemoryFile,
+    @CurrentUser() actor: AuthUser
+  ) {
+    return this.conciliationService.compareBankStatement(actor, body, systemFile);
   }
 }

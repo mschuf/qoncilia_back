@@ -13,6 +13,7 @@ import { ConciliationSystem } from "./conciliation-system.entity";
 import { ReconciliationLayoutMapping } from "./reconciliation-layout-mapping.entity";
 import { TemplateLayout } from "./template-layout.entity";
 import { BankEntity } from "./bank.entity";
+import { BankStatement } from "./bank-statement.entity";
 
 @Entity({ name: "plantillas_conciliacion" })
 export class ReconciliationLayout {
@@ -60,6 +61,9 @@ export class ReconciliationLayout {
 
   @OneToMany(() => Reconciliation, (reconciliation) => reconciliation.layout)
   reconciliations!: Reconciliation[];
+
+  @OneToMany(() => BankStatement, (statement) => statement.layout)
+  statements!: BankStatement[];
 
   @CreateDateColumn({ name: "plantilla_creada_en", type: "timestamptz" })
   createdAt!: Date;

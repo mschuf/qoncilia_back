@@ -10,6 +10,7 @@ import {
 } from "typeorm";
 import { Company } from "../../access-control/entities/company.entity";
 import { BankEntity } from "./bank.entity";
+import { BankStatement } from "./bank-statement.entity";
 import { Reconciliation } from "./reconciliation.entity";
 
 @Entity({ name: "cuentas_bancarias" })
@@ -55,6 +56,9 @@ export class CompanyBankAccount {
 
   @OneToMany(() => CompanyBankAccount, (account) => account.sourceAccount)
   assignedAccounts!: CompanyBankAccount[];
+
+  @OneToMany(() => BankStatement, (statement) => statement.companyBankAccount)
+  statements!: BankStatement[];
 
   @OneToMany(() => Reconciliation, (reconciliation) => reconciliation.companyBankAccount)
   reconciliations!: Reconciliation[];

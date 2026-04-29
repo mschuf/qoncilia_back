@@ -20,12 +20,15 @@ import { isGestorRole } from "../common/utils/role.util";
 import { User } from "../users/entities/user.entity";
 import { ApplyTemplateLayoutDto } from "./dto/apply-template-layout.dto";
 import { AssignGestorBankDto } from "./dto/assign-gestor-bank.dto";
+import { CompareBankStatementDto } from "./dto/compare-bank-statement.dto";
+import { CreateBankStatementDto, PreviewBankStatementDto } from "./dto/create-bank-statement.dto";
 import { CreateBankDto } from "./dto/create-bank.dto";
 import { CreateConciliationSystemDto } from "./dto/create-conciliation-system.dto";
 import { CreateLayoutDto } from "./dto/create-layout.dto";
 import { CreateTemplateLayoutDto } from "./dto/create-template-layout.dto";
 import { CompanyBankAccount } from "./entities/company-bank-account.entity";
 import { ConciliationSystem } from "./entities/conciliation-system.entity";
+import { ListBankStatementsQueryDto } from "./dto/list-bank-statements-query.dto";
 import { ListReconciliationsQueryDto } from "./dto/list-reconciliations-query.dto";
 import { ParseFileDto } from "./dto/parse-file.dto";
 import { PreviewReconciliationDto } from "./dto/preview-reconciliation.dto";
@@ -35,6 +38,8 @@ import { UpdateBankDto } from "./dto/update-bank.dto";
 import { UpdateLayoutDto } from "./dto/update-layout.dto";
 import { UpdateTemplateLayoutDto } from "./dto/update-template-layout.dto";
 import { BankEntity } from "./entities/bank.entity";
+import { BankStatement } from "./entities/bank-statement.entity";
+import { BankStatementRow } from "./entities/bank-statement-row.entity";
 import { ReconciliationLayoutMapping } from "./entities/reconciliation-layout-mapping.entity";
 import { ReconciliationLayout } from "./entities/reconciliation-layout.entity";
 import { ReconciliationMatch } from "./entities/reconciliation-match.entity";
@@ -43,6 +48,7 @@ import { TemplateLayoutMapping } from "./entities/template-layout-mapping.entity
 import { TemplateLayout } from "./entities/template-layout.entity";
 import {
   CompareOperator,
+  BankStatementPreviewResponse,
   ConciliationKpiResponse,
   ConciliationPreviewMatch,
   ConciliationPreviewResponse,
@@ -50,6 +56,8 @@ import {
   ConciliationRuleResult,
   DeleteReconciliationResponse,
   DeleteUserBankResponse,
+  PublicBankStatementDetail,
+  PublicBankStatementSummary,
   PublicCompanyBankAccountSummary,
   PublicConciliationSystem,
   PublicGestorAssignmentCatalog,
@@ -113,6 +121,10 @@ export class ConciliationService {
     private readonly userBankRepository: Repository<BankEntity>,
     @InjectRepository(CompanyBankAccount)
     private readonly companyBankAccountRepository: Repository<CompanyBankAccount>,
+    @InjectRepository(BankStatement)
+    private readonly bankStatementRepository: Repository<BankStatement>,
+    @InjectRepository(BankStatementRow)
+    private readonly bankStatementRowRepository: Repository<BankStatementRow>,
     @InjectRepository(ConciliationSystem)
     private readonly systemRepository: Repository<ConciliationSystem>,
     @InjectRepository(TemplateLayout)
@@ -330,14 +342,14 @@ export class ConciliationService {
 
     return this.userBankRepository.manager.transaction(async (manager) => {
       const preview = await this.buildUserBankDeletionPreview(manager, userId, bankId);
-      const reconciliationRepository = manager.getRepository(Reconciliation);
+      const statementRepository = manager.getRepository(BankStatement);
       const bankRepository = manager.getRepository(BankEntity);
 
-      if (preview.reconciliationCount > 0) {
-        await reconciliationRepository
+      if (preview.bankStatementCount > 0) {
+        await statementRepository
           .createQueryBuilder()
           .delete()
-          .from(Reconciliation)
+          .from(BankStatement)
           .where("banco_id = :bankId", { bankId })
           .execute();
       }
@@ -348,7 +360,8 @@ export class ConciliationService {
         message: "Banco eliminado.",
         deletedLayouts: preview.layouts.length,
         deletedAccounts: preview.accounts.length,
-        deletedReconciliations: preview.reconciliationCount
+        deletedReconciliations: 0,
+        deletedBankStatements: preview.bankStatementCount
       };
     });
   }
@@ -909,7 +922,7 @@ export class ConciliationService {
 
     return this.layoutRepository.manager.transaction(async (manager) => {
       const layoutRepository = manager.getRepository(ReconciliationLayout);
-      const reconciliationRepository = manager.getRepository(Reconciliation);
+      const statementRepository = manager.getRepository(BankStatement);
 
       const layout = await layoutRepository.findOne({
         where: { id: layoutId, userBank: { id: bankId, user: { id: userId } } },
@@ -922,7 +935,7 @@ export class ConciliationService {
         throw new NotFoundException("Plantilla no encontrada.");
       }
 
-      const linkedReconciliations = await reconciliationRepository.count({
+      const linkedStatements = await statementRepository.count({
         where: {
           layout: {
             id: layoutId
@@ -930,9 +943,9 @@ export class ConciliationService {
         }
       });
 
-      if (linkedReconciliations > 0) {
+      if (linkedStatements > 0) {
         throw new ConflictException(
-          "No se puede eliminar la plantilla porque ya tiene conciliaciones guardadas."
+          "No se puede eliminar la plantilla porque ya tiene extractos bancarios guardados."
         );
       }
 
@@ -1052,6 +1065,168 @@ export class ConciliationService {
     return {
       rows,
       fileName: file.originalname
+    };
+  }
+
+  async previewBankStatement(
+    actor: AuthUser,
+    payload: PreviewBankStatementDto,
+    file?: UploadedMemoryFile
+  ): Promise<BankStatementPreviewResponse> {
+    if (!file?.buffer) {
+      throw new BadRequestException("Debes subir el Excel del extracto bancario.");
+    }
+
+    const { userBank, layout, companyBankAccount } = await this.requireAccessibleLayoutAndAccount(
+      actor,
+      payload.userBankId,
+      payload.layoutId,
+      payload.companyBankAccountId
+    );
+    const rows = this.extractRowsFromWorkbook(
+      this.readWorkbook(file.buffer, file.originalname),
+      layout.mappings,
+      "bank"
+    );
+
+    return {
+      userBank: this.toPublicUserBankSummary(userBank),
+      companyBankAccount: this.toPublicCompanyBankAccountSummary(companyBankAccount),
+      layout: this.toPublicLayout(layout),
+      fileName: file.originalname,
+      rowCount: rows.length,
+      rows
+    };
+  }
+
+  async createBankStatement(
+    actor: AuthUser,
+    payload: CreateBankStatementDto,
+    file?: UploadedMemoryFile
+  ): Promise<PublicBankStatementDetail> {
+    if (!file?.buffer) {
+      throw new BadRequestException("Debes subir el Excel del extracto bancario.");
+    }
+
+    const { userBank, layout, companyBankAccount } = await this.requireAccessibleLayoutAndAccount(
+      actor,
+      payload.userBankId,
+      payload.layoutId,
+      payload.companyBankAccountId
+    );
+    const rows = this.extractRowsFromWorkbook(
+      this.readWorkbook(file.buffer, file.originalname),
+      layout.mappings,
+      "bank"
+    );
+
+    return this.bankStatementRepository.manager.transaction(async (manager) => {
+      const statementRepository = manager.getRepository(BankStatement);
+      const rowRepository = manager.getRepository(BankStatementRow);
+
+      const statement = await statementRepository.save(
+        statementRepository.create({
+          user: userBank.user,
+          userBank,
+          companyBankAccount,
+          layout,
+          name: this.normalizeRequired(payload.name, "name"),
+          fileName: file.originalname,
+          status: "saved",
+          rowCount: rows.length,
+          metadata: this.toJsonRecord({
+            source: "bank_excel",
+            uploadedByUserId: actor.id
+          })
+        })
+      );
+
+      if (rows.length > 0) {
+        await rowRepository.save(
+          rows.map((row) =>
+            rowRepository.create({
+              statement,
+              sourceRowId: row.rowId,
+              rowNumber: row.rowNumber,
+              values: row.values,
+              normalized: row.normalized
+            })
+          )
+        );
+      }
+
+      return this.requirePersistedBankStatement(
+        manager,
+        statement.id,
+        "No se pudo recuperar el extracto bancario guardado."
+      );
+    });
+  }
+
+  async listBankStatements(
+    actor: AuthUser,
+    query: ListBankStatementsQueryDto
+  ): Promise<PublicBankStatementSummary[]> {
+    const statements = await (await this.buildBankStatementQuery(actor, query)).getMany();
+    return statements.map((statement) => this.toPublicBankStatementSummary(statement));
+  }
+
+  async getBankStatement(actor: AuthUser, statementId: number): Promise<PublicBankStatementDetail> {
+    const statement = await this.requireAccessibleBankStatement(actor, statementId);
+    return this.toPublicBankStatementDetail(statement);
+  }
+
+  async deleteBankStatement(
+    actor: AuthUser,
+    statementId: number
+  ): Promise<{ id: number; message: string }> {
+    const statement = await this.requireAccessibleBankStatement(actor, statementId);
+    await this.bankStatementRepository.delete(statement.id);
+
+    return {
+      id: statement.id,
+      message: "Extracto bancario eliminado."
+    };
+  }
+
+  async compareBankStatement(
+    actor: AuthUser,
+    payload: CompareBankStatementDto,
+    systemFile?: UploadedMemoryFile
+  ): Promise<ConciliationPreviewResponse> {
+    if (!systemFile?.buffer) {
+      throw new BadRequestException("Debes subir el Excel del sistema para comparar.");
+    }
+
+    const statement = await this.requireAccessibleBankStatement(actor, payload.bankStatementId);
+    const systemRows = this.extractRowsFromWorkbook(
+      this.readWorkbook(systemFile.buffer, systemFile.originalname),
+      statement.layout.mappings,
+      "system"
+    );
+    const bankRows = this.sortPreviewRows(
+      (statement.rows ?? []).map((row) => this.toPreviewRow(row))
+    );
+    const autoMatches = this.buildAutoMatches(statement.layout, systemRows, bankRows);
+    const matchedSystemIds = new Set(autoMatches.map((item) => item.systemRowId));
+    const matchedBankIds = new Set(autoMatches.map((item) => item.bankRowId));
+    const unmatchedSystemRows = systemRows.filter((row) => !matchedSystemIds.has(row.rowId));
+    const unmatchedBankRows = bankRows.filter((row) => !matchedBankIds.has(row.rowId));
+
+    return {
+      userBank: this.toPublicUserBankSummary(statement.userBank),
+      companyBankAccount: this.toPublicCompanyBankAccountSummary(statement.companyBankAccount),
+      layout: this.toPublicLayout(statement.layout, statement.userBank.id),
+      bankStatement: this.toPublicBankStatementSummary(statement),
+      systemFileName: systemFile.originalname,
+      bankFileName: statement.fileName,
+      systemRows,
+      bankRows,
+      autoMatches,
+      manualMatches: [],
+      unmatchedSystemRows,
+      unmatchedBankRows,
+      metrics: this.buildMetrics(systemRows.length, bankRows.length, autoMatches.length, 0)
     };
   }
 
@@ -1260,18 +1435,14 @@ export class ConciliationService {
   }
 
   async getKpis(actor: AuthUser, requestedUserId?: number): Promise<ConciliationKpiResponse> {
-    const query = new ListReconciliationsQueryDto();
+    const query = new ListBankStatementsQueryDto();
     query.userId = requestedUserId;
 
-    const reconciliations = await (await this.buildReconciliationQuery(actor, query)).getMany();
-    const totals = reconciliations.reduce(
+    const statements = await (await this.buildBankStatementQuery(actor, query)).getMany();
+    const totals = statements.reduce(
       (accumulator, item) => {
         accumulator.totalReconciliations += 1;
-        accumulator.totalAutoMatches += item.autoMatches;
-        accumulator.totalManualMatches += item.manualMatches;
-        accumulator.totalUnmatchedSystem += item.unmatchedSystem;
-        accumulator.totalUnmatchedBank += item.unmatchedBank;
-        accumulator.totalMatchPercentage += item.matchPercentage;
+        accumulator.totalUnmatchedBank += item.rowCount;
         return accumulator;
       },
       {
@@ -1291,21 +1462,18 @@ export class ConciliationService {
         bankName: string;
         alias: string | null;
         totalReconciliations: number;
-        totalMatchPercentage: number;
       }
     >();
 
-    for (const item of reconciliations) {
+    for (const item of statements) {
       const current = bankAggregation.get(item.userBank.id) ?? {
         userBankId: item.userBank.id,
         bankName: item.userBank.bankName,
         alias: item.userBank.alias,
-        totalReconciliations: 0,
-        totalMatchPercentage: 0
+        totalReconciliations: 0
       };
 
       current.totalReconciliations += 1;
-      current.totalMatchPercentage += item.matchPercentage;
       bankAggregation.set(item.userBank.id, current);
     }
 
@@ -1315,22 +1483,17 @@ export class ConciliationService {
       totalManualMatches: totals.totalManualMatches,
       totalUnmatchedSystem: totals.totalUnmatchedSystem,
       totalUnmatchedBank: totals.totalUnmatchedBank,
-      averageMatchPercentage:
-        totals.totalReconciliations > 0
-          ? this.roundNumber(totals.totalMatchPercentage / totals.totalReconciliations)
-          : 0,
+      averageMatchPercentage: 0,
       bankBreakdown: [...bankAggregation.values()]
         .map((item) => ({
           userBankId: item.userBankId,
           bankName: item.bankName,
           alias: item.alias,
           totalReconciliations: item.totalReconciliations,
-          averageMatchPercentage: this.roundNumber(
-            item.totalMatchPercentage / item.totalReconciliations
-          )
+          averageMatchPercentage: 0
         }))
         .sort((left, right) => right.totalReconciliations - left.totalReconciliations),
-      recentReconciliations: reconciliations.slice(0, 12).map((item) => ({
+      recentReconciliations: statements.slice(0, 12).map((item) => ({
         id: item.id,
         name: item.name,
         bankName: item.userBank.bankName,
@@ -1339,11 +1502,11 @@ export class ConciliationService {
         companyBankAccountNumber: item.companyBankAccount?.accountNumber ?? null,
         layoutName: item.layout.name,
         systemName: item.layout.system?.name ?? item.layout.systemLabel,
-        matchPercentage: item.matchPercentage,
-        autoMatches: item.autoMatches,
-        manualMatches: item.manualMatches,
-        unmatchedSystem: item.unmatchedSystem,
-        unmatchedBank: item.unmatchedBank,
+        matchPercentage: 0,
+        autoMatches: 0,
+        manualMatches: 0,
+        unmatchedSystem: 0,
+        unmatchedBank: item.rowCount,
         createdAt: item.createdAt
       }))
     };
@@ -1698,6 +1861,54 @@ export class ConciliationService {
 
     if (query.dateTo) {
       queryBuilder.andWhere("reconciliation.createdAt <= :dateTo", {
+        dateTo: new Date(`${query.dateTo}T23:59:59.999Z`)
+      });
+    }
+
+    return queryBuilder;
+  }
+
+  private async buildBankStatementQuery(
+    actor: AuthUser,
+    query: ListBankStatementsQueryDto
+  ): Promise<SelectQueryBuilder<BankStatement>> {
+    const scope = await this.resolveAccessibleUserScope(actor, query.userId);
+    const queryBuilder = this.bankStatementRepository
+      .createQueryBuilder("statement")
+      .leftJoinAndSelect("statement.user", "user")
+      .leftJoinAndSelect("user.company", "company")
+      .leftJoinAndSelect("statement.userBank", "userBank")
+      .leftJoinAndSelect("statement.companyBankAccount", "companyBankAccount")
+      .leftJoinAndSelect("statement.layout", "layout")
+      .leftJoinAndSelect("layout.system", "system")
+      .leftJoinAndSelect("layout.templateLayout", "templateLayout")
+      .orderBy("statement.createdAt", "DESC")
+      .addOrderBy("statement.id", "DESC");
+
+    this.applyUserScopeToQuery(queryBuilder, scope, "user", "company");
+
+    if (query.userBankId) {
+      queryBuilder.andWhere("userBank.id = :userBankId", { userBankId: query.userBankId });
+    }
+
+    if (query.companyBankAccountId) {
+      queryBuilder.andWhere("companyBankAccount.id = :companyBankAccountId", {
+        companyBankAccountId: query.companyBankAccountId
+      });
+    }
+
+    if (query.layoutId) {
+      queryBuilder.andWhere("layout.id = :layoutId", { layoutId: query.layoutId });
+    }
+
+    if (query.dateFrom) {
+      queryBuilder.andWhere("statement.createdAt >= :dateFrom", {
+        dateFrom: new Date(`${query.dateFrom}T00:00:00.000Z`)
+      });
+    }
+
+    if (query.dateTo) {
+      queryBuilder.andWhere("statement.createdAt <= :dateTo", {
         dateTo: new Date(`${query.dateTo}T23:59:59.999Z`)
       });
     }
@@ -2322,6 +2533,41 @@ export class ConciliationService {
     return this.toPublicReconciliationDetail(persisted);
   }
 
+  private async requirePersistedBankStatement(
+    manager: EntityManager,
+    statementId: number,
+    errorMessage: string
+  ): Promise<PublicBankStatementDetail> {
+    const persisted = await manager.getRepository(BankStatement).findOne({
+      where: { id: statementId },
+      relations: {
+        user: {
+          company: true
+        },
+        userBank: {
+          user: {
+            company: true
+          }
+        },
+        companyBankAccount: {
+          bank: true
+        },
+        layout: {
+          system: true,
+          mappings: true,
+          templateLayout: true
+        },
+        rows: true
+      }
+    });
+
+    if (!persisted) {
+      throw new NotFoundException(errorMessage);
+    }
+
+    return this.toPublicBankStatementDetail(persisted);
+  }
+
   private async requireAccessibleReconciliation(
     actor: AuthUser,
     reconciliationId: number
@@ -2355,6 +2601,42 @@ export class ConciliationService {
     this.ensureActorCanAccessTargetUser(actor, reconciliation.user);
 
     return reconciliation;
+  }
+
+  private async requireAccessibleBankStatement(
+    actor: AuthUser,
+    statementId: number
+  ): Promise<BankStatement> {
+    const statement = await this.bankStatementRepository.findOne({
+      where: { id: statementId },
+      relations: {
+        user: {
+          company: true
+        },
+        userBank: {
+          user: {
+            company: true
+          }
+        },
+        companyBankAccount: {
+          bank: true
+        },
+        layout: {
+          system: true,
+          mappings: true,
+          templateLayout: true
+        },
+        rows: true
+      }
+    });
+
+    if (!statement) {
+      throw new NotFoundException("Extracto bancario no encontrado.");
+    }
+
+    this.ensureActorCanAccessTargetUser(actor, statement.user);
+
+    return statement;
   }
 
   private async requireAccessibleCompanyBankAccount(
@@ -2982,7 +3264,7 @@ export class ConciliationService {
   ): Promise<PublicUserBankDeletionPreview> {
     const bankRepository = manager.getRepository(BankEntity);
     const companyBankAccountRepository = manager.getRepository(CompanyBankAccount);
-    const reconciliationRepository = manager.getRepository(Reconciliation);
+    const statementRepository = manager.getRepository(BankStatement);
 
     const bank = await bankRepository.findOne({
       where: {
@@ -3001,7 +3283,7 @@ export class ConciliationService {
       throw new NotFoundException("Banco asignado no encontrado.");
     }
 
-    const [accounts, reconciliationCount] = await Promise.all([
+    const [accounts, bankStatementCount] = await Promise.all([
       companyBankAccountRepository.find({
         where: {
           bank: {
@@ -3013,9 +3295,9 @@ export class ConciliationService {
           id: "ASC"
         }
       }),
-      reconciliationRepository
-        .createQueryBuilder("reconciliation")
-        .where("reconciliation.banco_id = :bankId", { bankId })
+      statementRepository
+        .createQueryBuilder("statement")
+        .where("statement.banco_id = :bankId", { bankId })
         .getCount()
     ]);
 
@@ -3029,7 +3311,8 @@ export class ConciliationService {
         })
         .map((layout) => this.toPublicUserBankDeletionLayout(layout)),
       accounts: accounts.map((account) => this.toPublicUserBankDeletionAccount(account)),
-      reconciliationCount
+      reconciliationCount: 0,
+      bankStatementCount
     };
   }
 
@@ -3176,6 +3459,50 @@ export class ConciliationService {
       currency: entity.currency,
       accountNumber: entity.accountNumber,
       active: entity.active
+    };
+  }
+
+  private toPreviewRow(entity: BankStatementRow): ConciliationPreviewRow {
+    return {
+      rowId: entity.sourceRowId,
+      rowNumber: entity.rowNumber,
+      values: entity.values ?? {},
+      normalized: entity.normalized ?? {}
+    };
+  }
+
+  private toPublicBankStatementSummary(entity: BankStatement): PublicBankStatementSummary {
+    return {
+      id: entity.id,
+      name: entity.name,
+      fileName: entity.fileName,
+      status: entity.status,
+      rowCount: entity.rowCount,
+      userId: entity.user.id,
+      userLogin: entity.user.usrLogin,
+      userBankId: entity.userBank.id,
+      bankName: entity.userBank.bankName,
+      bankAlias: entity.userBank.alias,
+      companyBankAccountId: entity.companyBankAccount.id,
+      companyBankAccountName: entity.companyBankAccount.name,
+      companyBankAccountNumber: entity.companyBankAccount.accountNumber,
+      companyBankAccountCurrency: entity.companyBankAccount.currency,
+      layoutId: entity.layout.id,
+      layoutName: entity.layout.name,
+      systemId: entity.layout.system?.id ?? 0,
+      systemName: entity.layout.system?.name ?? entity.layout.systemLabel,
+      createdAt: entity.createdAt,
+      updatedAt: entity.updatedAt
+    };
+  }
+
+  private toPublicBankStatementDetail(entity: BankStatement): PublicBankStatementDetail {
+    return {
+      ...this.toPublicBankStatementSummary(entity),
+      userBank: this.toPublicUserBankSummary(entity.userBank),
+      companyBankAccount: this.toPublicCompanyBankAccountSummary(entity.companyBankAccount),
+      layout: this.toPublicLayout(entity.layout, entity.userBank.id),
+      rows: this.sortPreviewRows((entity.rows ?? []).map((row) => this.toPreviewRow(row)))
     };
   }
 

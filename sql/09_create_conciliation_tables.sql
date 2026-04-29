@@ -1,5 +1,6 @@
 BEGIN;
 
+DROP TRIGGER IF EXISTS trg_extractos_bancarios_touch_actualizado_en ON public.extractos_bancarios;
 DROP TRIGGER IF EXISTS trg_conciliacion_resultados_touch_actualizado_en ON public.conciliacion_resultados;
 DROP TRIGGER IF EXISTS trg_conciliaciones_touch_actualizado_en ON public.conciliaciones;
 DROP TRIGGER IF EXISTS trg_plantillas_conciliacion_mapeos_touch_actualizado_en ON public.plantillas_conciliacion_mapeos;
@@ -16,6 +17,8 @@ DROP TRIGGER IF EXISTS trg_template_layout_mapping_touch_updated_at ON public.te
 DROP TRIGGER IF EXISTS trg_template_layout_touch_updated_at ON public.template_layout;
 DROP TRIGGER IF EXISTS trg_conciliation_systems_touch_updated_at ON public.conciliation_systems;
 
+DROP TABLE IF EXISTS public.extractos_bancarios_filas CASCADE;
+DROP TABLE IF EXISTS public.extractos_bancarios CASCADE;
 DROP TABLE IF EXISTS public.conciliacion_resultados CASCADE;
 DROP TABLE IF EXISTS public.conciliacion_matches CASCADE;
 DROP TABLE IF EXISTS public.conciliaciones CASCADE;
@@ -181,72 +184,66 @@ CREATE UNIQUE INDEX uq_plantillas_conciliacion_mapeos_campo
 CREATE INDEX idx_plantillas_conciliacion_mapeos_plantilla_id
   ON public.plantillas_conciliacion_mapeos (plantilla_id);
 
-CREATE TABLE public.conciliaciones (
-  conciliacion_id SERIAL PRIMARY KEY,
+CREATE TABLE public.extractos_bancarios (
+  extracto_id SERIAL PRIMARY KEY,
   usuario_id INTEGER NOT NULL,
   banco_id INTEGER NOT NULL,
-  plantilla_id INTEGER NOT NULL,
   cuenta_bancaria_id INTEGER NOT NULL,
-  conciliacion_nombre VARCHAR(160) NOT NULL,
-  conciliacion_estado VARCHAR(40) NOT NULL DEFAULT 'saved',
-  conciliacion_cantidad_actualizaciones INTEGER NOT NULL DEFAULT 0,
-  conciliacion_tiene_datos_sistema BOOLEAN NOT NULL DEFAULT FALSE,
-  conciliacion_tiene_datos_banco BOOLEAN NOT NULL DEFAULT FALSE,
-  conciliacion_archivo_sistema VARCHAR(255) NULL,
-  conciliacion_archivo_banco VARCHAR(255) NULL,
-  conciliacion_total_filas_sistema INTEGER NOT NULL DEFAULT 0,
-  conciliacion_total_filas_banco INTEGER NOT NULL DEFAULT 0,
-  conciliacion_matches_automaticos INTEGER NOT NULL DEFAULT 0,
-  conciliacion_matches_manuales INTEGER NOT NULL DEFAULT 0,
-  conciliacion_pendientes_sistema INTEGER NOT NULL DEFAULT 0,
-  conciliacion_pendientes_banco INTEGER NOT NULL DEFAULT 0,
-  conciliacion_porcentaje_match DOUBLE PRECISION NOT NULL DEFAULT 0,
-  conciliacion_resumen_snapshot JSONB NULL,
-  conciliacion_creada_en TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  conciliacion_actualizada_en TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  CONSTRAINT chk_conciliaciones_nombre_not_blank CHECK (length(trim(conciliacion_nombre)) > 0),
-  CONSTRAINT fk_conciliaciones_usuarios FOREIGN KEY (usuario_id) REFERENCES public.usuarios (usr_id) ON DELETE CASCADE,
-  CONSTRAINT fk_conciliaciones_bancos FOREIGN KEY (banco_id) REFERENCES public.bancos (banco_id) ON DELETE CASCADE,
-  CONSTRAINT fk_conciliaciones_plantillas FOREIGN KEY (plantilla_id) REFERENCES public.plantillas_conciliacion (plantilla_id) ON DELETE RESTRICT,
-  CONSTRAINT fk_conciliaciones_cuentas_bancarias FOREIGN KEY (cuenta_bancaria_id)
-    REFERENCES public.cuentas_bancarias (cuenta_bancaria_id) ON DELETE RESTRICT
+  plantilla_id INTEGER NOT NULL,
+  extracto_nombre VARCHAR(160) NOT NULL,
+  extracto_archivo VARCHAR(255) NOT NULL,
+  extracto_estado VARCHAR(40) NOT NULL DEFAULT 'saved',
+  extracto_total_filas INTEGER NOT NULL DEFAULT 0,
+  extracto_metadata JSONB NULL,
+  extracto_creado_en TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  extracto_actualizado_en TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT chk_extractos_bancarios_nombre_not_blank CHECK (length(trim(extracto_nombre)) > 0),
+  CONSTRAINT chk_extractos_bancarios_archivo_not_blank CHECK (length(trim(extracto_archivo)) > 0),
+  CONSTRAINT chk_extractos_bancarios_total_non_negative CHECK (extracto_total_filas >= 0),
+  CONSTRAINT fk_extractos_bancarios_usuarios FOREIGN KEY (usuario_id)
+    REFERENCES public.usuarios (usr_id) ON DELETE CASCADE,
+  CONSTRAINT fk_extractos_bancarios_bancos FOREIGN KEY (banco_id)
+    REFERENCES public.bancos (banco_id) ON DELETE CASCADE,
+  CONSTRAINT fk_extractos_bancarios_cuentas_bancarias FOREIGN KEY (cuenta_bancaria_id)
+    REFERENCES public.cuentas_bancarias (cuenta_bancaria_id) ON DELETE RESTRICT,
+  CONSTRAINT fk_extractos_bancarios_plantillas FOREIGN KEY (plantilla_id)
+    REFERENCES public.plantillas_conciliacion (plantilla_id) ON DELETE RESTRICT
 );
 
-CREATE INDEX idx_conciliaciones_usuario_id
-  ON public.conciliaciones (usuario_id);
+CREATE INDEX idx_extractos_bancarios_usuario_id
+  ON public.extractos_bancarios (usuario_id);
 
-CREATE INDEX idx_conciliaciones_banco_id
-  ON public.conciliaciones (banco_id);
+CREATE INDEX idx_extractos_bancarios_banco_id
+  ON public.extractos_bancarios (banco_id);
 
-CREATE INDEX idx_conciliaciones_plantilla_id
-  ON public.conciliaciones (plantilla_id);
+CREATE INDEX idx_extractos_bancarios_cuenta_bancaria_id
+  ON public.extractos_bancarios (cuenta_bancaria_id);
 
-CREATE INDEX idx_conciliaciones_cuenta_bancaria_id
-  ON public.conciliaciones (cuenta_bancaria_id);
+CREATE INDEX idx_extractos_bancarios_plantilla_id
+  ON public.extractos_bancarios (plantilla_id);
 
-CREATE INDEX idx_conciliaciones_creada_en
-  ON public.conciliaciones (conciliacion_creada_en DESC);
+CREATE INDEX idx_extractos_bancarios_creado_en
+  ON public.extractos_bancarios (extracto_creado_en DESC);
 
-CREATE TABLE public.conciliacion_resultados (
-  resultado_id SERIAL PRIMARY KEY,
-  conciliacion_id INTEGER NOT NULL,
-  resultado_estado VARCHAR(40) NOT NULL,
-  sistema_fila_id VARCHAR(80) NULL,
-  banco_fila_id VARCHAR(80) NULL,
-  sistema_numero_fila INTEGER NULL,
-  banco_numero_fila INTEGER NULL,
-  resultado_score DOUBLE PRECISION NULL,
-  resultado_detalle JSONB NULL,
-  sistema_payload JSONB NULL,
-  banco_payload JSONB NULL,
-  resultado_creado_en TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  CONSTRAINT chk_conciliacion_resultados_estado_not_blank CHECK (length(trim(resultado_estado)) > 0),
-  CONSTRAINT fk_conciliacion_resultados_conciliaciones FOREIGN KEY (conciliacion_id)
-    REFERENCES public.conciliaciones (conciliacion_id) ON DELETE CASCADE
+CREATE TABLE public.extractos_bancarios_filas (
+  extracto_fila_id SERIAL PRIMARY KEY,
+  extracto_id INTEGER NOT NULL,
+  extracto_fila_origen_id VARCHAR(120) NOT NULL,
+  extracto_numero_fila INTEGER NOT NULL,
+  extracto_valores JSONB NOT NULL,
+  extracto_normalizados JSONB NOT NULL,
+  extracto_fila_creada_en TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT chk_extractos_bancarios_filas_origen_not_blank CHECK (length(trim(extracto_fila_origen_id)) > 0),
+  CONSTRAINT chk_extractos_bancarios_filas_numero_positive CHECK (extracto_numero_fila > 0),
+  CONSTRAINT fk_extractos_bancarios_filas_extractos FOREIGN KEY (extracto_id)
+    REFERENCES public.extractos_bancarios (extracto_id) ON DELETE CASCADE
 );
 
-CREATE INDEX idx_conciliacion_resultados_conciliacion_id
-  ON public.conciliacion_resultados (conciliacion_id);
+CREATE INDEX idx_extractos_bancarios_filas_extracto_id
+  ON public.extractos_bancarios_filas (extracto_id);
+
+CREATE UNIQUE INDEX uq_extractos_bancarios_filas_origen
+  ON public.extractos_bancarios_filas (extracto_id, extracto_fila_origen_id);
 
 INSERT INTO public.sistemas (
   sistema_nombre,
@@ -310,12 +307,12 @@ BEGIN
 END;
 $$;
 
-CREATE OR REPLACE FUNCTION public.fn_touch_conciliaciones_actualizado_en()
+CREATE OR REPLACE FUNCTION public.fn_touch_extractos_bancarios_actualizado_en()
 RETURNS TRIGGER
 LANGUAGE plpgsql
 AS $$
 BEGIN
-  NEW.conciliacion_actualizada_en = NOW();
+  NEW.extracto_actualizado_en = NOW();
   RETURN NEW;
 END;
 $$;
@@ -345,9 +342,9 @@ BEFORE UPDATE ON public.plantillas_conciliacion_mapeos
 FOR EACH ROW
 EXECUTE FUNCTION public.fn_touch_plantillas_conciliacion_mapeos_actualizado_en();
 
-CREATE TRIGGER trg_conciliaciones_touch_actualizado_en
-BEFORE UPDATE ON public.conciliaciones
+CREATE TRIGGER trg_extractos_bancarios_touch_actualizado_en
+BEFORE UPDATE ON public.extractos_bancarios
 FOR EACH ROW
-EXECUTE FUNCTION public.fn_touch_conciliaciones_actualizado_en();
+EXECUTE FUNCTION public.fn_touch_extractos_bancarios_actualizado_en();
 
 COMMIT;
