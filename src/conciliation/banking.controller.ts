@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   ParseIntPipe,
@@ -55,6 +56,13 @@ export class BankingController {
     return this.bankingService.updateBank(bankId, body, actor);
   }
 
+  @Delete("banks/:bankId")
+  @Roles(Role.ADMIN, Role.IS_SUPER_ADMIN)
+  @RequiredModule(AppModuleCode.LAYOUT_MANAGEMENT)
+  deleteBank(@Param("bankId", ParseIntPipe) bankId: number, @CurrentUser() actor: AuthUser) {
+    return this.bankingService.deleteBank(bankId, actor);
+  }
+
   @Post("accounts")
   @Roles(Role.ADMIN, Role.IS_SUPER_ADMIN)
   @RequiredModule(AppModuleCode.LAYOUT_MANAGEMENT)
@@ -74,5 +82,15 @@ export class BankingController {
     @CurrentUser() actor: AuthUser
   ) {
     return this.bankingService.updateCompanyBankAccount(accountId, body, actor);
+  }
+
+  @Delete("accounts/:accountId")
+  @Roles(Role.ADMIN, Role.IS_SUPER_ADMIN)
+  @RequiredModule(AppModuleCode.LAYOUT_MANAGEMENT)
+  deleteCompanyBankAccount(
+    @Param("accountId", ParseIntPipe) accountId: number,
+    @CurrentUser() actor: AuthUser
+  ) {
+    return this.bankingService.deleteCompanyBankAccount(accountId, actor);
   }
 }

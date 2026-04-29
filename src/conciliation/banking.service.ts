@@ -48,15 +48,21 @@ export class BankingService {
     query: ListCompanyBankingQueryDto
   ): Promise<CompanyBankingReferenceResponse> {
     const companyId = await this.resolveAccessibleCompanyId(actor, query.companyId);
+    const bankWhere = isSuperAdminRole(actor.roleCode)
+      ? { company: { id: companyId } }
+      : { company: { id: companyId }, user: { id: actor.id } };
+    const accountWhere = isSuperAdminRole(actor.roleCode)
+      ? { company: { id: companyId } }
+      : { company: { id: companyId }, bank: { user: { id: actor.id } } };
     const [companies, banks, accounts, currencies] = await Promise.all([
       this.listCompaniesForActor(actor),
       this.bankRepository.find({
-        where: { company: { id: companyId } },
+        where: bankWhere,
         relations: { company: true, user: true },
         order: { name: "ASC", id: "ASC" }
       }),
       this.companyBankAccountRepository.find({
-        where: { company: { id: companyId } },
+        where: accountWhere,
         relations: { company: true, bank: { user: true, company: true } },
         order: { name: "ASC", id: "ASC" }
       }),
@@ -103,7 +109,7 @@ export class BankingService {
     this.ensureAdminOrSuperadmin(actor);
 
     const bank = await this.requireBank(bankId);
-    this.ensureActorCanAccessCompany(actor, bank.company.id);
+    this.ensureActorCanManageBank(actor, bank);
 
     const nextCompanyId = payload.companyId ?? bank.company.id;
     if (payload.companyId !== undefined) {
@@ -141,6 +147,24 @@ export class BankingService {
     }
   }
 
+  async deleteBank(bankId: number, actor: AuthUser): Promise<{ id: number; message: string }> {
+    this.ensureAdminOrSuperadmin(actor);
+
+    const bank = await this.requireBank(bankId);
+    this.ensureActorCanManageBank(actor, bank);
+
+    try {
+      await this.bankRepository.delete(bank.id);
+    } catch (error) {
+      this.handleDatabaseError(error);
+    }
+
+    return {
+      id: bank.id,
+      message: "Banco eliminado."
+    };
+  }
+
   async createCompanyBankAccount(
     payload: CreateCompanyBankAccountDto,
     actor: AuthUser
@@ -154,6 +178,7 @@ export class BankingService {
     ]);
 
     this.ensureBankBelongsToCompany(bank, company.id);
+    this.ensureActorCanManageBank(actor, bank);
 
     const currency = await this.requireActiveCurrency(payload.currency);
 
@@ -186,7 +211,7 @@ export class BankingService {
     this.ensureAdminOrSuperadmin(actor);
 
     const account = await this.requireCompanyBankAccount(accountId);
-    this.ensureActorCanAccessCompany(actor, account.company.id);
+    this.ensureActorCanManageAccount(actor, account);
 
     if (payload.companyId !== undefined && payload.companyId !== account.company.id) {
       const companyId = await this.resolveAccessibleCompanyId(actor, payload.companyId);
@@ -195,6 +220,7 @@ export class BankingService {
 
     if (payload.bankId !== undefined) {
       account.bank = await this.requireBank(payload.bankId);
+      this.ensureActorCanManageBank(actor, account.bank);
     }
 
     this.ensureBankBelongsToCompany(account.bank, account.company.id);
@@ -232,6 +258,27 @@ export class BankingService {
     } catch (error) {
       this.handleDatabaseError(error);
     }
+  }
+
+  async deleteCompanyBankAccount(
+    accountId: number,
+    actor: AuthUser
+  ): Promise<{ id: number; message: string }> {
+    this.ensureAdminOrSuperadmin(actor);
+
+    const account = await this.requireCompanyBankAccount(accountId);
+    this.ensureActorCanManageAccount(actor, account);
+
+    try {
+      await this.companyBankAccountRepository.delete(account.id);
+    } catch (error) {
+      this.handleDatabaseError(error);
+    }
+
+    return {
+      id: account.id,
+      message: "Cuenta bancaria eliminada."
+    };
   }
 
   private async listCompaniesForActor(actor: AuthUser): Promise<Company[]> {
@@ -279,6 +326,10 @@ export class BankingService {
       throw new BadRequestException("userId es obligatorio para asignar el banco.");
     }
 
+    if (!isSuperAdminRole(actor.roleCode) && targetUserId !== actor.id) {
+      throw new ForbiddenException("No podes administrar bancos de otro usuario.");
+    }
+
     const user = await this.userRepository.findOne({
       where: { id: targetUserId },
       relations: { company: true, role: true }
@@ -313,6 +364,24 @@ export class BankingService {
     }
 
     throw new ForbiddenException("No podes administrar bancos de otra empresa.");
+  }
+
+  private ensureActorCanManageBank(actor: AuthUser, bank: BankEntity) {
+    this.ensureActorCanAccessCompany(actor, bank.company.id);
+
+    if (isSuperAdminRole(actor.roleCode)) {
+      return;
+    }
+
+    if (bank.user.id === actor.id) {
+      return;
+    }
+
+    throw new ForbiddenException("No podes administrar bancos de otro usuario.");
+  }
+
+  private ensureActorCanManageAccount(actor: AuthUser, account: CompanyBankAccount) {
+    this.ensureActorCanManageBank(actor, account.bank);
   }
 
   private ensureBankBelongsToCompany(bank: BankEntity, companyId: number) {
@@ -467,6 +536,12 @@ export class BankingService {
         }
 
         throw new ConflictException("Ya existe un registro con esos datos unicos.");
+      }
+
+      if (driverError?.code === "23503") {
+        throw new ConflictException(
+          "No se puede eliminar el registro porque tiene datos asociados."
+        );
       }
     }
 
