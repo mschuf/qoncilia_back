@@ -35,6 +35,12 @@ export class RegisterDto {
   @IsOptional()
   @IsString()
   @MaxLength(120)
+  companyName?: string;
+
+  @Transform(emptyToUndefined)
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
   usrNombre?: string;
 
   @Transform(emptyToUndefined)

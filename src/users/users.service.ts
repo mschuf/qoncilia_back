@@ -55,7 +55,11 @@ export class UsersService {
         const moduleRepository = manager.getRepository(AppModuleEntity);
         const companyRoleModuleRepository = manager.getRepository(CompanyRoleModule);
 
-        const companyName = this.normalizeRequired(payload.usrNombre ?? "", "companyName");
+        const companyName = this.normalizeRequired(
+          payload.companyName ?? payload.usrNombre ?? "",
+          "companyName"
+        );
+        const userName = this.normalizeOptional(payload.usrNombre) ?? companyName;
         const login = this.normalizeRequired(payload.usrLogin, "usrLogin");
         const requestedRole = this.resolveRoleCodeFromPayload(payload.roleCode, Role.ADMIN);
         if (requestedRole !== Role.ADMIN) {
@@ -84,8 +88,8 @@ export class UsersService {
 
         const user = await userRepository.save(
           userRepository.create({
-            usrNombre: companyName,
-            usrApellido: null,
+            usrNombre: userName,
+            usrApellido: this.normalizeOptional(payload.usrApellido),
             usrEmail: this.normalizeOptional(payload.usrEmail),
             usrCelular: this.normalizeOptional(payload.usrCelular),
             usrLogin: login,
