@@ -1,5 +1,5 @@
 import { Transform } from "class-transformer";
-import { IsDateString, IsInt, IsOptional, IsPositive } from "class-validator";
+import { IsDateString, IsInt, IsOptional, IsPositive, IsString } from "class-validator";
 
 const toNumber = ({ value }: { value: unknown }) => {
   if (typeof value === "number") return value;
@@ -39,4 +39,20 @@ export class ListBankStatementsQueryDto {
   @IsOptional()
   @IsDateString()
   dateTo?: string;
+
+  @Transform(toNumber)
+  @IsOptional()
+  @IsInt()
+  @IsPositive()
+  page?: number = 1;
+
+  @Transform(toNumber)
+  @IsOptional()
+  @IsInt()
+  @IsPositive()
+  limit?: number = 10;
+
+  @IsOptional()
+  @IsString()
+  search?: string;
 }

@@ -335,3 +335,11 @@ export interface BankStatementPreviewResponse {
   rowCount: number;
   rows: ConciliationPreviewRow[];
 }
+
+export interface PaginatedResponse<T> {
+  data: T[];
+  total: number;
+  page: number;
+  limit: number;
+  lastPage: number;
+}

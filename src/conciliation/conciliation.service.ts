@@ -74,7 +74,8 @@ import {
   ReconciliationSnapshot,
   PublicUserBank,
   PublicUserBankSummary,
-  PublicUserBankWithLayouts
+  PublicUserBankWithLayouts,
+  PaginatedResponse
 } from "./interfaces/conciliation.interfaces";
 
 type UploadedMemoryFile = {
@@ -1166,9 +1167,21 @@ export class ConciliationService {
   async listBankStatements(
     actor: AuthUser,
     query: ListBankStatementsQueryDto
-  ): Promise<PublicBankStatementSummary[]> {
-    const statements = await (await this.buildBankStatementQuery(actor, query)).getMany();
-    return statements.map((statement) => this.toPublicBankStatementSummary(statement));
+  ): Promise<PaginatedResponse<PublicBankStatementSummary>> {
+    const page = query.page && query.page > 0 ? query.page : 1;
+    const limit = query.limit && query.limit > 0 ? query.limit : 10;
+    const skip = (page - 1) * limit;
+
+    const queryBuilder = await this.buildBankStatementQuery(actor, query);
+    const [statements, total] = await queryBuilder.skip(skip).take(limit).getManyAndCount();
+
+    return {
+      data: statements.map((statement) => this.toPublicBankStatementSummary(statement)),
+      total,
+      page,
+      limit,
+      lastPage: Math.ceil(total / limit) || 1
+    };
   }
 
   async getBankStatement(actor: AuthUser, statementId: number): Promise<PublicBankStatementDetail> {
@@ -1911,6 +1924,10 @@ export class ConciliationService {
       queryBuilder.andWhere("statement.createdAt <= :dateTo", {
         dateTo: new Date(`${query.dateTo}T23:59:59.999Z`)
       });
+    }
+
+    if (query.search) {
+      queryBuilder.andWhere("statement.name ILIKE :search", { search: `%${query.search}%` });
     }
 
     return queryBuilder;
