@@ -7,6 +7,7 @@ import {
   ParseIntPipe,
   Patch,
   Post,
+  Put,
   Query,
   UploadedFile,
   UploadedFiles,
@@ -26,6 +27,7 @@ import { AuthUser } from "../common/interfaces/auth-user.interface";
 import { ConciliationKpiQueryDto } from "./dto/conciliation-kpi-query.dto";
 import { ApplyTemplateLayoutDto } from "./dto/apply-template-layout.dto";
 import { AssignGestorBankDto } from "./dto/assign-gestor-bank.dto";
+import { SetBankAvailableTemplatesDto } from "./dto/set-bank-available-templates.dto";
 import { CompareBankStatementDto } from "./dto/compare-bank-statement.dto";
 import { CreateBankStatementDto, PreviewBankStatementDto } from "./dto/create-bank-statement.dto";
 import { CreateBankDto } from "./dto/create-bank.dto";
@@ -228,6 +230,51 @@ export class ConciliationController {
   ) {
     return this.conciliationService.applyTemplateLayoutToBank(
       userId,
+      bankId,
+      plantillaBaseId,
+      body,
+      actor
+    );
+  }
+
+  @Put([
+    "users/:userId/banks/:bankId/plantillas-base/disponibles",
+    "users/:userId/banks/:bankId/template-layouts/available"
+  ])
+  @Roles(Role.IS_SUPER_ADMIN)
+  @RequiredModule(AppModuleCode.LAYOUT_MANAGEMENT)
+  setBankAvailableTemplates(
+    @Param("userId", ParseIntPipe) userId: number,
+    @Param("bankId", ParseIntPipe) bankId: number,
+    @Body() body: SetBankAvailableTemplatesDto,
+    @CurrentUser() actor: AuthUser
+  ) {
+    return this.conciliationService.setBankAvailableTemplates(userId, bankId, body, actor);
+  }
+
+  @Get([
+    "admin/bancos-plantillas-disponibles",
+    "admin/banks-with-available-templates"
+  ])
+  @Roles(Role.ADMIN, Role.IS_SUPER_ADMIN)
+  @RequiredModule(AppModuleCode.LAYOUT_MANAGEMENT)
+  listBanksWithAvailableTemplatesForAdmin(@CurrentUser() actor: AuthUser) {
+    return this.conciliationService.listBanksWithAvailableTemplatesForAdmin(actor);
+  }
+
+  @Post([
+    "admin/banks/:bankId/plantillas-base/:plantillaBaseId/aplicar",
+    "admin/banks/:bankId/template-layouts/:plantillaBaseId/apply"
+  ])
+  @Roles(Role.ADMIN, Role.IS_SUPER_ADMIN)
+  @RequiredModule(AppModuleCode.LAYOUT_MANAGEMENT)
+  applyAvailableTemplateAsAdmin(
+    @Param("bankId", ParseIntPipe) bankId: number,
+    @Param("plantillaBaseId", ParseIntPipe) plantillaBaseId: number,
+    @Body() body: ApplyTemplateLayoutDto,
+    @CurrentUser() actor: AuthUser
+  ) {
+    return this.conciliationService.applyAvailableTemplateAsAdmin(
       bankId,
       plantillaBaseId,
       body,

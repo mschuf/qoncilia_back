@@ -144,6 +144,14 @@ export interface ConciliationPreviewResponse {
 export interface PublicUserBankWithLayouts extends PublicUserBank {
   accounts: PublicCompanyBankAccountSummary[];
   layouts: PublicLayout[];
+  availableTemplateIds: number[];
+}
+
+export interface PublicBankWithAvailableTemplates extends PublicUserBank {
+  companyId: number;
+  companyName: string;
+  layouts: PublicLayout[];
+  availableTemplates: PublicTemplateLayout[];
 }
 
 export interface PublicUserBankDeletionLayout {

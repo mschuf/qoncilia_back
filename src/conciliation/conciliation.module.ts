@@ -20,6 +20,7 @@ import { ReconciliationMatch } from "./entities/reconciliation-match.entity";
 import { Reconciliation } from "./entities/reconciliation.entity";
 import { TemplateLayoutMapping } from "./entities/template-layout-mapping.entity";
 import { TemplateLayout } from "./entities/template-layout.entity";
+import { BankTemplateAvailability } from "./entities/bank-template-availability.entity";
 import { Currency } from "./entities/currency.entity";
 
 @Module({
@@ -35,6 +36,7 @@ import { Currency } from "./entities/currency.entity";
       CompanyBankAccount,
       TemplateLayout,
       TemplateLayoutMapping,
+      BankTemplateAvailability,
       ReconciliationLayout,
       ReconciliationLayoutMapping,
       Reconciliation,

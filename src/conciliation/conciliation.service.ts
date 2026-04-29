@@ -46,6 +46,8 @@ import { ReconciliationMatch } from "./entities/reconciliation-match.entity";
 import { Reconciliation } from "./entities/reconciliation.entity";
 import { TemplateLayoutMapping } from "./entities/template-layout-mapping.entity";
 import { TemplateLayout } from "./entities/template-layout.entity";
+import { BankTemplateAvailability } from "./entities/bank-template-availability.entity";
+import { SetBankAvailableTemplatesDto } from "./dto/set-bank-available-templates.dto";
 import {
   CompareOperator,
   BankStatementPreviewResponse,
@@ -60,6 +62,7 @@ import {
   PublicBankStatementSummary,
   PublicCompanyBankAccountSummary,
   PublicConciliationSystem,
+  PublicBankWithAvailableTemplates,
   PublicGestorAssignmentCatalog,
   PublicLayout,
   PublicLayoutMapping,
@@ -132,6 +135,8 @@ export class ConciliationService {
     private readonly templateLayoutRepository: Repository<TemplateLayout>,
     @InjectRepository(TemplateLayoutMapping)
     private readonly templateLayoutMappingRepository: Repository<TemplateLayoutMapping>,
+    @InjectRepository(BankTemplateAvailability)
+    private readonly bankTemplateAvailabilityRepository: Repository<BankTemplateAvailability>,
     @InjectRepository(ReconciliationLayout)
     private readonly layoutRepository: Repository<ReconciliationLayout>,
     @InjectRepository(ReconciliationLayoutMapping)
@@ -158,6 +163,8 @@ export class ConciliationService {
 
     const banks = await queryBuilder.getMany();
 
+    const availabilityByBank = await this.loadAvailabilityByBank(banks.map((bank) => bank.id));
+
     return banks
       .sort((left, right) => {
         const byUser = left.user.usrLogin.localeCompare(right.user.usrLogin);
@@ -166,7 +173,33 @@ export class ConciliationService {
         if (byBank !== 0) return byBank;
         return left.id - right.id;
       })
-      .map((bank) => this.toPublicUserBankWithLayouts(bank));
+      .map((bank) =>
+        this.toPublicUserBankWithLayouts(bank, availabilityByBank.get(bank.id) ?? [])
+      );
+  }
+
+  private async loadAvailabilityByBank(bankIds: number[]): Promise<Map<number, number[]>> {
+    const result = new Map<number, number[]>();
+    if (bankIds.length === 0) return result;
+
+    const rows = await this.bankTemplateAvailabilityRepository
+      .createQueryBuilder("availability")
+      .leftJoin("availability.bank", "bank")
+      .leftJoin("availability.templateLayout", "templateLayout")
+      .where("bank.id IN (:...bankIds)", { bankIds })
+      .select(["availability.id", "bank.id", "templateLayout.id"])
+      .getMany();
+
+    for (const row of rows) {
+      const bankId = row.bank?.id;
+      const templateId = row.templateLayout?.id;
+      if (!bankId || !templateId) continue;
+      const list = result.get(bankId) ?? [];
+      list.push(templateId);
+      result.set(bankId, list);
+    }
+
+    return result;
   }
 
   async listTemplateLayouts(actor: AuthUser): Promise<PublicTemplateLayout[]> {
@@ -710,6 +743,289 @@ export class ConciliationService {
       }
 
       const shouldActivate = payload.active ?? template.active ?? (userBank.layouts?.length ?? 0) === 0;
+
+      if (shouldActivate) {
+        await layoutRepository
+          .createQueryBuilder()
+          .update(ReconciliationLayout)
+          .set({ active: false })
+          .where("banco_id = :bankId", { bankId: userBank.id })
+          .execute();
+      }
+
+      const createdLayout = await layoutRepository.save(
+        layoutRepository.create({
+          userBank,
+          system: template.system,
+          templateLayout: template,
+          name: this.normalizeRequired(payload.name ?? template.name, "name"),
+          description: this.normalizeOptional(payload.description ?? template.description),
+          systemLabel: this.normalizeRequired(
+            payload.systemLabel ?? template.system?.name ?? template.systemLabel,
+            "systemLabel"
+          ),
+          bankLabel: this.normalizeRequired(
+            payload.bankLabel ?? userBank.alias ?? userBank.bankName ?? template.bankLabel,
+            "bankLabel"
+          ),
+          autoMatchThreshold: this.normalizeThreshold(
+            payload.autoMatchThreshold ?? template.autoMatchThreshold
+          ),
+          active: shouldActivate
+        })
+      );
+
+      await mappingRepository.save(
+        this.sortTemplateMappings(template.mappings ?? []).map((item, index) =>
+          mappingRepository.create({
+            layout: createdLayout,
+            fieldKey: this.normalizeRequired(item.fieldKey, "fieldKey"),
+            label: this.normalizeRequired(item.label, "label"),
+            sortOrder: item.sortOrder ?? index,
+            active: item.active ?? true,
+            required: item.required ?? false,
+            compareOperator: item.compareOperator ?? "equals",
+            weight: item.weight ?? 1,
+            tolerance: item.tolerance ?? null,
+            systemSheet: this.normalizeOptional(item.systemSheet),
+            systemColumn: this.normalizeColumn(item.systemColumn),
+            systemStartRow: item.systemStartRow ?? null,
+            systemEndRow: item.systemEndRow ?? null,
+            systemDataType: item.systemDataType ?? "text",
+            bankSheet: this.normalizeOptional(item.bankSheet),
+            bankColumn: this.normalizeColumn(item.bankColumn),
+            bankStartRow: item.bankStartRow ?? null,
+            bankEndRow: item.bankEndRow ?? null,
+            bankDataType: item.bankDataType ?? "text"
+          })
+        )
+      );
+
+      const persisted = await layoutRepository.findOne({
+        where: { id: createdLayout.id },
+        relations: {
+          userBank: true,
+          system: true,
+          mappings: true,
+          templateLayout: true
+        }
+      });
+
+      if (!persisted) {
+        throw new NotFoundException("Plantilla no encontrada luego de copiar la base.");
+      }
+
+      await this.propagateLayoutToAssignedGestorBanks(manager, persisted);
+
+      return this.toPublicLayout(persisted);
+    });
+  }
+
+  async setBankAvailableTemplates(
+    userId: number,
+    bankId: number,
+    payload: SetBankAvailableTemplatesDto,
+    actor: AuthUser
+  ): Promise<PublicUserBankWithLayouts> {
+    this.ensureSuperadmin(actor);
+
+    const bank = await this.requireUserBank(userId, bankId);
+    const ids = Array.from(new Set(payload.templateLayoutIds));
+
+    if (ids.length > 0) {
+      const found = await this.templateLayoutRepository.find({
+        where: ids.map((id) => ({ id }))
+      });
+
+      if (found.length !== ids.length) {
+        const missing = ids.filter((id) => !found.some((tpl) => tpl.id === id));
+        throw new NotFoundException(
+          `Plantillas base no encontradas: ${missing.join(", ")}`
+        );
+      }
+    }
+
+    return this.bankTemplateAvailabilityRepository.manager.transaction(async (manager) => {
+      const repo = manager.getRepository(BankTemplateAvailability);
+
+      await repo
+        .createQueryBuilder()
+        .delete()
+        .from(BankTemplateAvailability)
+        .where("banco_id = :bankId", { bankId: bank.id })
+        .execute();
+
+      if (ids.length > 0) {
+        await repo.save(
+          ids.map((templateId) =>
+            repo.create({
+              bank,
+              templateLayout: { id: templateId } as TemplateLayout
+            })
+          )
+        );
+      }
+
+      return this.requirePublicUserBankWithLayouts(userId, bankId);
+    });
+  }
+
+  async listBanksWithAvailableTemplatesForAdmin(
+    actor: AuthUser
+  ): Promise<PublicBankWithAvailableTemplates[]> {
+    this.ensureAdminOrSuperadmin(actor);
+
+    const queryBuilder = this.userBankRepository
+      .createQueryBuilder("userBank")
+      .leftJoinAndSelect("userBank.user", "user")
+      .leftJoinAndSelect("user.company", "company")
+      .leftJoinAndSelect("userBank.layouts", "layout")
+      .leftJoinAndSelect("layout.system", "system")
+      .leftJoinAndSelect("layout.mappings", "mapping")
+      .leftJoinAndSelect("layout.templateLayout", "layoutTemplate");
+
+    if (actor.role === Role.ADMIN) {
+      queryBuilder.andWhere("company.id = :companyId", { companyId: actor.companyId });
+    }
+
+    const banks = await queryBuilder.getMany();
+
+    if (banks.length === 0) return [];
+
+    const availabilityRows = await this.bankTemplateAvailabilityRepository
+      .createQueryBuilder("availability")
+      .leftJoinAndSelect("availability.bank", "bank")
+      .leftJoinAndSelect("availability.templateLayout", "templateLayout")
+      .leftJoinAndSelect("templateLayout.system", "templateSystem")
+      .leftJoinAndSelect("templateLayout.mappings", "templateMapping")
+      .where("bank.id IN (:...bankIds)", { bankIds: banks.map((bank) => bank.id) })
+      .getMany();
+
+    const availabilityByBank = new Map<number, TemplateLayout[]>();
+    for (const row of availabilityRows) {
+      if (!row.bank?.id || !row.templateLayout) continue;
+      const list = availabilityByBank.get(row.bank.id) ?? [];
+      list.push(row.templateLayout);
+      availabilityByBank.set(row.bank.id, list);
+    }
+
+    return banks
+      .sort((left, right) => {
+        const byCompany = (left.user.company?.name ?? "").localeCompare(
+          right.user.company?.name ?? ""
+        );
+        if (byCompany !== 0) return byCompany;
+        const byUser = left.user.usrLogin.localeCompare(right.user.usrLogin);
+        if (byUser !== 0) return byUser;
+        const byBank = left.bankName.localeCompare(right.bankName);
+        if (byBank !== 0) return byBank;
+        return left.id - right.id;
+      })
+      .map((bank) => {
+        const templates = availabilityByBank.get(bank.id) ?? [];
+        return {
+          ...this.toPublicUserBank(bank),
+          companyId: bank.user.company?.id ?? 0,
+          companyName: bank.user.company?.name ?? "",
+          layouts: (bank.layouts ?? []).map((layout) =>
+            this.toPublicLayout(layout, bank.id)
+          ),
+          availableTemplates: templates
+            .sort((left, right) => left.name.localeCompare(right.name))
+            .map((template) => this.toPublicTemplateLayout(template))
+        };
+      });
+  }
+
+  async applyAvailableTemplateAsAdmin(
+    bankId: number,
+    templateLayoutId: number,
+    payload: ApplyTemplateLayoutDto,
+    actor: AuthUser
+  ): Promise<PublicLayout> {
+    this.ensureAdminOrSuperadmin(actor);
+
+    const bank = await this.userBankRepository.findOne({
+      where: { id: bankId },
+      relations: {
+        user: {
+          company: true
+        }
+      }
+    });
+
+    if (!bank) {
+      throw new NotFoundException("Banco asignado no encontrado.");
+    }
+
+    if (
+      actor.role === Role.ADMIN &&
+      bank.user.company?.id !== actor.companyId
+    ) {
+      throw new ForbiddenException(
+        "No podes aplicar plantillas a bancos de otra empresa."
+      );
+    }
+
+    const availability = await this.bankTemplateAvailabilityRepository.findOne({
+      where: {
+        bank: { id: bank.id },
+        templateLayout: { id: templateLayoutId }
+      }
+    });
+
+    if (!availability) {
+      throw new ForbiddenException(
+        "La plantilla base no esta habilitada para este banco. Pedile al super admin que la habilite."
+      );
+    }
+
+    return this.applyTemplateLayoutInternal(
+      bank.user.id,
+      bank.id,
+      templateLayoutId,
+      payload
+    );
+  }
+
+  private async applyTemplateLayoutInternal(
+    userId: number,
+    bankId: number,
+    templateLayoutId: number,
+    payload: ApplyTemplateLayoutDto
+  ): Promise<PublicLayout> {
+    return this.layoutRepository.manager.transaction(async (manager) => {
+      const bankRepository = manager.getRepository(BankEntity);
+      const templateRepository = manager.getRepository(TemplateLayout);
+      const layoutRepository = manager.getRepository(ReconciliationLayout);
+      const mappingRepository = manager.getRepository(ReconciliationLayoutMapping);
+
+      const userBank = await bankRepository.findOne({
+        where: { id: bankId, user: { id: userId } },
+        relations: {
+          user: true,
+          layouts: true
+        }
+      });
+
+      if (!userBank) {
+        throw new NotFoundException("Banco asignado no encontrado.");
+      }
+
+      const template = await templateRepository.findOne({
+        where: { id: templateLayoutId },
+        relations: {
+          system: true,
+          mappings: true
+        }
+      });
+
+      if (!template) {
+        throw new NotFoundException("Plantilla base no encontrada.");
+      }
+
+      const shouldActivate =
+        payload.active ?? template.active ?? (userBank.layouts?.length ?? 0) === 0;
 
       if (shouldActivate) {
         await layoutRepository
@@ -3260,7 +3576,10 @@ export class ConciliationService {
     });
   }
 
-  private toPublicUserBankWithLayouts(entity: BankEntity): PublicUserBankWithLayouts {
+  private toPublicUserBankWithLayouts(
+    entity: BankEntity,
+    availableTemplateIds: number[] = []
+  ): PublicUserBankWithLayouts {
     return {
       ...this.toPublicUserBank(entity),
       accounts: [...(entity.accounts ?? [])]
@@ -3270,7 +3589,8 @@ export class ConciliationService {
           return left.id - right.id;
         })
         .map((account) => this.toPublicCompanyBankAccountSummary(account, entity)),
-      layouts: (entity.layouts ?? []).map((layout) => this.toPublicLayout(layout, entity.id))
+      layouts: (entity.layouts ?? []).map((layout) => this.toPublicLayout(layout, entity.id)),
+      availableTemplateIds: [...availableTemplateIds].sort((a, b) => a - b)
     };
   }
 
@@ -3695,7 +4015,8 @@ export class ConciliationService {
     bankId: number
   ): Promise<PublicUserBankWithLayouts> {
     const bank = await this.requireUserBank(userId, bankId);
-    return this.toPublicUserBankWithLayouts(bank);
+    const availability = await this.loadAvailabilityByBank([bank.id]);
+    return this.toPublicUserBankWithLayouts(bank, availability.get(bank.id) ?? []);
   }
 
   private roundNumber(value: number): number {
