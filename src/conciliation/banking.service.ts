@@ -6,7 +6,7 @@ import {
   NotFoundException
 } from "@nestjs/common";
 import { InjectRepository } from "@nestjs/typeorm";
-import { QueryFailedError, Repository } from "typeorm";
+import { IsNull, QueryFailedError, Repository } from "typeorm";
 import { Company } from "../access-control/entities/company.entity";
 import { PublicCompany } from "../access-control/interfaces/access-control.interfaces";
 import { Role } from "../common/enums/role.enum";
@@ -48,12 +48,12 @@ export class BankingService {
     query: ListCompanyBankingQueryDto
   ): Promise<CompanyBankingReferenceResponse> {
     const companyId = await this.resolveAccessibleCompanyId(actor, query.companyId);
-    const bankWhere = isSuperAdminRole(actor.roleCode)
-      ? { company: { id: companyId } }
-      : { company: { id: companyId }, user: { id: actor.id } };
-    const accountWhere = isSuperAdminRole(actor.roleCode)
-      ? { company: { id: companyId } }
-      : { company: { id: companyId }, bank: { user: { id: actor.id } } };
+    const bankWhere = { company: { id: companyId }, sourceBank: IsNull() };
+    const accountWhere = {
+      company: { id: companyId },
+      sourceAccount: IsNull(),
+      bank: { sourceBank: IsNull() }
+    };
     const [companies, banks, accounts, currencies] = await Promise.all([
       this.listCompaniesForActor(actor),
       this.bankRepository.find({
@@ -373,7 +373,7 @@ export class BankingService {
       return;
     }
 
-    if (bank.user.id === actor.id) {
+    if (actor.roleCode === Role.ADMIN) {
       return;
     }
 

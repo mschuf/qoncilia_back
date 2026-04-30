@@ -148,9 +148,10 @@ export class ConciliationService {
   ) {}
 
   async listCatalog(actor: AuthUser, requestedUserId?: number): Promise<PublicUserBankWithLayouts[]> {
-    const scope = await this.resolveAccessibleUserScope(actor, requestedUserId);
+    const scope = await this.resolveAccessibleConfigurationScope(actor, requestedUserId);
     const queryBuilder = this.userBankRepository
       .createQueryBuilder("userBank")
+      .leftJoinAndSelect("userBank.company", "bankCompany")
       .leftJoinAndSelect("userBank.user", "user")
       .leftJoinAndSelect("user.company", "company")
       .leftJoinAndSelect("userBank.accounts", "account")
@@ -159,7 +160,8 @@ export class ConciliationService {
       .leftJoinAndSelect("layout.mappings", "mapping")
       .leftJoinAndSelect("layout.templateLayout", "templateLayout");
 
-    this.applyUserScopeToQuery(queryBuilder, scope, "user", "company");
+    this.applyUserScopeToQuery(queryBuilder, scope, "user", "bankCompany");
+    queryBuilder.andWhere("userBank.banco_origen_id IS NULL");
 
     const banks = await queryBuilder.getMany();
 
@@ -697,8 +699,6 @@ export class ConciliationService {
         throw new NotFoundException("Plantilla no encontrada luego de crear.");
       }
 
-      await this.propagateLayoutToAssignedGestorBanks(manager, persisted);
-
       return this.toPublicLayout(persisted);
     });
   }
@@ -815,8 +815,6 @@ export class ConciliationService {
         throw new NotFoundException("Plantilla no encontrada luego de copiar la base.");
       }
 
-      await this.propagateLayoutToAssignedGestorBanks(manager, persisted);
-
       return this.toPublicLayout(persisted);
     });
   }
@@ -883,6 +881,8 @@ export class ConciliationService {
       .leftJoinAndSelect("layout.system", "system")
       .leftJoinAndSelect("layout.mappings", "mapping")
       .leftJoinAndSelect("layout.templateLayout", "layoutTemplate");
+
+    queryBuilder.andWhere("userBank.banco_origen_id IS NULL");
 
     if (actor.role === Role.ADMIN) {
       queryBuilder.andWhere("user.id = :userId", { userId: actor.id });
@@ -1098,8 +1098,6 @@ export class ConciliationService {
         throw new NotFoundException("Plantilla no encontrada luego de copiar la base.");
       }
 
-      await this.propagateLayoutToAssignedGestorBanks(manager, persisted);
-
       return this.toPublicLayout(persisted);
     });
   }
@@ -1272,8 +1270,6 @@ export class ConciliationService {
       if (!updated) {
         throw new NotFoundException("Plantilla no encontrada luego de actualizar.");
       }
-
-      await this.propagateLayoutToAssignedGestorBanks(manager, updated);
 
       return this.toPublicLayout(updated);
     });
@@ -1490,10 +1486,16 @@ export class ConciliationService {
     return this.bankStatementRepository.manager.transaction(async (manager) => {
       const statementRepository = manager.getRepository(BankStatement);
       const rowRepository = manager.getRepository(BankStatementRow);
+      const userRepository = manager.getRepository(User);
+
+      const persistedActor = await userRepository.findOne({ where: { id: actor.id } });
+      if (!persistedActor) {
+        throw new NotFoundException("Usuario ejecutor no encontrado.");
+      }
 
       const statement = await statementRepository.save(
         statementRepository.create({
-          user: userBank.user,
+          user: persistedActor,
           userBank,
           companyBankAccount,
           layout,
@@ -1992,212 +1994,14 @@ export class ConciliationService {
       throw new BadRequestException("Debes seleccionar al menos un layout para asignar.");
     }
 
-    return this.userBankRepository.manager.transaction(async (manager) => {
-      const bankRepository = manager.getRepository(BankEntity);
-      const accountRepository = manager.getRepository(CompanyBankAccount);
-      const layoutRepository = manager.getRepository(ReconciliationLayout);
-      const mappingRepository = manager.getRepository(ReconciliationLayoutMapping);
-
-      let targetBank = await bankRepository.findOne({
-        where: {
-          user: { id: gestorUser.id },
-          sourceBank: { id: sourceBank.id }
-        },
-        relations: {
-          user: true,
-          company: true,
-          sourceBank: true,
-          layouts: {
-            templateLayout: true,
-            system: true
-          }
-        }
-      });
-
-      if (!targetBank) {
-        targetBank = await bankRepository.save(
-          bankRepository.create({
-            company: gestorUser.company,
-            user: gestorUser,
-            sourceBank,
-            name: sourceBank.name,
-            alias: sourceBank.alias,
-            description: sourceBank.description,
-            branch: sourceBank.branch,
-            active: sourceBank.active
-          })
-        );
-      } else {
-        targetBank.name = sourceBank.name;
-        targetBank.alias = sourceBank.alias;
-        targetBank.description = sourceBank.description;
-        targetBank.branch = sourceBank.branch;
-        targetBank.active = sourceBank.active;
-        await bankRepository.save(targetBank);
-      }
-
-      const syncedAccountIds: number[] = [];
-      for (const sourceAccount of sourceBank.accounts ?? []) {
-        let targetAccount = await accountRepository.findOne({
-          where: {
-            bank: { id: targetBank.id },
-            sourceAccount: { id: sourceAccount.id }
-          },
-          relations: {
-            bank: true,
-            company: true,
-            sourceAccount: true
-          }
-        });
-
-        if (!targetAccount) {
-          targetAccount = accountRepository.create({
-            company: gestorUser.company,
-            bank: targetBank,
-            sourceAccount,
-            name: sourceAccount.name,
-            currency: sourceAccount.currency,
-            accountNumber: sourceAccount.accountNumber,
-            bankErpId: sourceAccount.bankErpId,
-            majorAccountNumber: sourceAccount.majorAccountNumber,
-            paymentAccountNumber: sourceAccount.paymentAccountNumber,
-            active: sourceAccount.active
-          });
-        } else {
-          targetAccount.company = gestorUser.company;
-          targetAccount.bank = targetBank;
-          targetAccount.sourceAccount = sourceAccount;
-          targetAccount.name = sourceAccount.name;
-          targetAccount.currency = sourceAccount.currency;
-          targetAccount.accountNumber = sourceAccount.accountNumber;
-          targetAccount.bankErpId = sourceAccount.bankErpId;
-          targetAccount.majorAccountNumber = sourceAccount.majorAccountNumber;
-          targetAccount.paymentAccountNumber = sourceAccount.paymentAccountNumber;
-          targetAccount.active = sourceAccount.active;
-        }
-
-        const persistedAccount = await accountRepository.save(targetAccount);
-        syncedAccountIds.push(persistedAccount.id);
-      }
-
-      const activeSourceLayoutId =
-        sourceLayouts.find((layout) => layout.active)?.id ?? sourceLayouts[0]?.id ?? null;
-
-      if (activeSourceLayoutId) {
-        await layoutRepository
-          .createQueryBuilder()
-          .update(ReconciliationLayout)
-          .set({ active: false })
-          .where("banco_id = :bankId", { bankId: targetBank.id })
-          .execute();
-      }
-
-      const syncedLayoutIds: number[] = [];
-      for (const sourceLayout of sourceLayouts) {
-        let targetLayout = sourceLayout.templateLayout?.id
-          ? await layoutRepository.findOne({
-              where: {
-                userBank: { id: targetBank.id },
-                templateLayout: { id: sourceLayout.templateLayout.id }
-              },
-              relations: {
-                userBank: true,
-                templateLayout: true,
-                system: true,
-                mappings: true
-              }
-            })
-          : null;
-
-        if (!targetLayout) {
-          targetLayout = await layoutRepository.findOne({
-            where: {
-              userBank: { id: targetBank.id },
-              system: { id: sourceLayout.system.id },
-              name: sourceLayout.name
-            },
-            relations: {
-              userBank: true,
-              templateLayout: true,
-              system: true,
-              mappings: true
-            }
-          });
-        }
-
-        if (!targetLayout) {
-          targetLayout = layoutRepository.create({
-            userBank: targetBank,
-            templateLayout: sourceLayout.templateLayout,
-            system: sourceLayout.system,
-            name: sourceLayout.name,
-            description: sourceLayout.description,
-            systemLabel: sourceLayout.systemLabel,
-            bankLabel: sourceLayout.bankLabel,
-            autoMatchThreshold: sourceLayout.autoMatchThreshold,
-            active: activeSourceLayoutId === sourceLayout.id
-          });
-          targetLayout = await layoutRepository.save(targetLayout);
-        } else {
-          targetLayout.userBank = targetBank;
-          targetLayout.templateLayout = sourceLayout.templateLayout;
-          targetLayout.system = sourceLayout.system;
-          targetLayout.name = sourceLayout.name;
-          targetLayout.description = sourceLayout.description;
-          targetLayout.systemLabel = sourceLayout.systemLabel;
-          targetLayout.bankLabel = sourceLayout.bankLabel;
-          targetLayout.autoMatchThreshold = sourceLayout.autoMatchThreshold;
-          targetLayout.active = activeSourceLayoutId === sourceLayout.id;
-          targetLayout = await layoutRepository.save(targetLayout);
-        }
-
-        await mappingRepository
-          .createQueryBuilder()
-          .delete()
-          .from(ReconciliationLayoutMapping)
-          .where("plantilla_id = :layoutId", { layoutId: targetLayout.id })
-          .execute();
-
-        const copiedMappings = this.sortMappings(sourceLayout.mappings ?? []).map((mapping, index) =>
-          mappingRepository.create({
-            layout: targetLayout,
-            fieldKey: mapping.fieldKey,
-            label: mapping.label,
-            sortOrder: mapping.sortOrder ?? index,
-            active: mapping.active,
-            required: mapping.required,
-            compareOperator: mapping.compareOperator,
-            weight: mapping.weight,
-            tolerance: mapping.tolerance,
-            systemSheet: mapping.systemSheet,
-            systemColumn: mapping.systemColumn,
-            systemStartRow: mapping.systemStartRow,
-            systemEndRow: mapping.systemEndRow,
-            systemDataType: mapping.systemDataType,
-            bankSheet: mapping.bankSheet,
-            bankColumn: mapping.bankColumn,
-            bankStartRow: mapping.bankStartRow,
-            bankEndRow: mapping.bankEndRow,
-            bankDataType: mapping.bankDataType
-          })
-        );
-
-        if (copiedMappings.length > 0) {
-          await mappingRepository.save(copiedMappings);
-        }
-
-        syncedLayoutIds.push(targetLayout.id);
-      }
-
-      return {
-        gestorUserId: gestorUser.id,
-        sourceBankId: sourceBank.id,
-        targetBankId: targetBank.id,
-        targetBankName: targetBank.alias ?? targetBank.name,
-        syncedLayoutIds,
-        syncedAccountIds
-      };
-    });
+    return {
+      gestorUserId: gestorUser.id,
+      sourceBankId: sourceBank.id,
+      targetBankId: sourceBank.id,
+      targetBankName: sourceBank.alias ?? sourceBank.name,
+      syncedLayoutIds: sourceLayouts.map((layout) => layout.id),
+      syncedAccountIds: (sourceBank.accounts ?? []).map((account) => account.id)
+    };
   }
 
   private async buildReconciliationQuery(
@@ -2465,7 +2269,7 @@ export class ConciliationService {
       throw new NotFoundException("Plantilla no encontrada para el banco seleccionado.");
     }
 
-    this.ensureActorCanAccessTargetUser(actor, layout.userBank.user);
+    this.ensureActorCanAccessCompany(actor, layout.userBank.user.company.id);
 
     return {
       userBank: layout.userBank,
@@ -3048,7 +2852,7 @@ export class ConciliationService {
       throw new BadRequestException("La cuenta bancaria seleccionada no pertenece al banco elegido.");
     }
 
-    this.ensureActorCanAccessTargetUser(actor, account.bank.user);
+    this.ensureActorCanAccessCompany(actor, account.company.id);
 
     return account;
   }
@@ -3081,6 +2885,37 @@ export class ConciliationService {
     return { userId: actor.id };
   }
 
+  private async resolveAccessibleConfigurationScope(
+    actor: AuthUser,
+    requestedUserId?: number
+  ): Promise<AccessibleUserScope> {
+    if (actor.role === Role.IS_SUPER_ADMIN) {
+      if (!requestedUserId) {
+        return {};
+      }
+
+      const targetUser = await this.requireUser(requestedUserId);
+      return { companyId: targetUser.company.id };
+    }
+
+    if (actor.role === Role.ADMIN) {
+      if (requestedUserId) {
+        const targetUser = await this.requireUser(requestedUserId);
+        if (targetUser.company.id !== actor.companyId) {
+          throw new ForbiddenException("No podes consultar datos de usuarios de otra empresa.");
+        }
+      }
+
+      return { companyId: actor.companyId };
+    }
+
+    if (requestedUserId && requestedUserId !== actor.id) {
+      throw new ForbiddenException("No podes consultar datos de otro usuario.");
+    }
+
+    return { companyId: actor.companyId };
+  }
+
   private applyUserScopeToQuery<T extends ObjectLiteral>(
     queryBuilder: SelectQueryBuilder<T>,
     scope: AccessibleUserScope,
@@ -3095,6 +2930,14 @@ export class ConciliationService {
     if (scope.companyId) {
       queryBuilder.andWhere(`${companyAlias}.id = :companyId`, { companyId: scope.companyId });
     }
+  }
+
+  private ensureActorCanAccessCompany(actor: AuthUser, companyId: number): void {
+    if (actor.role === Role.IS_SUPER_ADMIN || actor.companyId === companyId) {
+      return;
+    }
+
+    throw new ForbiddenException("No tenes permisos para ver datos de esta empresa.");
   }
 
   private ensureActorCanAccessTargetUser(actor: AuthUser, targetUser: User): void {
