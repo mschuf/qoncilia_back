@@ -283,6 +283,20 @@ export class ConciliationController {
   }
 
   @Patch([
+    "admin/banks/:bankId/layouts/:layoutId/activate",
+    "admin/banks/:bankId/plantillas/:layoutId/activate"
+  ])
+  @Roles(Role.ADMIN, Role.IS_SUPER_ADMIN)
+  @RequiredModule(AppModuleCode.LAYOUT_MANAGEMENT)
+  activateLayoutAsAdmin(
+    @Param("bankId", ParseIntPipe) bankId: number,
+    @Param("layoutId", ParseIntPipe) layoutId: number,
+    @CurrentUser() actor: AuthUser
+  ) {
+    return this.conciliationService.activateLayoutAsAdmin(bankId, layoutId, actor);
+  }
+
+  @Patch([
     "users/:userId/banks/:bankId/plantillas/:plantillaId",
     "users/:userId/banks/:bankId/layouts/:plantillaId"
   ])

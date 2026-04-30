@@ -885,7 +885,7 @@ export class ConciliationService {
       .leftJoinAndSelect("layout.templateLayout", "layoutTemplate");
 
     if (actor.role === Role.ADMIN) {
-      queryBuilder.andWhere("company.id = :companyId", { companyId: actor.companyId });
+      queryBuilder.andWhere("user.id = :userId", { userId: actor.id });
     }
 
     const banks = await queryBuilder.getMany();
@@ -927,7 +927,7 @@ export class ConciliationService {
           ...this.toPublicUserBank(bank),
           companyId: bank.user.company?.id ?? 0,
           companyName: bank.user.company?.name ?? "",
-          layouts: (bank.layouts ?? []).map((layout) =>
+          layouts: this.sortLayouts(bank.layouts ?? []).map((layout) =>
             this.toPublicLayout(layout, bank.id)
           ),
           availableTemplates: templates
@@ -960,10 +960,10 @@ export class ConciliationService {
 
     if (
       actor.role === Role.ADMIN &&
-      bank.user.company?.id !== actor.companyId
+      bank.user.id !== actor.id
     ) {
       throw new ForbiddenException(
-        "No podes aplicar plantillas a bancos de otra empresa."
+        "No podes aplicar plantillas a bancos de otro usuario."
       );
     }
 
@@ -1101,6 +1101,56 @@ export class ConciliationService {
       await this.propagateLayoutToAssignedGestorBanks(manager, persisted);
 
       return this.toPublicLayout(persisted);
+    });
+  }
+
+  async activateLayoutAsAdmin(
+    bankId: number,
+    layoutId: number,
+    actor: AuthUser
+  ): Promise<void> {
+    this.ensureAdminOrSuperadmin(actor);
+
+    const bank = await this.userBankRepository.findOne({
+      where: { id: bankId },
+      relations: {
+        user: { company: true },
+        layouts: true
+      }
+    });
+
+    if (!bank) {
+      throw new NotFoundException("Banco asignado no encontrado.");
+    }
+
+    if (
+      actor.role === Role.ADMIN &&
+      bank.user.id !== actor.id
+    ) {
+      throw new ForbiddenException(
+        "No podes activar plantillas en bancos de otro usuario."
+      );
+    }
+
+    const layout = bank.layouts?.find((l) => l.id === layoutId);
+    if (!layout) {
+      throw new NotFoundException("La plantilla no pertenece a este banco.");
+    }
+
+    if (layout.active) {
+      return;
+    }
+
+    await this.layoutRepository.manager.transaction(async (manager) => {
+      const layoutRepo = manager.getRepository(ReconciliationLayout);
+      await layoutRepo
+        .createQueryBuilder()
+        .update(ReconciliationLayout)
+        .set({ active: false })
+        .where("banco_id = :bankId", { bankId: bank.id })
+        .execute();
+
+      await layoutRepo.update({ id: layout.id }, { active: true });
     });
   }
 
@@ -3576,6 +3626,16 @@ export class ConciliationService {
     });
   }
 
+  private sortLayouts(layouts: ReconciliationLayout[]): ReconciliationLayout[] {
+    return [...layouts].sort((left, right) => {
+      const byActive = Number(right.active) - Number(left.active);
+      if (byActive !== 0) return byActive;
+      const byName = left.name.localeCompare(right.name);
+      if (byName !== 0) return byName;
+      return left.id - right.id;
+    });
+  }
+
   private toPublicUserBankWithLayouts(
     entity: BankEntity,
     availableTemplateIds: number[] = []
@@ -3589,7 +3649,9 @@ export class ConciliationService {
           return left.id - right.id;
         })
         .map((account) => this.toPublicCompanyBankAccountSummary(account, entity)),
-      layouts: (entity.layouts ?? []).map((layout) => this.toPublicLayout(layout, entity.id)),
+      layouts: this.sortLayouts(entity.layouts ?? []).map((layout) =>
+        this.toPublicLayout(layout, entity.id)
+      ),
       availableTemplateIds: [...availableTemplateIds].sort((a, b) => a - b)
     };
   }

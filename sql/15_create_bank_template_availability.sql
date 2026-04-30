@@ -3,9 +3,7 @@
 
 BEGIN;
 
-DROP TABLE IF EXISTS public.bancos_plantillas_base_disponibles CASCADE;
-
-CREATE TABLE public.bancos_plantillas_base_disponibles (
+CREATE TABLE IF NOT EXISTS public.bancos_plantillas_base_disponibles (
   banco_plantilla_disponible_id SERIAL PRIMARY KEY,
   banco_id INTEGER NOT NULL,
   plantilla_base_id INTEGER NOT NULL,
@@ -18,10 +16,10 @@ CREATE TABLE public.bancos_plantillas_base_disponibles (
     UNIQUE (banco_id, plantilla_base_id)
 );
 
-CREATE INDEX idx_bancos_plantillas_disp_banco
+CREATE INDEX IF NOT EXISTS idx_bancos_plantillas_disp_banco
   ON public.bancos_plantillas_base_disponibles (banco_id);
 
-CREATE INDEX idx_bancos_plantillas_disp_plantilla_base
+CREATE INDEX IF NOT EXISTS idx_bancos_plantillas_disp_plantilla_base
   ON public.bancos_plantillas_base_disponibles (plantilla_base_id);
 
 COMMIT;
