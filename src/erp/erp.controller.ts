@@ -30,14 +30,14 @@ export class ErpController {
   constructor(private readonly erpService: ErpService) {}
 
   @Get("reference")
-  @Roles(Role.ADMIN, Role.IS_SUPER_ADMIN)
+  @Roles(Role.GESTOR_COBRANZA, Role.GESTOR_PAGOS, Role.ADMIN, Role.IS_SUPER_ADMIN)
   @RequiredModule(AppModuleCode.ERP_MANAGEMENT)
   listReference(@CurrentUser() actor: AuthUser) {
     return this.erpService.listReference(actor)
   }
 
   @Get("configs")
-  @Roles(Role.ADMIN, Role.IS_SUPER_ADMIN)
+  @Roles(Role.GESTOR_COBRANZA, Role.GESTOR_PAGOS, Role.ADMIN, Role.IS_SUPER_ADMIN)
   @RequiredModule(AppModuleCode.ERP_MANAGEMENT)
   listCompanyErpConfigs(@CurrentUser() actor: AuthUser, @Query() query: ListCompanyErpConfigsQueryDto) {
     return this.erpService.listCompanyErpConfigs(actor, query)
@@ -62,7 +62,7 @@ export class ErpController {
   }
 
   @Post("shipments/deposits")
-  @Roles(Role.ADMIN, Role.IS_SUPER_ADMIN)
+  @Roles(Role.GESTOR_COBRANZA, Role.GESTOR_PAGOS, Role.ADMIN, Role.IS_SUPER_ADMIN)
   @RequiredModule(AppModuleCode.ERP_MANAGEMENT)
   sendSapDeposit(@Body() body: SendSapDepositDto, @CurrentUser() actor: AuthUser) {
     return this.erpService.sendSapDeposit(actor, body)

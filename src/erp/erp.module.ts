@@ -8,8 +8,11 @@ import { RolesGuard } from "../common/guards/roles.guard"
 import { Reconciliation } from "../conciliation/entities/reconciliation.entity"
 import { User } from "../users/entities/user.entity"
 import { CompanyErpConfig } from "./entities/company-erp-config.entity"
+import { UserErpSession } from "./entities/user-erp-session.entity"
 import { ErpController } from "./erp.controller"
 import { ErpService } from "./erp.service"
+import { SapB1Service } from "./sap/sap-b1.service"
+import { SapErpController } from "./sap/sap-erp.controller"
 
 @Module({
   imports: [
@@ -18,11 +21,12 @@ import { ErpService } from "./erp.service"
       Company,
       User,
       Reconciliation,
-      CompanyErpConfig
+      CompanyErpConfig,
+      UserErpSession
     ])
   ],
-  controllers: [ErpController],
-  providers: [ErpService, JwtAuthGuard, RolesGuard, ModuleAccessGuard],
+  controllers: [ErpController, SapErpController],
+  providers: [ErpService, SapB1Service, JwtAuthGuard, RolesGuard, ModuleAccessGuard],
   exports: [ErpService]
 })
 export class ErpModule {}

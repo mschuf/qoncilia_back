@@ -1,11 +1,12 @@
 import { Type } from "class-transformer"
-import { IsInt, IsObject, Min } from "class-validator"
+import { IsInt, IsObject, IsOptional, Min } from "class-validator"
 
 export class SendSapDepositDto {
+  @IsOptional()
   @Type(() => Number)
   @IsInt()
   @Min(1)
-  reconciliationId!: number
+  reconciliationId?: number
 
   @Type(() => Number)
   @IsInt()

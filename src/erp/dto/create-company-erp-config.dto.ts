@@ -47,35 +47,35 @@ export class CreateCompanyErpConfigDto {
   @IsBoolean()
   isDefault?: boolean
 
+  @IsOptional()
   @IsString()
-  @IsNotEmpty()
   @MaxLength(120)
-  sapUsername!: string
+  sapUsername?: string
 
   @IsString()
   @IsNotEmpty()
   @MaxLength(160)
   dbName!: string
 
+  @IsOptional()
   @IsString()
-  @IsNotEmpty()
   @MaxLength(160)
-  cmpName!: string
+  cmpName?: string
 
+  @IsOptional()
   @IsString()
-  @IsNotEmpty()
   @MaxLength(160)
-  serverNode!: string
+  serverNode?: string
 
+  @IsOptional()
   @IsString()
-  @IsNotEmpty()
   @MaxLength(160)
-  dbUser!: string
+  dbUser?: string
 
+  @IsOptional()
   @IsString()
-  @IsNotEmpty()
   @MaxLength(255)
-  password!: string
+  password?: string
 
   @IsString()
   @IsNotEmpty()

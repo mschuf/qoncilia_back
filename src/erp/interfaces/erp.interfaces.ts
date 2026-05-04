@@ -37,7 +37,7 @@ export interface PublicCompanyErpConfig {
 
 export interface PublicErpShipmentResult {
   id: number
-  reconciliationId: number
+  reconciliationId: number | null
   companyErpConfigId: number
   companyErpConfigName: string
   documentType: string
@@ -50,4 +50,23 @@ export interface PublicErpShipmentResult {
   externalDocNum: string | null
   createdAt: Date
   updatedAt: Date
+}
+
+export type PublicSapSessionStatus =
+  | "active"
+  | "not_authenticated"
+  | "expired"
+  | "invalid"
+  | "logged_out"
+
+export interface PublicSapErpSession {
+  companyErpConfigId: number
+  companyErpConfigName: string
+  erpType: ErpType
+  authenticated: boolean
+  status: PublicSapSessionStatus
+  username: string | null
+  expiresAt: Date | null
+  lastValidatedAt: Date | null
+  checkedAt: Date
 }

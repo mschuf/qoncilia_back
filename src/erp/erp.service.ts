@@ -9,10 +9,6 @@ import {
 } from "@nestjs/common"
 import { ConfigService } from "@nestjs/config"
 import { InjectRepository } from "@nestjs/typeorm"
-import * as http from "http"
-import * as https from "https"
-import { IncomingHttpHeaders } from "http"
-import { URL } from "url"
 import { QueryFailedError, Repository } from "typeorm"
 import { PublicCompany } from "../access-control/interfaces/access-control.interfaces"
 import { Company } from "../access-control/entities/company.entity"
@@ -20,7 +16,7 @@ import { Role } from "../common/enums/role.enum"
 import { AuthUser } from "../common/interfaces/auth-user.interface"
 import { ErpType } from "../common/enums/erp-type.enum"
 import { decryptText, encryptText } from "../common/utils/encryption.util"
-import { isSuperAdminRole } from "../common/utils/role.util"
+import { isGestorRole, isSuperAdminRole } from "../common/utils/role.util"
 import { Reconciliation } from "../conciliation/entities/reconciliation.entity"
 import { User } from "../users/entities/user.entity"
 import { CreateCompanyErpConfigDto } from "./dto/create-company-erp-config.dto"
@@ -28,29 +24,16 @@ import { ListCompanyErpConfigsQueryDto } from "./dto/list-company-erp-configs-qu
 import { SendSapDepositDto } from "./dto/send-sap-deposit.dto"
 import { UpdateCompanyErpConfigDto } from "./dto/update-company-erp-config.dto"
 import { CompanyErpConfig } from "./entities/company-erp-config.entity"
+import { UserErpSession } from "./entities/user-erp-session.entity"
 import {
   ErpReferenceResponse,
   PublicCompanyErpConfig,
-  PublicErpShipmentResult
+  PublicErpShipmentResult,
+  PublicSapErpSession,
+  PublicSapSessionStatus
 } from "./interfaces/erp.interfaces"
-
-type JsonRequestResponse = {
-  statusCode: number
-  headers: IncomingHttpHeaders
-  bodyText: string
-  bodyJson: Record<string, unknown> | null
-}
-
-class ExternalRequestError extends Error {
-  constructor(
-    message: string,
-    readonly statusCode?: number,
-    readonly responsePayload?: Record<string, unknown> | null
-  ) {
-    super(message)
-    this.name = "ExternalRequestError"
-  }
-}
+import { SapLoginDto } from "./sap/dto/sap-login.dto"
+import { ExternalRequestError, SapB1Service } from "./sap/sap-b1.service"
 
 @Injectable()
 export class ErpService {
@@ -65,7 +48,10 @@ export class ErpService {
     private readonly reconciliationRepository: Repository<Reconciliation>,
     @InjectRepository(CompanyErpConfig)
     private readonly companyErpConfigRepository: Repository<CompanyErpConfig>,
-    configService: ConfigService
+    @InjectRepository(UserErpSession)
+    private readonly userErpSessionRepository: Repository<UserErpSession>,
+    configService: ConfigService,
+    private readonly sapB1Service: SapB1Service
   ) {
     this.credentialSecret =
       configService.get<string>("ERP_CREDENTIAL_SECRET")?.trim() ||
@@ -150,7 +136,7 @@ export class ErpService {
     })
 
     this.ensureSupportedErpType(erpConfig.erpType)
-    this.validateSapConfig(erpConfig, true)
+    this.validateSapConfig(erpConfig, false)
 
     try {
       return this.companyErpConfigRepository.manager.transaction(async (manager) => {
@@ -239,7 +225,7 @@ export class ErpService {
         throw new BadRequestException("Una configuracion predeterminada no puede quedar inactiva.")
       }
 
-      this.validateSapConfig(config, !Boolean(config.dbPasswordEncrypted))
+      this.validateSapConfig(config, false)
 
       try {
         if (config.isDefault) {
@@ -272,13 +258,147 @@ export class ErpService {
     })
   }
 
-  async sendSapDeposit(actor: AuthUser, payload: SendSapDepositDto): Promise<PublicErpShipmentResult> {
-    if (actor.roleCode !== Role.ADMIN && !isSuperAdminRole(actor.roleCode)) {
-      throw new ForbiddenException("Solo admin y super admin pueden enviar depositos al ERP.")
+  async loginSapSession(actor: AuthUser, payload: SapLoginDto): Promise<PublicSapErpSession> {
+    const [config, user] = await Promise.all([
+      this.requireConfigForActor(actor, payload.companyErpConfigId),
+      this.userRepository.findOne({ where: { id: actor.id } })
+    ])
+
+    if (!user) {
+      throw new NotFoundException("Usuario no encontrado.")
     }
 
-    const [reconciliation, config, sender] = await Promise.all([
-      this.reconciliationRepository.findOne({
+    this.ensureSupportedErpType(config.erpType)
+    this.validateSapConfig(config, false)
+    this.ensureActiveConfig(config)
+
+    try {
+      const loginResult = await this.sapB1Service.login(config, {
+        username: this.normalizeRequired(payload.username, "username"),
+        password: payload.password
+      })
+
+      const repository = this.userErpSessionRepository
+      const existing = await repository.findOne({
+        where: {
+          user: { id: user.id },
+          companyErpConfig: { id: config.id }
+        },
+        relations: {
+          user: true,
+          companyErpConfig: true
+        }
+      })
+      const now = new Date()
+      const session = existing ?? repository.create({ user, companyErpConfig: config })
+
+      session.erpType = config.erpType
+      session.username = this.normalizeRequired(payload.username, "username")
+      session.sessionCookieEncrypted = encryptText(loginResult.cookieHeader, this.credentialSecret)
+      session.expiresAt = loginResult.expiresAt
+      session.lastValidatedAt = now
+      session.invalidatedAt = null
+
+      const saved = await repository.save(session)
+      saved.companyErpConfig = config
+
+      return this.toPublicSapSession(saved, "active", now)
+    } catch (error) {
+      const mapped = this.mapExternalError(error)
+      throw mapped.exception
+    }
+  }
+
+  async getSapSessionStatus(
+    actor: AuthUser,
+    companyErpConfigId: number,
+    validateRemote: boolean
+  ): Promise<PublicSapErpSession> {
+    const config = await this.requireConfigForActor(actor, companyErpConfigId)
+    const session = await this.userErpSessionRepository.findOne({
+      where: {
+        user: { id: actor.id },
+        companyErpConfig: { id: config.id }
+      },
+      relations: {
+        companyErpConfig: true
+      }
+    })
+    const checkedAt = new Date()
+
+    if (!session) {
+      return this.toPublicSapSessionPlaceholder(config, "not_authenticated", checkedAt)
+    }
+
+    session.companyErpConfig = config
+
+    if (session.invalidatedAt) {
+      return this.toPublicSapSession(session, "logged_out", checkedAt)
+    }
+
+    if (session.expiresAt && session.expiresAt.getTime() <= checkedAt.getTime()) {
+      session.invalidatedAt = checkedAt
+      await this.userErpSessionRepository.save(session)
+      return this.toPublicSapSession(session, "expired", checkedAt)
+    }
+
+    if (!validateRemote) {
+      return this.toPublicSapSession(session, "active", checkedAt)
+    }
+
+    try {
+      const cookieHeader = this.decryptSessionCookie(session.sessionCookieEncrypted)
+      await this.sapB1Service.checkSession(config, cookieHeader)
+      session.lastValidatedAt = checkedAt
+      await this.userErpSessionRepository.save(session)
+      return this.toPublicSapSession(session, "active", checkedAt)
+    } catch {
+      session.invalidatedAt = checkedAt
+      await this.userErpSessionRepository.save(session)
+      return this.toPublicSapSession(session, "invalid", checkedAt)
+    }
+  }
+
+  async logoutSapSession(
+    actor: AuthUser,
+    companyErpConfigId: number
+  ): Promise<PublicSapErpSession> {
+    const config = await this.requireConfigForActor(actor, companyErpConfigId)
+    const session = await this.userErpSessionRepository.findOne({
+      where: {
+        user: { id: actor.id },
+        companyErpConfig: { id: config.id }
+      },
+      relations: {
+        companyErpConfig: true
+      }
+    })
+    const checkedAt = new Date()
+
+    if (!session) {
+      return this.toPublicSapSessionPlaceholder(config, "not_authenticated", checkedAt)
+    }
+
+    session.companyErpConfig = config
+    session.invalidatedAt = checkedAt
+    await this.userErpSessionRepository.save(session)
+
+    return this.toPublicSapSession(session, "logged_out", checkedAt)
+  }
+
+  async sendSapDeposit(actor: AuthUser, payload: SendSapDepositDto): Promise<PublicErpShipmentResult> {
+    const config = await this.requireConfigForActor(actor, payload.companyErpConfigId)
+    const sender = await this.userRepository.findOne({
+      where: { id: actor.id }
+    })
+
+    if (!sender) {
+      throw new NotFoundException("Usuario ejecutor no encontrado.")
+    }
+
+    let reconciliation: Reconciliation | null = null
+    if (payload.reconciliationId) {
+      reconciliation = await this.reconciliationRepository.findOne({
         where: { id: payload.reconciliationId },
         relations: {
           user: {
@@ -287,49 +407,38 @@ export class ErpService {
           userBank: true,
           layout: true
         }
-      }),
-      this.companyErpConfigRepository.findOne({
-        where: { id: payload.companyErpConfigId },
-        relations: { company: true }
-      }),
-      this.userRepository.findOne({
-        where: { id: actor.id }
       })
-    ])
 
-    if (!reconciliation) {
-      throw new NotFoundException("Conciliacion no encontrada.")
-    }
-    if (!config) {
-      throw new NotFoundException("Configuracion ERP no encontrada.")
-    }
-    if (!sender) {
-      throw new NotFoundException("Usuario ejecutor no encontrado.")
-    }
+      if (!reconciliation) {
+        throw new NotFoundException("Conciliacion no encontrada.")
+      }
 
-    this.ensureActorCanAccessReconciliation(actor, reconciliation)
+      this.ensureActorCanAccessReconciliation(actor, reconciliation)
 
-    if (!config.active) {
-      throw new BadRequestException("La configuracion ERP seleccionada esta inactiva.")
-    }
-
-    if (config.company.id !== reconciliation.user.company.id) {
-      throw new BadRequestException(
-        "La configuracion ERP no pertenece a la misma empresa de la conciliacion."
-      )
+      if (config.company.id !== reconciliation.user.company.id) {
+        throw new BadRequestException(
+          "La configuracion ERP no pertenece a la misma empresa de la conciliacion."
+        )
+      }
     }
 
     this.ensureSupportedErpType(config.erpType)
     this.validateSapConfig(config, false)
+    this.ensureActiveConfig(config)
 
-    const endpoint = this.joinUrl(config.serviceLayerUrl, "Deposits")
+    const session = await this.requireActiveSapSession(actor, config)
+    const endpoint = this.sapB1Service.joinUrl(config.serviceLayerUrl, "Deposits")
+
     try {
-      const sapResponse = await this.postSapDeposit(config, payload.payload)
+      const cookieHeader = this.decryptSessionCookie(session.sessionCookieEncrypted)
+      const sapResponse = await this.sapB1Service.postDeposit(config, cookieHeader, payload.payload)
       const now = new Date()
+      session.lastValidatedAt = now
+      await this.userErpSessionRepository.save(session)
 
       return {
         id: 0,
-        reconciliationId: reconciliation.id,
+        reconciliationId: reconciliation?.id ?? null,
         companyErpConfigId: config.id,
         companyErpConfigName: config.name,
         documentType: "deposit",
@@ -340,7 +449,7 @@ export class ErpService {
         errorMessage: null,
         externalDocEntry: this.extractExternalReference(
           sapResponse.bodyJson,
-          ["DocEntry", "AbsoluteEntry"]
+          ["DocEntry", "AbsoluteEntry", "AbsEntry"]
         ),
         externalDocNum: this.extractExternalReference(
           sapResponse.bodyJson,
@@ -350,6 +459,11 @@ export class ErpService {
         updatedAt: now
       }
     } catch (error) {
+      if (error instanceof ExternalRequestError && [401, 403].includes(error.statusCode ?? 0)) {
+        session.invalidatedAt = new Date()
+        await this.userErpSessionRepository.save(session)
+      }
+
       const mapped = this.mapExternalError(error)
       throw mapped.exception
     }
@@ -390,6 +504,61 @@ export class ErpService {
     return actor.companyId
   }
 
+  private async requireConfigForActor(
+    actor: AuthUser,
+    companyErpConfigId: number
+  ): Promise<CompanyErpConfig> {
+    const config = await this.companyErpConfigRepository.findOne({
+      where: { id: companyErpConfigId },
+      relations: { company: true }
+    })
+
+    if (!config) {
+      throw new NotFoundException("Configuracion ERP no encontrada.")
+    }
+
+    if (!isSuperAdminRole(actor.roleCode) && config.company.id !== actor.companyId) {
+      throw new ForbiddenException("No podes usar configuraciones ERP de otra empresa.")
+    }
+
+    return config
+  }
+
+  private ensureActiveConfig(config: CompanyErpConfig) {
+    if (!config.active) {
+      throw new BadRequestException("La configuracion ERP seleccionada esta inactiva.")
+    }
+  }
+
+  private async requireActiveSapSession(
+    actor: AuthUser,
+    config: CompanyErpConfig
+  ): Promise<UserErpSession> {
+    const session = await this.userErpSessionRepository.findOne({
+      where: {
+        user: { id: actor.id },
+        companyErpConfig: { id: config.id }
+      },
+      relations: {
+        companyErpConfig: true
+      }
+    })
+    const now = new Date()
+
+    if (!session || session.invalidatedAt) {
+      throw new BadRequestException("Debes iniciar sesion en SAP antes de enviar el deposito.")
+    }
+
+    if (session.expiresAt && session.expiresAt.getTime() <= now.getTime()) {
+      session.invalidatedAt = now
+      await this.userErpSessionRepository.save(session)
+      throw new BadRequestException("La sesion de SAP expiro. Volve a iniciar sesion.")
+    }
+
+    session.companyErpConfig = config
+    return session
+  }
+
   private async requireCompany(companyId: number): Promise<Company> {
     const company = await this.companyRepository.findOne({
       where: { id: companyId }
@@ -415,11 +584,7 @@ export class ErpService {
 
   private validateSapConfig(config: CompanyErpConfig, requirePassword: boolean) {
     const requiredFields: Array<[string | null, string]> = [
-      [config.sapUsername, "sapUsername"],
       [config.dbName, "dbName"],
-      [config.cmpName, "cmpName"],
-      [config.serverNode, "serverNode"],
-      [config.dbUser, "dbUser"],
       [config.serviceLayerUrl, "serviceLayerUrl"],
       [config.tlsVersion, "tlsVersion"]
     ]
@@ -441,6 +606,10 @@ export class ErpService {
     }
 
     if (actor.roleCode === Role.ADMIN && reconciliation.user.company.id === actor.companyId) {
+      return
+    }
+
+    if (isGestorRole(actor.roleCode) && reconciliation.user.id === actor.id) {
       return
     }
 
@@ -500,6 +669,42 @@ export class ErpService {
     }
   }
 
+  private toPublicSapSession(
+    session: UserErpSession,
+    status: PublicSapSessionStatus,
+    checkedAt: Date
+  ): PublicSapErpSession {
+    return {
+      companyErpConfigId: session.companyErpConfig.id,
+      companyErpConfigName: session.companyErpConfig.name,
+      erpType: session.erpType,
+      authenticated: status === "active",
+      status,
+      username: session.username,
+      expiresAt: session.expiresAt,
+      lastValidatedAt: session.lastValidatedAt,
+      checkedAt
+    }
+  }
+
+  private toPublicSapSessionPlaceholder(
+    config: CompanyErpConfig,
+    status: PublicSapSessionStatus,
+    checkedAt: Date
+  ): PublicSapErpSession {
+    return {
+      companyErpConfigId: config.id,
+      companyErpConfigName: config.name,
+      erpType: config.erpType,
+      authenticated: false,
+      status,
+      username: null,
+      expiresAt: null,
+      lastValidatedAt: null,
+      checkedAt
+    }
+  }
+
   private normalizeRequired(value: string, field: string): string {
     const trimmed = value.trim()
     if (!trimmed) {
@@ -537,214 +742,16 @@ export class ErpService {
     return JSON.parse(JSON.stringify(value)) as Record<string, unknown>
   }
 
-  private joinUrl(baseUrl: string | null, path: string): string {
-    if (!baseUrl) {
-      throw new BadRequestException("La configuracion ERP no tiene serviceLayerUrl.")
-    }
-
-    return `${baseUrl.replace(/\/+$/, "")}/${path.replace(/^\/+/, "")}`
-  }
-
-  private async postSapDeposit(
-    config: CompanyErpConfig,
-    payload: Record<string, unknown>
-  ): Promise<JsonRequestResponse> {
-    const loginResponse = await this.performJsonRequest(this.joinUrl(config.serviceLayerUrl, "Login"), {
-      method: "POST",
-      body: {
-        CompanyDB: config.dbName,
-        UserName: config.sapUsername ?? config.dbUser,
-        Password: this.decryptCredential(config.dbPasswordEncrypted)
-      },
-      headers: {
-        Accept: "application/json"
-      },
-      tlsVersion: config.tlsVersion,
-      allowSelfSigned: config.allowSelfSigned
-    })
-
-    const cookieHeader = this.buildCookieHeader(loginResponse.headers["set-cookie"])
-    if (!cookieHeader) {
-      throw new ExternalRequestError("SAP no devolvio una sesion valida al autenticar.")
-    }
-
-    return this.performJsonRequest(this.joinUrl(config.serviceLayerUrl, "Deposits"), {
-      method: "POST",
-      body: payload,
-      headers: {
-        Accept: "application/json",
-        Cookie: cookieHeader
-      },
-      tlsVersion: config.tlsVersion,
-      allowSelfSigned: config.allowSelfSigned
-    })
-  }
-
-  private decryptCredential(value: string | null): string {
+  private decryptSessionCookie(value: string | null): string {
     if (!value) {
-      throw new BadRequestException("La configuracion ERP no tiene password guardada.")
+      throw new BadRequestException("No hay una sesion SAP guardada para este usuario.")
     }
 
     try {
       return decryptText(value, this.credentialSecret)
     } catch {
-      throw new BadRequestException("No se pudo descifrar la password del ERP configurado.")
+      throw new BadRequestException("No se pudo descifrar la sesion SAP guardada.")
     }
-  }
-
-  private buildCookieHeader(setCookieHeader?: string[] | string): string {
-    const entries = Array.isArray(setCookieHeader)
-      ? setCookieHeader
-      : typeof setCookieHeader === "string"
-        ? [setCookieHeader]
-        : []
-
-    return entries
-      .map((item) => item.split(";")[0]?.trim())
-      .filter((item): item is string => Boolean(item))
-      .join("; ")
-  }
-
-  private async performJsonRequest(
-    targetUrl: string,
-    options: {
-      method: "POST" | "GET"
-      body?: Record<string, unknown>
-      headers?: Record<string, string>
-      tlsVersion?: string | null
-      allowSelfSigned?: boolean
-    }
-  ): Promise<JsonRequestResponse> {
-    const url = new URL(targetUrl)
-    const isHttps = url.protocol === "https:"
-    const client = isHttps ? https : http
-    const requestBody = options.body ? JSON.stringify(options.body) : null
-    const tlsVersion = this.resolveTlsVersion(options.tlsVersion)
-
-    return new Promise<JsonRequestResponse>((resolve, reject) => {
-      const request = client.request(
-        {
-          protocol: url.protocol,
-          hostname: url.hostname,
-          port: url.port ? Number(url.port) : undefined,
-          path: `${url.pathname}${url.search}`,
-          method: options.method,
-          headers: {
-            "Content-Type": "application/json",
-            ...(requestBody ? { "Content-Length": String(Buffer.byteLength(requestBody)) } : {}),
-            ...options.headers
-          },
-          ...(isHttps
-            ? {
-                rejectUnauthorized: !(options.allowSelfSigned ?? false),
-                ...(tlsVersion
-                  ? {
-                      minVersion: tlsVersion,
-                      maxVersion: tlsVersion
-                    }
-                  : {})
-              }
-            : {})
-        },
-        (response) => {
-          const chunks: Buffer[] = []
-          response.on("data", (chunk) => {
-            chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk))
-          })
-          response.on("end", () => {
-            const bodyText = Buffer.concat(chunks).toString("utf8")
-            const bodyJson = this.tryParseJson(bodyText)
-            const statusCode = response.statusCode ?? 0
-            const result: JsonRequestResponse = {
-              statusCode,
-              headers: response.headers,
-              bodyText,
-              bodyJson
-            }
-
-            if (statusCode >= 200 && statusCode < 300) {
-              resolve(result)
-              return
-            }
-
-            const sapError = this.extractSapErrorMessage(bodyJson)
-            reject(
-              new ExternalRequestError(
-                sapError || `SAP respondio con estado ${statusCode}.`,
-                statusCode,
-                bodyJson
-              )
-            )
-          })
-        }
-      )
-
-      request.setTimeout(15000, () => {
-        request.destroy(new ExternalRequestError("Tiempo de espera agotado al conectar con SAP."))
-      })
-
-      request.on("error", (error) => {
-        if (error instanceof ExternalRequestError) {
-          reject(error)
-          return
-        }
-
-        reject(new ExternalRequestError(error.message))
-      })
-
-      if (requestBody) {
-        request.write(requestBody)
-      }
-
-      request.end()
-    })
-  }
-
-  private tryParseJson(raw: string): Record<string, unknown> | null {
-    if (!raw) return null
-
-    try {
-      return JSON.parse(raw) as Record<string, unknown>
-    } catch {
-      return { raw }
-    }
-  }
-
-  private resolveTlsVersion(value?: string | null): "TLSv1" | "TLSv1.1" | "TLSv1.2" | "TLSv1.3" | undefined {
-    switch (value) {
-      case "1.0":
-        return "TLSv1"
-      case "1.1":
-        return "TLSv1.1"
-      case "1.2":
-        return "TLSv1.2"
-      case "1.3":
-        return "TLSv1.3"
-      default:
-        return undefined
-    }
-  }
-
-  private extractSapErrorMessage(payload: Record<string, unknown> | null): string | null {
-    if (!payload) return null
-
-    const directMessage = payload.message
-    if (typeof directMessage === "string" && directMessage.trim()) {
-      return directMessage.trim()
-    }
-
-    const errorNode = payload.error
-    if (!errorNode || typeof errorNode !== "object") {
-      return null
-    }
-
-    const errorMessageNode = (errorNode as Record<string, unknown>).message
-    if (!errorMessageNode || typeof errorMessageNode !== "object") {
-      return null
-    }
-
-    const valueNode = (errorMessageNode as Record<string, unknown>).value
-    return typeof valueNode === "string" && valueNode.trim() ? valueNode.trim() : null
   }
 
   private extractExternalReference(
