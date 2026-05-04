@@ -29,10 +29,6 @@ import { CreateTemplateLayoutDto } from "./dto/create-template-layout.dto";
 import { CompanyBankAccount } from "./entities/company-bank-account.entity";
 import { ConciliationSystem } from "./entities/conciliation-system.entity";
 import { ListBankStatementsQueryDto } from "./dto/list-bank-statements-query.dto";
-import { ListReconciliationsQueryDto } from "./dto/list-reconciliations-query.dto";
-import { ParseFileDto } from "./dto/parse-file.dto";
-import { PreviewReconciliationDto } from "./dto/preview-reconciliation.dto";
-import { SaveReconciliationDto } from "./dto/save-reconciliation.dto";
 import { UpdateConciliationSystemDto } from "./dto/update-conciliation-system.dto";
 import { UpdateBankDto } from "./dto/update-bank.dto";
 import { UpdateLayoutDto } from "./dto/update-layout.dto";
@@ -42,8 +38,6 @@ import { BankStatement } from "./entities/bank-statement.entity";
 import { BankStatementRow } from "./entities/bank-statement-row.entity";
 import { ReconciliationLayoutMapping } from "./entities/reconciliation-layout-mapping.entity";
 import { ReconciliationLayout } from "./entities/reconciliation-layout.entity";
-import { ReconciliationMatch } from "./entities/reconciliation-match.entity";
-import { Reconciliation } from "./entities/reconciliation.entity";
 import { TemplateLayoutMapping } from "./entities/template-layout-mapping.entity";
 import { TemplateLayout } from "./entities/template-layout.entity";
 import { BankTemplateAvailability } from "./entities/bank-template-availability.entity";
@@ -56,7 +50,6 @@ import {
   ConciliationPreviewResponse,
   ConciliationPreviewRow,
   ConciliationRuleResult,
-  DeleteReconciliationResponse,
   DeleteUserBankResponse,
   PublicBankStatementDetail,
   PublicBankStatementSummary,
@@ -66,15 +59,11 @@ import {
   PublicGestorAssignmentCatalog,
   PublicLayout,
   PublicLayoutMapping,
-  PublicReconciliationDetail,
-  PublicReconciliationSummary,
   SyncGestorBankAssignmentResponse,
   PublicTemplateLayout,
   PublicUserBankDeletionAccount,
   PublicUserBankDeletionLayout,
   PublicUserBankDeletionPreview,
-  ReconciliationSource,
-  ReconciliationSnapshot,
   PublicUserBank,
   PublicUserBankSummary,
   PublicUserBankWithLayouts,
@@ -111,11 +100,6 @@ type AccessibleUserScope = {
   companyId?: number;
 };
 
-type RowMergeResult = {
-  rows: ConciliationPreviewRow[];
-  canonicalByRowId: Map<string, ConciliationPreviewRow>;
-};
-
 @Injectable()
 export class ConciliationService {
   constructor(
@@ -140,11 +124,7 @@ export class ConciliationService {
     @InjectRepository(ReconciliationLayout)
     private readonly layoutRepository: Repository<ReconciliationLayout>,
     @InjectRepository(ReconciliationLayoutMapping)
-    private readonly layoutMappingRepository: Repository<ReconciliationLayoutMapping>,
-    @InjectRepository(Reconciliation)
-    private readonly reconciliationRepository: Repository<Reconciliation>,
-    @InjectRepository(ReconciliationMatch)
-    private readonly reconciliationMatchRepository: Repository<ReconciliationMatch>
+    private readonly layoutMappingRepository: Repository<ReconciliationLayoutMapping>
   ) {}
 
   async listCatalog(actor: AuthUser, requestedUserId?: number): Promise<PublicUserBankWithLayouts[]> {
@@ -1340,97 +1320,6 @@ export class ConciliationService {
     });
   }
 
-  async buildPreview(
-    actor: AuthUser,
-    payload: PreviewReconciliationDto,
-    systemFile?: UploadedMemoryFile,
-    bankFile?: UploadedMemoryFile
-  ): Promise<ConciliationPreviewResponse> {
-    const existingReconciliation = payload.reconciliationId
-      ? await this.requireAccessibleReconciliation(actor, payload.reconciliationId)
-      : null;
-    const resolvedUserBankId = existingReconciliation?.userBank.id ?? payload.userBankId;
-    const resolvedLayoutId = existingReconciliation?.layout.id ?? payload.layoutId;
-    const resolvedAccountId =
-      existingReconciliation?.companyBankAccount?.id ?? payload.companyBankAccountId;
-
-    const { userBank, layout, companyBankAccount } = await this.requireAccessibleLayoutAndAccount(
-      actor,
-      resolvedUserBankId,
-      resolvedLayoutId,
-      resolvedAccountId
-    );
-
-    const previousSnapshot = existingReconciliation ? this.readSnapshot(existingReconciliation) : null;
-
-    if (!systemFile?.buffer && !previousSnapshot?.systemRows?.length) {
-      throw new BadRequestException("Debes subir el Excel del sistema o cargar una conciliacion guardada.");
-    }
-    if (!bankFile?.buffer && !previousSnapshot?.bankRows?.length) {
-      throw new BadRequestException("Debes subir el Excel del banco o cargar una conciliacion guardada.");
-    }
-
-    const systemRows = systemFile?.buffer
-      ? this.extractRowsFromWorkbook(
-          this.readWorkbook(systemFile.buffer, systemFile.originalname),
-          layout.mappings,
-          "system"
-        )
-      : previousSnapshot?.systemRows ?? [];
-    const bankRows = bankFile?.buffer
-      ? this.extractRowsFromWorkbook(
-          this.readWorkbook(bankFile.buffer, bankFile.originalname),
-          layout.mappings,
-          "bank"
-        )
-      : previousSnapshot?.bankRows ?? [];
-    const autoMatches = this.buildAutoMatches(layout, systemRows, bankRows);
-    const matchedSystemIds = new Set(autoMatches.map((item) => item.systemRowId));
-    const matchedBankIds = new Set(autoMatches.map((item) => item.bankRowId));
-    const unmatchedSystemRows = systemRows.filter((row) => !matchedSystemIds.has(row.rowId));
-    const unmatchedBankRows = bankRows.filter((row) => !matchedBankIds.has(row.rowId));
-    const metrics = this.buildMetrics(systemRows.length, bankRows.length, autoMatches.length, 0);
-
-    return {
-      userBank: this.toPublicUserBankSummary(userBank),
-      companyBankAccount: this.toPublicCompanyBankAccountSummary(companyBankAccount),
-      layout: this.toPublicLayout(layout),
-      systemFileName: systemFile?.originalname ?? existingReconciliation?.systemFileName ?? "sistema_guardado",
-      bankFileName: bankFile?.originalname ?? existingReconciliation?.bankFileName ?? "banco_guardado",
-      systemRows,
-      bankRows,
-      autoMatches,
-      manualMatches: [],
-      unmatchedSystemRows,
-      unmatchedBankRows,
-      metrics
-    };
-  }
-
-  async parseFile(
-    actor: AuthUser,
-    payload: ParseFileDto,
-    file?: UploadedMemoryFile
-  ): Promise<{ rows: ConciliationPreviewRow[]; fileName: string }> {
-    if (!file?.buffer) {
-      throw new BadRequestException("Debes subir un archivo Excel.");
-    }
-
-    const { layout } = await this.requireAccessibleLayout(
-      actor,
-      payload.userBankId,
-      payload.layoutId
-    );
-
-    const workbook = this.readWorkbook(file.buffer, file.originalname);
-    const rows = this.extractRowsFromWorkbook(workbook, layout.mappings, payload.source);
-
-    return {
-      rows,
-      fileName: file.originalname
-    };
-  }
-
   async previewBankStatement(
     actor: AuthUser,
     payload: PreviewBankStatementDto,
@@ -1608,210 +1497,6 @@ export class ConciliationService {
       unmatchedSystemRows,
       unmatchedBankRows,
       metrics: this.buildMetrics(systemRows.length, bankRows.length, autoMatches.length, 0)
-    };
-  }
-
-  async saveReconciliation(
-    actor: AuthUser,
-    payload: SaveReconciliationDto
-  ): Promise<PublicReconciliationDetail> {
-    const { userBank, layout, companyBankAccount } = await this.requireAccessibleLayoutAndAccount(
-      actor,
-      payload.userBankId,
-      payload.layoutId,
-      payload.companyBankAccountId
-    );
-    const autoMatches = this.coercePreviewMatches(payload.autoMatches);
-    const manualMatches = this.coercePreviewMatches(payload.manualMatches);
-
-    if (payload.reconciliationId) {
-      return this.updateExistingReconciliation(
-        actor,
-        {
-          ...payload,
-          autoMatches,
-          manualMatches
-        },
-        userBank,
-        layout,
-        companyBankAccount
-      );
-    }
-
-    const snapshot = this.buildSnapshot(
-      userBank,
-      companyBankAccount,
-      layout,
-      payload.systemRows,
-      payload.bankRows,
-      autoMatches,
-      manualMatches
-    );
-    const comparisonPerformed = payload.comparisonPerformed ?? false;
-
-    return this.reconciliationRepository.manager.transaction(async (manager) => {
-      const reconciliationRepository = manager.getRepository(Reconciliation);
-      const userRepository = manager.getRepository(User);
-
-      const persistedActor = await userRepository.findOne({ where: { id: actor.id } });
-      if (!persistedActor) {
-        throw new NotFoundException("Usuario ejecutor no encontrado.");
-      }
-
-      const reconciliation = await reconciliationRepository.save(
-        reconciliationRepository.create({
-          user: persistedActor,
-          userBank,
-          companyBankAccount,
-          layout,
-          name: this.normalizeRequired(payload.name, "name"),
-          status: this.resolveReconciliationStatus(snapshot, comparisonPerformed),
-          updateCount: 0,
-          hasSystemData: snapshot.metrics.totalSystemRows > 0,
-          hasBankData: snapshot.metrics.totalBankRows > 0,
-          systemFileName: this.normalizeOptional(payload.systemFileName),
-          bankFileName: this.normalizeOptional(payload.bankFileName),
-          totalSystemRows: snapshot.metrics.totalSystemRows,
-          totalBankRows: snapshot.metrics.totalBankRows,
-          autoMatches: snapshot.metrics.autoMatches,
-          manualMatches: snapshot.metrics.manualMatches,
-          unmatchedSystem: snapshot.metrics.unmatchedSystem,
-          unmatchedBank: snapshot.metrics.unmatchedBank,
-          matchPercentage: snapshot.metrics.matchPercentage,
-          summarySnapshot: snapshot as unknown as Record<string, unknown>
-        })
-      );
-
-      await this.replaceReconciliationMatches(manager, reconciliation, snapshot);
-      return this.requirePersistedReconciliation(
-        manager,
-        reconciliation.id,
-        "No se pudo recuperar la conciliacion guardada."
-      );
-    });
-  }
-
-  async listReconciliations(
-    actor: AuthUser,
-    query: ListReconciliationsQueryDto
-  ): Promise<PublicReconciliationSummary[]> {
-    const reconciliations = await (await this.buildReconciliationQuery(actor, query)).getMany();
-    return reconciliations.map((item) => this.toPublicReconciliationSummary(item));
-  }
-
-  async getReconciliation(actor: AuthUser, id: number): Promise<PublicReconciliationDetail> {
-    const reconciliation = await this.requireAccessibleReconciliation(actor, id);
-    return this.toPublicReconciliationDetail(reconciliation);
-  }
-
-  async deleteReconciliationSource(
-    actor: AuthUser,
-    reconciliationId: number,
-    source: ReconciliationSource
-  ): Promise<PublicReconciliationDetail> {
-    if (source !== "system" && source !== "bank") {
-      throw new BadRequestException("La fuente a eliminar debe ser system o bank.");
-    }
-
-    const reconciliation = await this.requireAccessibleReconciliation(actor, reconciliationId);
-    const snapshot = this.readSnapshot(reconciliation);
-    const systemRows = source === "system" ? [] : snapshot.systemRows;
-    const bankRows = source === "bank" ? [] : snapshot.bankRows;
-    const nextSnapshot = this.buildSnapshot(
-      reconciliation.userBank,
-      reconciliation.companyBankAccount,
-      reconciliation.layout,
-      systemRows,
-      bankRows,
-      [],
-      []
-    );
-
-    return this.reconciliationRepository.manager.transaction(async (manager) => {
-      const reconciliationRepository = manager.getRepository(Reconciliation);
-
-      const target = await reconciliationRepository.findOne({
-        where: { id: reconciliationId },
-        relations: {
-          user: {
-            company: true
-          },
-          userBank: {
-            user: {
-              company: true
-            }
-          },
-          companyBankAccount: {
-            bank: true
-          },
-          layout: {
-            system: true,
-            mappings: true,
-            templateLayout: true
-          }
-        }
-      });
-
-      if (!target) {
-        throw new NotFoundException("Conciliacion no encontrada.");
-      }
-
-      this.ensureActorCanAccessTargetUser(actor, target.user);
-
-      target.status = this.resolveReconciliationStatus(nextSnapshot, false);
-      target.hasSystemData = nextSnapshot.metrics.totalSystemRows > 0;
-      target.hasBankData = nextSnapshot.metrics.totalBankRows > 0;
-      target.systemFileName = source === "system" ? null : target.systemFileName;
-      target.bankFileName = source === "bank" ? null : target.bankFileName;
-      target.totalSystemRows = nextSnapshot.metrics.totalSystemRows;
-      target.totalBankRows = nextSnapshot.metrics.totalBankRows;
-      target.autoMatches = nextSnapshot.metrics.autoMatches;
-      target.manualMatches = nextSnapshot.metrics.manualMatches;
-      target.unmatchedSystem = nextSnapshot.metrics.unmatchedSystem;
-      target.unmatchedBank = nextSnapshot.metrics.unmatchedBank;
-      target.matchPercentage = nextSnapshot.metrics.matchPercentage;
-      target.updateCount = (target.updateCount ?? 0) + 1;
-      target.summarySnapshot = nextSnapshot as unknown as Record<string, unknown>;
-
-      await reconciliationRepository.save(target);
-      await this.replaceReconciliationMatches(manager, target, nextSnapshot);
-
-      return this.requirePersistedReconciliation(
-        manager,
-        target.id,
-        "No se pudo recuperar la conciliacion luego de eliminar la fuente."
-      );
-    });
-  }
-
-  async deleteReconciliation(
-    actor: AuthUser,
-    reconciliationId: number
-  ): Promise<DeleteReconciliationResponse> {
-    const reconciliation = await this.requireAccessibleReconciliation(actor, reconciliationId);
-
-    await this.reconciliationRepository.manager.transaction(async (manager) => {
-      const repository = manager.getRepository(Reconciliation);
-      const target = await repository.findOne({
-        where: { id: reconciliationId },
-        relations: {
-          user: {
-            company: true
-          }
-        }
-      });
-
-      if (!target) {
-        throw new NotFoundException("Conciliacion no encontrada.");
-      }
-
-      this.ensureActorCanAccessTargetUser(actor, target.user);
-      await repository.remove(target);
-    });
-
-    return {
-      id: reconciliation.id,
-      message: "Conciliacion eliminada."
     };
   }
 
@@ -2002,53 +1687,6 @@ export class ConciliationService {
       syncedLayoutIds: sourceLayouts.map((layout) => layout.id),
       syncedAccountIds: (sourceBank.accounts ?? []).map((account) => account.id)
     };
-  }
-
-  private async buildReconciliationQuery(
-    actor: AuthUser,
-    query: ListReconciliationsQueryDto
-  ): Promise<SelectQueryBuilder<Reconciliation>> {
-    const scope = await this.resolveAccessibleUserScope(actor, query.userId);
-    const queryBuilder = this.reconciliationRepository
-      .createQueryBuilder("reconciliation")
-      .leftJoinAndSelect("reconciliation.user", "user")
-      .leftJoinAndSelect("user.company", "company")
-      .leftJoinAndSelect("reconciliation.userBank", "userBank")
-      .leftJoinAndSelect("reconciliation.companyBankAccount", "companyBankAccount")
-      .leftJoinAndSelect("reconciliation.layout", "layout")
-      .leftJoinAndSelect("layout.system", "system")
-      .leftJoinAndSelect("layout.templateLayout", "templateLayout")
-      .orderBy("reconciliation.createdAt", "DESC");
-
-    this.applyUserScopeToQuery(queryBuilder, scope, "user", "company");
-
-    if (query.userBankId) {
-      queryBuilder.andWhere("userBank.id = :userBankId", { userBankId: query.userBankId });
-    }
-
-    if (query.companyBankAccountId) {
-      queryBuilder.andWhere("companyBankAccount.id = :companyBankAccountId", {
-        companyBankAccountId: query.companyBankAccountId
-      });
-    }
-
-    if (query.layoutId) {
-      queryBuilder.andWhere("layout.id = :layoutId", { layoutId: query.layoutId });
-    }
-
-    if (query.dateFrom) {
-      queryBuilder.andWhere("reconciliation.createdAt >= :dateFrom", {
-        dateFrom: new Date(`${query.dateFrom}T00:00:00.000Z`)
-      });
-    }
-
-    if (query.dateTo) {
-      queryBuilder.andWhere("reconciliation.createdAt <= :dateTo", {
-        dateTo: new Date(`${query.dateTo}T23:59:59.999Z`)
-      });
-    }
-
-    return queryBuilder;
   }
 
   private async buildBankStatementQuery(
@@ -2301,425 +1939,6 @@ export class ConciliationService {
     };
   }
 
-  private async updateExistingReconciliation(
-    actor: AuthUser,
-    payload: SaveReconciliationDto & {
-      autoMatches: ConciliationPreviewMatch[];
-      manualMatches: ConciliationPreviewMatch[];
-    },
-    userBank: BankEntity,
-    layout: ReconciliationLayout,
-    companyBankAccount: CompanyBankAccount
-  ): Promise<PublicReconciliationDetail> {
-    return this.reconciliationRepository.manager.transaction(async (manager) => {
-      const reconciliationRepository = manager.getRepository(Reconciliation);
-
-      const reconciliation = await reconciliationRepository.findOne({
-        where: { id: payload.reconciliationId },
-        relations: {
-          user: {
-            company: true
-          },
-          userBank: {
-            user: {
-              company: true
-            }
-          },
-          companyBankAccount: {
-            bank: true
-          },
-          layout: {
-            system: true,
-            mappings: true,
-            templateLayout: true
-          }
-        }
-      });
-
-      if (!reconciliation) {
-        throw new NotFoundException("Conciliacion a actualizar no encontrada.");
-      }
-
-      this.ensureActorCanAccessTargetUser(actor, reconciliation.user);
-
-      if (reconciliation.userBank.id !== userBank.id || reconciliation.layout.id !== layout.id) {
-        throw new BadRequestException(
-          "La conciliacion seleccionada no corresponde al banco/plantilla actual."
-        );
-      }
-
-      const previousSnapshot = this.readSnapshot(reconciliation);
-      const mergedSystemRows = this.mergePreviewRows(
-        layout.mappings,
-        previousSnapshot.systemRows,
-        payload.systemRows
-      );
-      const mergedBankRows = this.mergePreviewRows(
-        layout.mappings,
-        previousSnapshot.bankRows,
-        payload.bankRows
-      );
-      const comparisonPerformed = payload.comparisonPerformed ?? false;
-      const mergedManualMatches = comparisonPerformed
-        ? this.mergeManualMatches(
-            layout.mappings,
-            mergedSystemRows,
-            mergedBankRows,
-            [...previousSnapshot.manualMatches, ...payload.manualMatches]
-          )
-        : [];
-      const lockedSystemIds = new Set(mergedManualMatches.map((item) => item.systemRowId));
-      const lockedBankIds = new Set(mergedManualMatches.map((item) => item.bankRowId));
-      const mergedAutoMatches = comparisonPerformed
-        ? this.buildAutoMatches(
-            layout,
-            mergedSystemRows.rows,
-            mergedBankRows.rows,
-            lockedSystemIds,
-            lockedBankIds
-          )
-        : [];
-      const snapshot = this.buildSnapshot(
-        userBank,
-        companyBankAccount,
-        layout,
-        mergedSystemRows.rows,
-        mergedBankRows.rows,
-        mergedAutoMatches,
-        mergedManualMatches
-      );
-
-      reconciliation.userBank = userBank;
-      reconciliation.companyBankAccount = companyBankAccount;
-      reconciliation.layout = layout;
-      reconciliation.name = this.normalizeRequired(payload.name, "name");
-      reconciliation.status = this.resolveReconciliationStatus(snapshot, comparisonPerformed);
-      reconciliation.hasSystemData = snapshot.metrics.totalSystemRows > 0;
-      reconciliation.hasBankData = snapshot.metrics.totalBankRows > 0;
-      reconciliation.systemFileName =
-        this.normalizeOptional(payload.systemFileName) ?? reconciliation.systemFileName;
-      reconciliation.bankFileName =
-        this.normalizeOptional(payload.bankFileName) ?? reconciliation.bankFileName;
-      reconciliation.totalSystemRows = snapshot.metrics.totalSystemRows;
-      reconciliation.totalBankRows = snapshot.metrics.totalBankRows;
-      reconciliation.autoMatches = snapshot.metrics.autoMatches;
-      reconciliation.manualMatches = snapshot.metrics.manualMatches;
-      reconciliation.unmatchedSystem = snapshot.metrics.unmatchedSystem;
-      reconciliation.unmatchedBank = snapshot.metrics.unmatchedBank;
-      reconciliation.matchPercentage = snapshot.metrics.matchPercentage;
-      reconciliation.updateCount = (reconciliation.updateCount ?? 0) + 1;
-      reconciliation.summarySnapshot = snapshot as unknown as Record<string, unknown>;
-
-      await reconciliationRepository.save(reconciliation);
-      await this.replaceReconciliationMatches(manager, reconciliation, snapshot);
-
-      return this.requirePersistedReconciliation(
-        manager,
-        reconciliation.id,
-        "No se pudo recuperar la conciliacion actualizada."
-      );
-    });
-  }
-
-  private readSnapshot(reconciliation: Reconciliation): ReconciliationSnapshot {
-    const snapshot = reconciliation.summarySnapshot as ReconciliationSnapshot | null;
-    if (
-      !snapshot ||
-      !Array.isArray(snapshot.systemRows) ||
-      !Array.isArray(snapshot.bankRows) ||
-      !Array.isArray(snapshot.autoMatches) ||
-      !Array.isArray(snapshot.manualMatches)
-    ) {
-      throw new BadRequestException(
-        "La conciliacion seleccionada no tiene un snapshot reutilizable para actualizar."
-      );
-    }
-
-    return {
-      ...snapshot,
-      userBank: snapshot.userBank ?? this.toPublicUserBankSummary(reconciliation.userBank),
-      companyBankAccount:
-        snapshot.companyBankAccount ??
-        this.toPublicCompanyBankAccountSummary(
-          reconciliation.companyBankAccount ??
-            this.throwMissingCompanyBankAccountForSnapshot(reconciliation.id)
-        ),
-      layout: snapshot.layout ?? this.toPublicLayout(reconciliation.layout)
-    };
-  }
-
-  private coercePreviewMatches(
-    matches: SaveReconciliationDto["autoMatches"] | SaveReconciliationDto["manualMatches"]
-  ): ConciliationPreviewMatch[] {
-    return matches.map((match) => ({
-      systemRowId: match.systemRowId,
-      bankRowId: match.bankRowId,
-      systemRowNumber: match.systemRowNumber,
-      bankRowNumber: match.bankRowNumber,
-      score: match.score,
-      status: match.status,
-      ruleResults: match.ruleResults.map((rule) => ({
-        fieldKey: rule.fieldKey,
-        label: rule.label,
-        passed: rule.passed,
-        compareOperator: rule.compareOperator as CompareOperator,
-        systemValue: rule.systemValue ?? null,
-        bankValue: rule.bankValue ?? null
-      }))
-    }));
-  }
-
-  private buildSnapshot(
-    userBank: BankEntity,
-    companyBankAccount: CompanyBankAccount,
-    layout: ReconciliationLayout,
-    systemRows: ConciliationPreviewRow[],
-    bankRows: ConciliationPreviewRow[],
-    autoMatches: ConciliationPreviewMatch[],
-    manualMatches: ConciliationPreviewMatch[]
-  ): ReconciliationSnapshot {
-    const matchedSystemIds = new Set<string>();
-    const matchedBankIds = new Set<string>();
-
-    for (const match of [...autoMatches, ...manualMatches]) {
-      matchedSystemIds.add(match.systemRowId);
-      matchedBankIds.add(match.bankRowId);
-    }
-
-    const sortedSystemRows = this.sortPreviewRows(systemRows);
-    const sortedBankRows = this.sortPreviewRows(bankRows);
-    const unmatchedSystemRows = sortedSystemRows.filter((row) => !matchedSystemIds.has(row.rowId));
-    const unmatchedBankRows = sortedBankRows.filter((row) => !matchedBankIds.has(row.rowId));
-    const metrics = this.buildMetrics(
-      sortedSystemRows.length,
-      sortedBankRows.length,
-      autoMatches.length,
-      manualMatches.length
-    );
-
-    return {
-      userBank: this.toPublicUserBankSummary(userBank),
-      companyBankAccount: this.toPublicCompanyBankAccountSummary(companyBankAccount),
-      layout: this.toPublicLayout(layout),
-      systemRows: sortedSystemRows,
-      bankRows: sortedBankRows,
-      autoMatches: this.sortPreviewMatches(autoMatches),
-      manualMatches: this.sortPreviewMatches(manualMatches),
-      unmatchedSystemRows,
-      unmatchedBankRows,
-      metrics
-    };
-  }
-
-  private mergePreviewRows(
-    mappings: ReconciliationLayoutMapping[],
-    existingRows: ConciliationPreviewRow[],
-    incomingRows: ConciliationPreviewRow[]
-  ): RowMergeResult {
-    const rows = [...existingRows];
-    const canonicalByRowId = new Map<string, ConciliationPreviewRow>();
-    const buckets = new Map<string, ConciliationPreviewRow[]>();
-    const reusedCountBySignature = new Map<string, number>();
-
-    for (const row of existingRows) {
-      canonicalByRowId.set(row.rowId, row);
-      const signature = this.buildRowSignature(mappings, row);
-      const bucket = buckets.get(signature) ?? [];
-      bucket.push(row);
-      buckets.set(signature, bucket);
-    }
-
-    for (const row of incomingRows) {
-      const signature = this.buildRowSignature(mappings, row);
-      const bucket = buckets.get(signature) ?? [];
-      const reusedCount = reusedCountBySignature.get(signature) ?? 0;
-      const existingCanonical = reusedCount < bucket.length ? bucket[reusedCount] : undefined;
-
-      if (existingCanonical) {
-        canonicalByRowId.set(row.rowId, existingCanonical);
-        reusedCountBySignature.set(signature, reusedCount + 1);
-        continue;
-      }
-
-      canonicalByRowId.set(row.rowId, row);
-      bucket.push(row);
-      buckets.set(signature, bucket);
-      reusedCountBySignature.set(signature, reusedCount + 1);
-      rows.push(row);
-    }
-
-    return {
-      rows: this.sortPreviewRows(rows),
-      canonicalByRowId
-    };
-  }
-
-  private mergeManualMatches(
-    mappings: ReconciliationLayoutMapping[],
-    systemRows: RowMergeResult,
-    bankRows: RowMergeResult,
-    matches: ConciliationPreviewMatch[]
-  ): ConciliationPreviewMatch[] {
-    const uniqueMatches = new Map<string, ConciliationPreviewMatch>();
-
-    for (const match of matches) {
-      const systemRow = systemRows.canonicalByRowId.get(match.systemRowId);
-      const bankRow = bankRows.canonicalByRowId.get(match.bankRowId);
-
-      if (!systemRow || !bankRow) {
-        continue;
-      }
-
-      const pairKey = `${systemRow.rowId}::${bankRow.rowId}`;
-
-      if (uniqueMatches.has(pairKey)) {
-        continue;
-      }
-
-      const evaluation = this.evaluateMatch(
-        this.sortMappings(mappings).filter((item) => item.active),
-        systemRow,
-        bankRow
-      );
-
-      uniqueMatches.set(pairKey, {
-        systemRowId: systemRow.rowId,
-        bankRowId: bankRow.rowId,
-        systemRowNumber: systemRow.rowNumber,
-        bankRowNumber: bankRow.rowNumber,
-        score: this.roundNumber(evaluation.score),
-        status: "manual",
-        ruleResults: evaluation.ruleResults
-      });
-    }
-
-    return this.sortPreviewMatches([...uniqueMatches.values()]);
-  }
-
-  private async replaceReconciliationMatches(
-    manager: EntityManager,
-    reconciliation: Reconciliation,
-    snapshot: ReconciliationSnapshot
-  ): Promise<void> {
-    const reconciliationMatchRepository = manager.getRepository(ReconciliationMatch);
-    const systemRowMap = new Map(snapshot.systemRows.map((row) => [row.rowId, row]));
-    const bankRowMap = new Map(snapshot.bankRows.map((row) => [row.rowId, row]));
-
-    await reconciliationMatchRepository
-      .createQueryBuilder()
-      .delete()
-      .from(ReconciliationMatch)
-      .where("conciliacion_id = :reconciliationId", { reconciliationId: reconciliation.id })
-      .execute();
-
-    const matches: ReconciliationMatch[] = [];
-
-    for (const match of snapshot.autoMatches) {
-      matches.push(
-        reconciliationMatchRepository.create({
-          reconciliation,
-          status: "auto",
-          systemRowId: match.systemRowId,
-          bankRowId: match.bankRowId,
-          systemRowNumber: match.systemRowNumber,
-          bankRowNumber: match.bankRowNumber,
-          score: match.score,
-          details: this.toJsonRecord({ ruleResults: match.ruleResults }),
-          systemPayload: this.toJsonRecord(systemRowMap.get(match.systemRowId) ?? null),
-          bankPayload: this.toJsonRecord(bankRowMap.get(match.bankRowId) ?? null)
-        })
-      );
-    }
-
-    for (const match of snapshot.manualMatches) {
-      matches.push(
-        reconciliationMatchRepository.create({
-          reconciliation,
-          status: "manual",
-          systemRowId: match.systemRowId,
-          bankRowId: match.bankRowId,
-          systemRowNumber: match.systemRowNumber,
-          bankRowNumber: match.bankRowNumber,
-          score: match.score,
-          details: this.toJsonRecord({ ruleResults: match.ruleResults }),
-          systemPayload: this.toJsonRecord(systemRowMap.get(match.systemRowId) ?? null),
-          bankPayload: this.toJsonRecord(bankRowMap.get(match.bankRowId) ?? null)
-        })
-      );
-    }
-
-    for (const row of snapshot.unmatchedSystemRows) {
-      matches.push(
-        reconciliationMatchRepository.create({
-          reconciliation,
-          status: "unmatched_system",
-          systemRowId: row.rowId,
-          bankRowId: null,
-          systemRowNumber: row.rowNumber,
-          bankRowNumber: null,
-          score: 0,
-          details: null,
-          systemPayload: this.toJsonRecord(row),
-          bankPayload: null
-        })
-      );
-    }
-
-    for (const row of snapshot.unmatchedBankRows) {
-      matches.push(
-        reconciliationMatchRepository.create({
-          reconciliation,
-          status: "unmatched_bank",
-          systemRowId: null,
-          bankRowId: row.rowId,
-          systemRowNumber: null,
-          bankRowNumber: row.rowNumber,
-          score: 0,
-          details: null,
-          systemPayload: null,
-          bankPayload: this.toJsonRecord(row)
-        })
-      );
-    }
-
-    if (matches.length > 0) {
-      await reconciliationMatchRepository.save(matches);
-    }
-  }
-
-  private async requirePersistedReconciliation(
-    manager: EntityManager,
-    reconciliationId: number,
-    errorMessage: string
-  ): Promise<PublicReconciliationDetail> {
-    const persisted = await manager.getRepository(Reconciliation).findOne({
-      where: { id: reconciliationId },
-      relations: {
-        user: {
-          company: true
-        },
-        userBank: {
-          user: {
-            company: true
-          }
-        },
-        companyBankAccount: {
-          bank: true
-        },
-        layout: {
-          system: true,
-          templateLayout: true
-        }
-      }
-    });
-
-    if (!persisted) {
-      throw new NotFoundException(errorMessage);
-    }
-
-    return this.toPublicReconciliationDetail(persisted);
-  }
-
   private async requirePersistedBankStatement(
     manager: EntityManager,
     statementId: number,
@@ -2753,41 +1972,6 @@ export class ConciliationService {
     }
 
     return this.toPublicBankStatementDetail(persisted);
-  }
-
-  private async requireAccessibleReconciliation(
-    actor: AuthUser,
-    reconciliationId: number
-  ): Promise<Reconciliation> {
-    const reconciliation = await this.reconciliationRepository.findOne({
-      where: { id: reconciliationId },
-      relations: {
-        user: {
-          company: true
-        },
-        userBank: {
-          user: {
-            company: true
-          }
-        },
-        companyBankAccount: {
-          bank: true
-        },
-        layout: {
-          system: true,
-          templateLayout: true,
-          mappings: true
-        }
-      }
-    });
-
-    if (!reconciliation) {
-      throw new NotFoundException("Conciliacion no encontrada.");
-    }
-
-    this.ensureActorCanAccessTargetUser(actor, reconciliation.user);
-
-    return reconciliation;
   }
 
   private async requireAccessibleBankStatement(
@@ -2959,24 +2143,14 @@ export class ConciliationService {
   private buildAutoMatches(
     layout: ReconciliationLayout,
     systemRows: ConciliationPreviewRow[],
-    bankRows: ConciliationPreviewRow[],
-    excludedSystemIds: Set<string> = new Set<string>(),
-    excludedBankIds: Set<string> = new Set<string>()
+    bankRows: ConciliationPreviewRow[]
   ): ConciliationPreviewMatch[] {
     const mappings = this.sortMappings(layout.mappings).filter((item) => item.active);
     const threshold = this.normalizeThreshold(layout.autoMatchThreshold);
     const candidates: Array<ConciliationPreviewMatch & { passedRules: number }> = [];
 
     for (const systemRow of systemRows) {
-      if (excludedSystemIds.has(systemRow.rowId)) {
-        continue;
-      }
-
       for (const bankRow of bankRows) {
-        if (excludedBankIds.has(bankRow.rowId)) {
-          continue;
-        }
-
         const evaluation = this.evaluateMatch(mappings, systemRow, bankRow);
         if (!evaluation.requiredPassed) continue;
         if (evaluation.score < threshold) continue;
@@ -3003,8 +2177,8 @@ export class ConciliationService {
       return left.bankRowNumber - right.bankRowNumber;
     });
 
-    const matchedSystemIds = new Set<string>(excludedSystemIds);
-    const matchedBankIds = new Set<string>(excludedBankIds);
+    const matchedSystemIds = new Set<string>();
+    const matchedBankIds = new Set<string>();
     const matches: ConciliationPreviewMatch[] = [];
 
     for (const candidate of candidates) {
@@ -3395,77 +2569,10 @@ export class ConciliationService {
     };
   }
 
-  private resolveReconciliationStatus(
-    snapshot: ReconciliationSnapshot,
-    comparisonPerformed: boolean
-  ): string {
-    const hasSystemData = snapshot.metrics.totalSystemRows > 0;
-    const hasBankData = snapshot.metrics.totalBankRows > 0;
-    const hasMatches = snapshot.metrics.autoMatches + snapshot.metrics.manualMatches > 0;
-    const fullyMatched =
-      hasSystemData &&
-      hasBankData &&
-      snapshot.metrics.unmatchedSystem === 0 &&
-      snapshot.metrics.unmatchedBank === 0;
-
-    if (hasSystemData && !hasBankData) {
-      return "draft_system_only";
-    }
-
-    if (!hasSystemData && hasBankData) {
-      return "draft_bank_only";
-    }
-
-    if (hasSystemData && hasBankData && !comparisonPerformed) {
-      return "ready_to_compare";
-    }
-
-    if (fullyMatched) {
-      return snapshot.metrics.manualMatches > 0 ? "matched_with_manual" : "matched";
-    }
-
-    if (comparisonPerformed && hasMatches) {
-      return "compared_with_pending";
-    }
-
-    if (comparisonPerformed) {
-      return "compared_without_matches";
-    }
-
-    return "draft";
-  }
-
-  private buildRowSignature(
-    mappings: ReconciliationLayoutMapping[],
-    row: ConciliationPreviewRow
-  ): string {
-    const orderedKeys = this.sortMappings(mappings)
-      .filter((mapping) => mapping.active)
-      .map((mapping) => mapping.fieldKey);
-    const values = orderedKeys.map((fieldKey) => [fieldKey, row.normalized[fieldKey] ?? null]);
-    return JSON.stringify(values);
-  }
-
   private sortPreviewRows(rows: ConciliationPreviewRow[]): ConciliationPreviewRow[] {
     return [...rows].sort((left, right) => {
       if (left.rowNumber !== right.rowNumber) return left.rowNumber - right.rowNumber;
       return left.rowId.localeCompare(right.rowId);
-    });
-  }
-
-  private sortPreviewMatches(matches: ConciliationPreviewMatch[]): ConciliationPreviewMatch[] {
-    return [...matches].sort((left, right) => {
-      if (left.systemRowNumber !== right.systemRowNumber) {
-        return left.systemRowNumber - right.systemRowNumber;
-      }
-      if (left.bankRowNumber !== right.bankRowNumber) {
-        return left.bankRowNumber - right.bankRowNumber;
-      }
-      const byStatus = left.status.localeCompare(right.status);
-      if (byStatus !== 0) return byStatus;
-      return `${left.systemRowId}:${left.bankRowId}`.localeCompare(
-        `${right.systemRowId}:${right.bankRowId}`
-      );
     });
   }
 
@@ -3748,48 +2855,6 @@ export class ConciliationService {
     };
   }
 
-  private toPublicReconciliationSummary(entity: Reconciliation): PublicReconciliationSummary {
-    return {
-      id: entity.id,
-      name: entity.name,
-      status: entity.status,
-      updateCount: entity.updateCount ?? 0,
-      userId: entity.user.id,
-      userLogin: entity.user.usrLogin,
-      userBankId: entity.userBank.id,
-      bankName: entity.userBank.bankName,
-      bankAlias: entity.userBank.alias,
-      companyBankAccountId: entity.companyBankAccount?.id ?? null,
-      companyBankAccountName: entity.companyBankAccount?.name ?? null,
-      companyBankAccountNumber: entity.companyBankAccount?.accountNumber ?? null,
-      companyBankAccountCurrency: entity.companyBankAccount?.currency ?? null,
-      layoutId: entity.layout.id,
-      layoutName: entity.layout.name,
-      systemId: entity.layout.system?.id ?? 0,
-      systemName: entity.layout.system?.name ?? entity.layout.systemLabel,
-      systemFileName: entity.systemFileName,
-      bankFileName: entity.bankFileName,
-      hasSystemData: entity.hasSystemData ?? false,
-      hasBankData: entity.hasBankData ?? false,
-      totalSystemRows: entity.totalSystemRows,
-      totalBankRows: entity.totalBankRows,
-      autoMatches: entity.autoMatches,
-      manualMatches: entity.manualMatches,
-      unmatchedSystem: entity.unmatchedSystem,
-      unmatchedBank: entity.unmatchedBank,
-      matchPercentage: entity.matchPercentage,
-      createdAt: entity.createdAt,
-      updatedAt: entity.updatedAt
-    };
-  }
-
-  private toPublicReconciliationDetail(entity: Reconciliation): PublicReconciliationDetail {
-    return {
-      ...this.toPublicReconciliationSummary(entity),
-      summarySnapshot: entity.summarySnapshot ? this.readSnapshot(entity) : null
-    };
-  }
-
   private sortMappings(mappings: ReconciliationLayoutMapping[]): ReconciliationLayoutMapping[] {
     return [...mappings].sort((left, right) => {
       if (left.sortOrder !== right.sortOrder) return left.sortOrder - right.sortOrder;
@@ -3933,12 +2998,6 @@ export class ConciliationService {
       (value): value is string => Boolean(value && value.trim())
     );
     return parts.length > 0 ? parts.join(" ") : null;
-  }
-
-  private throwMissingCompanyBankAccountForSnapshot(reconciliationId: number): never {
-    throw new BadRequestException(
-      `La conciliacion ${reconciliationId} no tiene una cuenta bancaria asociada en el snapshot.`
-    );
   }
 
   private toJsonRecord(value: unknown): Record<string, unknown> | null {
