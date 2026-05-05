@@ -7,9 +7,9 @@ import {
   PrimaryGeneratedColumn,
   UpdateDateColumn
 } from "typeorm"
-import { User } from "../../users/entities/user.entity"
-import { ErpType } from "../../common/enums/erp-type.enum"
-import { CompanyErpConfig } from "./company-erp-config.entity"
+import { User } from "../../../users/entities/user.entity"
+import { ErpType } from "../../../common/enums/erp-type.enum"
+import { CompanyErpConfig } from "../../entities/company-erp-config.entity"
 
 @Entity({ name: "usuarios_erp_sesiones" })
 export class UserErpSession {

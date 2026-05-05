@@ -34,39 +34,3 @@ export interface PublicCompanyErpConfig {
   createdAt: Date
   updatedAt: Date
 }
-
-export interface PublicErpShipmentResult {
-  id: number
-  reconciliationId: number | null
-  companyErpConfigId: number
-  companyErpConfigName: string
-  documentType: string
-  status: string
-  endpoint: string | null
-  httpStatus: number | null
-  responsePayload: Record<string, unknown> | null
-  errorMessage: string | null
-  externalDocEntry: string | null
-  externalDocNum: string | null
-  createdAt: Date
-  updatedAt: Date
-}
-
-export type PublicSapSessionStatus =
-  | "active"
-  | "not_authenticated"
-  | "expired"
-  | "invalid"
-  | "logged_out"
-
-export interface PublicSapErpSession {
-  companyErpConfigId: number
-  companyErpConfigName: string
-  erpType: ErpType
-  authenticated: boolean
-  status: PublicSapSessionStatus
-  username: string | null
-  expiresAt: Date | null
-  lastValidatedAt: Date | null
-  checkedAt: Date
-}

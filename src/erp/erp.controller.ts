@@ -20,7 +20,6 @@ import { RolesGuard } from "../common/guards/roles.guard"
 import { AuthUser } from "../common/interfaces/auth-user.interface"
 import { CreateCompanyErpConfigDto } from "./dto/create-company-erp-config.dto"
 import { ListCompanyErpConfigsQueryDto } from "./dto/list-company-erp-configs-query.dto"
-import { SendSapDepositDto } from "./dto/send-sap-deposit.dto"
 import { UpdateCompanyErpConfigDto } from "./dto/update-company-erp-config.dto"
 import { ErpService } from "./erp.service"
 
@@ -59,12 +58,5 @@ export class ErpController {
     @CurrentUser() actor: AuthUser
   ) {
     return this.erpService.updateCompanyErpConfig(configId, body, actor)
-  }
-
-  @Post("shipments/deposits")
-  @Roles(Role.GESTOR_COBRANZA, Role.GESTOR_PAGOS, Role.ADMIN, Role.IS_SUPER_ADMIN)
-  @RequiredModule(AppModuleCode.ERP_MANAGEMENT)
-  sendSapDeposit(@Body() body: SendSapDepositDto, @CurrentUser() actor: AuthUser) {
-    return this.erpService.sendSapDeposit(actor, body)
   }
 }

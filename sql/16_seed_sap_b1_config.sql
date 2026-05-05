@@ -4,7 +4,7 @@ BEGIN;
 WITH target_company AS (
   SELECT e.emp_id
   FROM public.empresas e
-  WHERE e.emp_id = 1
+  WHERE e.emp_id = 3
 )
 UPDATE public.empresas_erp_configuraciones cfg
 SET
@@ -17,7 +17,7 @@ WHERE cfg.emp_id = tc.emp_id
 WITH target_company AS (
   SELECT e.emp_id
   FROM public.empresas e
-  WHERE e.emp_id = 1
+  WHERE e.emp_id = 3
 )
 INSERT INTO public.empresas_erp_configuraciones (
   emp_id,
@@ -58,7 +58,9 @@ SELECT
   jsonb_build_object(
     'depositEndpoint', 'Deposits',
     'sessionCheckPath', 'Deposits?$top=1',
-    'creditCardsAsCreditLines', TRUE
+    'creditCardsAsCreditLines', TRUE,
+    'sapCreditCardId', 4,
+    'sapPaymentMethodCode', 2
   )
 FROM target_company tc
 ON CONFLICT (emp_id, LOWER(epc_codigo)) DO UPDATE
