@@ -1,5 +1,5 @@
--- Habilita varias plantillas base por banco. El superadmin selecciona el catalogo
--- y el admin del banco aplica una de ellas para crear su plantilla operativa.
+-- Tabla legacy: habilitaba plantillas base por banco.
+-- Desde 18_create_user_template_availability.sql la habilitacion operativa es global por usuario admin.
 
 BEGIN;
 

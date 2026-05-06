@@ -22,6 +22,7 @@ import { TemplateLayoutMapping } from "./entities/template-layout-mapping.entity
 import { TemplateLayout } from "./entities/template-layout.entity";
 import { BankTemplateAvailability } from "./entities/bank-template-availability.entity";
 import { Currency } from "./entities/currency.entity";
+import { UserTemplateAvailability } from "./entities/user-template-availability.entity";
 
 @Module({
   imports: [
@@ -37,6 +38,7 @@ import { Currency } from "./entities/currency.entity";
       TemplateLayout,
       TemplateLayoutMapping,
       BankTemplateAvailability,
+      UserTemplateAvailability,
       ReconciliationLayout,
       ReconciliationLayoutMapping,
       Reconciliation,

@@ -234,6 +234,20 @@ export class ConciliationController {
   }
 
   @Put([
+    "users/:userId/plantillas-base/disponibles",
+    "users/:userId/template-layouts/available"
+  ])
+  @Roles(Role.IS_SUPER_ADMIN)
+  @RequiredModule(AppModuleCode.LAYOUT_MANAGEMENT)
+  setUserAvailableTemplates(
+    @Param("userId", ParseIntPipe) userId: number,
+    @Body() body: SetBankAvailableTemplatesDto,
+    @CurrentUser() actor: AuthUser
+  ) {
+    return this.conciliationService.setUserAvailableTemplates(userId, body, actor);
+  }
+
+  @Put([
     "users/:userId/banks/:bankId/plantillas-base/disponibles",
     "users/:userId/banks/:bankId/template-layouts/available"
   ])

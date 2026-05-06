@@ -17,6 +17,10 @@ Estos scripts estan pensados para un `DROP`/recreacion limpia. Los scripts princ
 11. `11_seed_layout_templates_paraguay.sql` (opcional)
 12. `12_seed_layout_templates_gnb_itau.sql` (opcional)
 13. `14_create_erp_configs_and_shipments.sql` (opcional recomendado para ERP)
+14. `15_create_bank_template_availability.sql` (compatibilidad con habilitaciones legacy por banco)
+15. `16_seed_sap_b1_config.sql` (opcional, configurar empresa destino antes de ejecutar)
+16. `17_create_erp_sessions_and_gestor_access.sql`
+17. `18_create_user_template_availability.sql` (habilitaciones globales por usuario admin)
 
 ## Notas
 
@@ -29,3 +33,4 @@ Estos scripts estan pensados para un `DROP`/recreacion limpia. Los scripts princ
 - `conciliaciones`, `conciliacion_resultados` y `conciliaciones_erp_envios` fueron eliminadas del esquema operativo porque la comparacion ya es temporal.
 - `13_seed_default_templates_from_existing_layouts.sql` y `15_upgrade_conciliation_accounts_systems_and_gestors.sql` fueron retirados porque este flujo ya no migra estructuras intermedias.
 - Los seeds `11` y `12` cargan bancos, cuentas, sistemas y plantillas sobre el esquema nuevo.
+- Desde `18`, las plantillas base habilitadas por superadmin son globales por usuario admin; el script migra lo que exista en la tabla legacy por banco.

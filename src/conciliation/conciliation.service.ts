@@ -40,8 +40,8 @@ import { ReconciliationLayoutMapping } from "./entities/reconciliation-layout-ma
 import { ReconciliationLayout } from "./entities/reconciliation-layout.entity";
 import { TemplateLayoutMapping } from "./entities/template-layout-mapping.entity";
 import { TemplateLayout } from "./entities/template-layout.entity";
-import { BankTemplateAvailability } from "./entities/bank-template-availability.entity";
 import { SetBankAvailableTemplatesDto } from "./dto/set-bank-available-templates.dto";
+import { UserTemplateAvailability } from "./entities/user-template-availability.entity";
 import {
   CompareOperator,
   BankStatementPreviewResponse,
@@ -119,8 +119,8 @@ export class ConciliationService {
     private readonly templateLayoutRepository: Repository<TemplateLayout>,
     @InjectRepository(TemplateLayoutMapping)
     private readonly templateLayoutMappingRepository: Repository<TemplateLayoutMapping>,
-    @InjectRepository(BankTemplateAvailability)
-    private readonly bankTemplateAvailabilityRepository: Repository<BankTemplateAvailability>,
+    @InjectRepository(UserTemplateAvailability)
+    private readonly userTemplateAvailabilityRepository: Repository<UserTemplateAvailability>,
     @InjectRepository(ReconciliationLayout)
     private readonly layoutRepository: Repository<ReconciliationLayout>,
     @InjectRepository(ReconciliationLayoutMapping)
@@ -145,7 +145,9 @@ export class ConciliationService {
 
     const banks = await queryBuilder.getMany();
 
-    const availabilityByBank = await this.loadAvailabilityByBank(banks.map((bank) => bank.id));
+    const availabilityByUser = await this.loadAvailabilityByUser(
+      banks.map((bank) => bank.user.id)
+    );
 
     return banks
       .sort((left, right) => {
@@ -156,29 +158,30 @@ export class ConciliationService {
         return left.id - right.id;
       })
       .map((bank) =>
-        this.toPublicUserBankWithLayouts(bank, availabilityByBank.get(bank.id) ?? [])
+        this.toPublicUserBankWithLayouts(bank, availabilityByUser.get(bank.user.id) ?? [])
       );
   }
 
-  private async loadAvailabilityByBank(bankIds: number[]): Promise<Map<number, number[]>> {
+  private async loadAvailabilityByUser(userIds: number[]): Promise<Map<number, number[]>> {
     const result = new Map<number, number[]>();
-    if (bankIds.length === 0) return result;
+    const uniqueUserIds = Array.from(new Set(userIds.filter((id) => id > 0)));
+    if (uniqueUserIds.length === 0) return result;
 
-    const rows = await this.bankTemplateAvailabilityRepository
+    const rows = await this.userTemplateAvailabilityRepository
       .createQueryBuilder("availability")
-      .leftJoin("availability.bank", "bank")
+      .leftJoin("availability.user", "user")
       .leftJoin("availability.templateLayout", "templateLayout")
-      .where("bank.id IN (:...bankIds)", { bankIds })
-      .select(["availability.id", "bank.id", "templateLayout.id"])
+      .where("user.id IN (:...userIds)", { userIds: uniqueUserIds })
+      .select(["availability.id", "user.id", "templateLayout.id"])
       .getMany();
 
     for (const row of rows) {
-      const bankId = row.bank?.id;
+      const userId = row.user?.id;
       const templateId = row.templateLayout?.id;
-      if (!bankId || !templateId) continue;
-      const list = result.get(bankId) ?? [];
+      if (!userId || !templateId) continue;
+      const list = result.get(userId) ?? [];
       list.push(templateId);
-      result.set(bankId, list);
+      result.set(userId, list);
     }
 
     return result;
@@ -799,15 +802,24 @@ export class ConciliationService {
     });
   }
 
-  async setBankAvailableTemplates(
+  async setUserAvailableTemplates(
     userId: number,
-    bankId: number,
     payload: SetBankAvailableTemplatesDto,
     actor: AuthUser
-  ): Promise<PublicUserBankWithLayouts> {
+  ): Promise<PublicUserBankWithLayouts[]> {
     this.ensureSuperadmin(actor);
 
-    const bank = await this.requireUserBank(userId, bankId);
+    const user = await this.userRepository.findOne({
+      where: { id: userId },
+      relations: {
+        company: true
+      }
+    });
+
+    if (!user) {
+      throw new NotFoundException("Usuario no encontrado.");
+    }
+
     const ids = Array.from(new Set(payload.templateLayoutIds));
 
     if (ids.length > 0) {
@@ -823,29 +835,39 @@ export class ConciliationService {
       }
     }
 
-    return this.bankTemplateAvailabilityRepository.manager.transaction(async (manager) => {
-      const repo = manager.getRepository(BankTemplateAvailability);
+    await this.userTemplateAvailabilityRepository.manager.transaction(async (manager) => {
+      const repo = manager.getRepository(UserTemplateAvailability);
 
       await repo
         .createQueryBuilder()
         .delete()
-        .from(BankTemplateAvailability)
-        .where("banco_id = :bankId", { bankId: bank.id })
+        .from(UserTemplateAvailability)
+        .where("usuario_id = :userId", { userId: user.id })
         .execute();
 
       if (ids.length > 0) {
         await repo.save(
           ids.map((templateId) =>
             repo.create({
-              bank,
+              user,
               templateLayout: { id: templateId } as TemplateLayout
             })
           )
         );
       }
-
-      return this.requirePublicUserBankWithLayouts(userId, bankId);
     });
+
+    return this.listCatalog(actor, userId);
+  }
+
+  async setBankAvailableTemplates(
+    userId: number,
+    bankId: number,
+    payload: SetBankAvailableTemplatesDto,
+    actor: AuthUser
+  ): Promise<PublicUserBankWithLayouts[]> {
+    await this.requireUserBank(userId, bankId);
+    return this.setUserAvailableTemplates(userId, payload, actor);
   }
 
   async listBanksWithAvailableTemplatesForAdmin(
@@ -872,21 +894,22 @@ export class ConciliationService {
 
     if (banks.length === 0) return [];
 
-    const availabilityRows = await this.bankTemplateAvailabilityRepository
+    const userIds = Array.from(new Set(banks.map((bank) => bank.user.id)));
+    const availabilityRows = await this.userTemplateAvailabilityRepository
       .createQueryBuilder("availability")
-      .leftJoinAndSelect("availability.bank", "bank")
+      .leftJoinAndSelect("availability.user", "availabilityUser")
       .leftJoinAndSelect("availability.templateLayout", "templateLayout")
       .leftJoinAndSelect("templateLayout.system", "templateSystem")
       .leftJoinAndSelect("templateLayout.mappings", "templateMapping")
-      .where("bank.id IN (:...bankIds)", { bankIds: banks.map((bank) => bank.id) })
+      .where("availabilityUser.id IN (:...userIds)", { userIds })
       .getMany();
 
-    const availabilityByBank = new Map<number, TemplateLayout[]>();
+    const availabilityByUser = new Map<number, TemplateLayout[]>();
     for (const row of availabilityRows) {
-      if (!row.bank?.id || !row.templateLayout) continue;
-      const list = availabilityByBank.get(row.bank.id) ?? [];
+      if (!row.user?.id || !row.templateLayout) continue;
+      const list = availabilityByUser.get(row.user.id) ?? [];
       list.push(row.templateLayout);
-      availabilityByBank.set(row.bank.id, list);
+      availabilityByUser.set(row.user.id, list);
     }
 
     return banks
@@ -902,7 +925,7 @@ export class ConciliationService {
         return left.id - right.id;
       })
       .map((bank) => {
-        const templates = availabilityByBank.get(bank.id) ?? [];
+        const templates = availabilityByUser.get(bank.user.id) ?? [];
         return {
           ...this.toPublicUserBank(bank),
           companyId: bank.user.company?.id ?? 0,
@@ -947,16 +970,16 @@ export class ConciliationService {
       );
     }
 
-    const availability = await this.bankTemplateAvailabilityRepository.findOne({
+    const availability = await this.userTemplateAvailabilityRepository.findOne({
       where: {
-        bank: { id: bank.id },
+        user: { id: bank.user.id },
         templateLayout: { id: templateLayoutId }
       }
     });
 
     if (!availability) {
       throw new ForbiddenException(
-        "La plantilla base no esta habilitada para este banco. Pedile al super admin que la habilite."
+        "La plantilla base no esta habilitada para tu usuario. Pedile al super admin que la habilite."
       );
     }
 
@@ -2985,8 +3008,8 @@ export class ConciliationService {
     bankId: number
   ): Promise<PublicUserBankWithLayouts> {
     const bank = await this.requireUserBank(userId, bankId);
-    const availability = await this.loadAvailabilityByBank([bank.id]);
-    return this.toPublicUserBankWithLayouts(bank, availability.get(bank.id) ?? []);
+    const availability = await this.loadAvailabilityByUser([bank.user.id]);
+    return this.toPublicUserBankWithLayouts(bank, availability.get(bank.user.id) ?? []);
   }
 
   private roundNumber(value: number): number {
