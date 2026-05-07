@@ -43,7 +43,7 @@ SELECT
   'SAP_B1_PROD',
   'SAP Business One Produccion',
   'sap_b1',
-  'SAP B1 Service Layer para conciliacion de depositos.',
+  'SAP B1 Service Layer para conciliacion externa.',
   TRUE,
   TRUE,
   NULL,
@@ -56,11 +56,9 @@ SELECT
   '1.2',
   TRUE,
   jsonb_build_object(
-    'depositEndpoint', 'Deposits',
-    'sessionCheckPath', 'Deposits?$top=1',
-    'creditCardsAsCreditLines', TRUE,
-    'sapCreditCardId', 4,
-    'sapPaymentMethodCode', 2
+    'externalReconciliationEndpoint', 'ExternalReconciliationsService_Reconcile',
+    'sessionCheckPath', 'BankPages?$top=1',
+    'sapExternalReconciliationAccountType', 'rat_GLAccount'
   )
 FROM target_company tc
 ON CONFLICT (emp_id, LOWER(epc_codigo)) DO UPDATE

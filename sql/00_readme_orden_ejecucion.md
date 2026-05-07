@@ -21,6 +21,7 @@ Estos scripts estan pensados para un `DROP`/recreacion limpia. Los scripts princ
 15. `16_seed_sap_b1_config.sql` (opcional, configurar empresa destino antes de ejecutar)
 16. `17_create_erp_sessions_and_gestor_access.sql`
 17. `18_create_user_template_availability.sql` (habilitaciones globales por usuario admin)
+18. `19_seed_template_base_mappings.sql` (completa campos en plantillas base y copias existentes)
 
 ## Notas
 
@@ -34,3 +35,4 @@ Estos scripts estan pensados para un `DROP`/recreacion limpia. Los scripts princ
 - `13_seed_default_templates_from_existing_layouts.sql` y `15_upgrade_conciliation_accounts_systems_and_gestors.sql` fueron retirados porque este flujo ya no migra estructuras intermedias.
 - Los seeds `11` y `12` cargan bancos, cuentas, sistemas y plantillas sobre el esquema nuevo.
 - Desde `18`, las plantillas base habilitadas por superadmin son globales por usuario admin; el script migra lo que exista en la tabla legacy por banco.
+- `19` es incremental e idempotente: agrega mappings faltantes a plantillas base y plantillas ya copiadas a usuarios.

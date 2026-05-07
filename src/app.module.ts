@@ -24,7 +24,7 @@ import { UsersModule } from "./users/users.module";
         autoLoadEntities: true,
         synchronize: false,
         migrationsRun: false,
-        logging: true
+        logging: ["error", "warn"]
       })
     }),
     AccessControlModule,

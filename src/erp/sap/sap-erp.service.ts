@@ -4,6 +4,7 @@ import {
   ForbiddenException,
   GatewayTimeoutException,
   Injectable,
+  Logger,
   NotFoundException
 } from "@nestjs/common"
 import { ConfigService } from "@nestjs/config"
@@ -13,26 +14,42 @@ import { CompanyErpConfig } from "../entities/company-erp-config.entity"
 import { Role } from "../../common/enums/role.enum"
 import { AuthUser } from "../../common/interfaces/auth-user.interface"
 import { decryptText, encryptText } from "../../common/utils/encryption.util"
-import { isGestorRole, isSuperAdminRole } from "../../common/utils/role.util"
+import { isSuperAdminRole } from "../../common/utils/role.util"
 import { BankStatement } from "../../conciliation/entities/bank-statement.entity"
 import { BankStatementRow } from "../../conciliation/entities/bank-statement-row.entity"
 import { Reconciliation } from "../../conciliation/entities/reconciliation.entity"
 import { User } from "../../users/entities/user.entity"
 import { SapLoginDto } from "./dto/sap-login.dto"
-import { SapCreditDepositLineDto, SendSapDepositDto } from "./dto/send-sap-deposit.dto"
+import {
+  SapExternalReconciliationBankStatementLineDto,
+  SapExternalReconciliationMatchDto,
+  SendSapExternalReconciliationDto,
+  sapExternalReconciliationAccountTypes
+} from "./dto/send-sap-external-reconciliation.dto"
 import { UserErpSession } from "./entities/user-erp-session.entity"
 import {
   PublicSapErpSession,
-  PublicSapErpShipmentResult,
+  PublicSapExternalReconciliationResult,
   PublicSapSessionStatus,
-  SapCreditDepositLinePayload,
-  SapCreditDepositPayload
+  SapExternalReconciliationAccountType,
+  SapExternalReconciliationBankStatementLinePayload,
+  SapExternalReconciliationJournalEntryLinePayload,
+  SapExternalReconciliationPayload
 } from "./interfaces/sap-erp.interfaces"
 import { ExternalRequestError, SapB1Service } from "./sap-b1.service"
 import { ensureSapErpType, validateSapConfig } from "./sap-config.validator"
 
+type SapReadableRow = {
+  rowId?: string
+  sourceRowId?: string
+  rowNumber?: number
+  values?: Record<string, unknown> | null
+  normalized?: Record<string, unknown> | null
+}
+
 @Injectable()
 export class SapErpService {
+  private readonly logger = new Logger(SapErpService.name)
   private readonly credentialSecret: string
 
   constructor(
@@ -182,20 +199,15 @@ export class SapErpService {
     return this.toPublicSapSession(session, "logged_out", checkedAt)
   }
 
-  async sendSapDeposit(
+  async reconcileExternal(
     actor: AuthUser,
-    payload: SendSapDepositDto
-  ): Promise<PublicSapErpShipmentResult> {
+    payload: SendSapExternalReconciliationDto
+  ): Promise<PublicSapExternalReconciliationResult> {
+    this.ensureCanRunExternalReconciliation(actor)
+
     const config = await this.requireConfigForActor(actor, payload.companyErpConfigId)
-    const sender = await this.userRepository.findOne({
-      where: { id: actor.id }
-    })
-
-    if (!sender) {
-      throw new NotFoundException("Usuario ejecutor no encontrado.")
-    }
-
     let reconciliation: Reconciliation | null = null
+
     if (payload.reconciliationId) {
       reconciliation = await this.reconciliationRepository.findOne({
         where: { id: payload.reconciliationId },
@@ -230,8 +242,12 @@ export class SapErpService {
     this.ensureActiveConfig(config)
 
     const session = await this.requireActiveSapSession(actor, config)
-    const endpoint = this.sapB1Service.joinUrl(config.serviceLayerUrl, "Deposits")
-    const depositPayload = await this.resolveSapDepositPayload(
+    const endpointPath = this.getSettingsString(config, [
+      "sapExternalReconciliationEndpoint",
+      "externalReconciliationEndpoint"
+    ]) ?? "ExternalReconciliationsService_Reconcile"
+    const endpoint = this.sapB1Service.joinUrl(config.serviceLayerUrl, endpointPath)
+    const sapPayload = await this.resolveSapExternalReconciliationPayload(
       actor,
       config,
       payload,
@@ -240,7 +256,12 @@ export class SapErpService {
 
     try {
       const cookieHeader = this.decryptSessionCookie(session.sessionCookieEncrypted)
-      const sapResponse = await this.sapB1Service.postDeposit(config, cookieHeader, depositPayload)
+      const sapResponse = await this.sapB1Service.reconcileExternal(
+        config,
+        cookieHeader,
+        sapPayload,
+        endpointPath
+      )
       const now = new Date()
       session.lastValidatedAt = now
       await this.userErpSessionRepository.save(session)
@@ -250,19 +271,19 @@ export class SapErpService {
         reconciliationId: reconciliation?.id ?? null,
         companyErpConfigId: config.id,
         companyErpConfigName: config.name,
-        documentType: "deposit",
+        documentType: "external_reconciliation",
         status: "success",
         endpoint,
         httpStatus: sapResponse.statusCode,
         responsePayload: sapResponse.bodyJson,
         errorMessage: null,
-        externalDocEntry: this.extractExternalReference(
+        externalReconciliationNo: this.extractExternalReference(
           sapResponse.bodyJson,
-          ["DocEntry", "AbsoluteEntry", "AbsEntry"]
+          ["ReconciliationNo", "ReconciliationNumber", "ReconNum", "ExternalReconNo"]
         ),
-        externalDocNum: this.extractExternalReference(
+        externalReference: this.extractExternalReference(
           sapResponse.bodyJson,
-          ["DepositNumber", "DepositsNumber", "DocNum"]
+          ["AccountCode", "AbsEntry", "AbsoluteEntry", "Number"]
         ),
         createdAt: now,
         updatedAt: now
@@ -273,6 +294,14 @@ export class SapErpService {
         await this.userErpSessionRepository.save(session)
       }
 
+      this.logSapExternalReconciliationError(error, {
+        actorId: actor.id,
+        companyErpConfigId: config.id,
+        companyErpConfigName: config.name,
+        endpoint,
+        endpointPath,
+        sapPayload
+      })
       const mapped = this.mapExternalError(error)
       throw mapped.exception
     }
@@ -304,6 +333,16 @@ export class SapErpService {
     }
   }
 
+  private ensureCanRunExternalReconciliation(actor: AuthUser) {
+    if (isSuperAdminRole(actor.roleCode) || actor.roleCode === Role.ADMIN) {
+      return
+    }
+
+    throw new ForbiddenException(
+      "Solo usuarios admin o superadmin pueden enviar conciliaciones externas al ERP."
+    )
+  }
+
   private async requireActiveSapSession(
     actor: AuthUser,
     config: CompanyErpConfig
@@ -320,7 +359,7 @@ export class SapErpService {
     const now = new Date()
 
     if (!session || session.invalidatedAt) {
-      throw new BadRequestException("Debes iniciar sesion en SAP antes de enviar el deposito.")
+      throw new BadRequestException("Debes iniciar sesion en SAP antes de conciliar en el ERP.")
     }
 
     if (session.expiresAt && session.expiresAt.getTime() <= now.getTime()) {
@@ -342,265 +381,350 @@ export class SapErpService {
       return
     }
 
-    if (isGestorRole(actor.roleCode) && reconciliation.user.id === actor.id) {
-      return
-    }
-
     throw new ForbiddenException("No tenes permisos para enviar esta conciliacion al ERP.")
   }
 
-  private async resolveSapDepositPayload(
+  private async resolveSapExternalReconciliationPayload(
     actor: AuthUser,
     config: CompanyErpConfig,
-    payload: SendSapDepositDto,
+    payload: SendSapExternalReconciliationDto,
     reconciliation: Reconciliation | null
-  ): Promise<Record<string, unknown>> {
+  ): Promise<SapExternalReconciliationPayload> {
     if (payload.payload) {
-      return this.normalizeRawSapDepositPayload(payload.payload)
+      return this.normalizeRawSapExternalReconciliationPayload(payload.payload, config)
     }
 
-    return this.buildSapCreditDepositPayload(actor, config, payload, reconciliation)
+    return this.buildSapExternalReconciliationPayload(actor, config, payload, reconciliation)
   }
 
-  private normalizeRawSapDepositPayload(payload: Record<string, unknown>): Record<string, unknown> {
-    if (payload.DepositType !== "dtCredit") {
-      return payload
-    }
+  private normalizeRawSapExternalReconciliationPayload(
+    payload: Record<string, unknown>,
+    config: CompanyErpConfig
+  ): SapExternalReconciliationPayload {
+    const wrappedExternal = this.asRecord(payload.ExternalReconciliation)
+    const external = wrappedExternal ?? payload
+    const bankLines = external.ReconciliationBankStatementLines
+    const journalLines = external.ReconciliationJournalEntryLines
 
-    const checkLines = payload.CheckLines
-    if (Array.isArray(checkLines) && checkLines.length > 0) {
+    if (!Array.isArray(bankLines) || bankLines.length === 0) {
       throw new BadRequestException(
-        "Los depositos de tarjeta deben enviarse en CreditLines, no en CheckLines."
+        "La conciliacion externa SAP debe tener ReconciliationBankStatementLines."
       )
     }
 
-    const creditLines = payload.CreditLines
-    if (!Array.isArray(creditLines) || creditLines.length === 0) {
-      throw new BadRequestException("El deposito de tarjeta debe tener CreditLines.")
+    if (!Array.isArray(journalLines) || journalLines.length === 0) {
+      throw new BadRequestException(
+        "La conciliacion externa SAP debe tener ReconciliationJournalEntryLines."
+      )
+    }
+
+    const normalizedExternal = {
+      ...external,
+      ReconciliationAccountType: this.resolveExternalReconciliationAccountType(
+        external.ReconciliationAccountType,
+        config
+      ),
+      ReconciliationBankStatementLines: bankLines.map((line, index) =>
+        this.normalizeRawBankStatementLine(line, index)
+      ),
+      ReconciliationJournalEntryLines: journalLines.map((line, index) =>
+        this.normalizeRawJournalEntryLine(line, index)
+      )
     }
 
     return {
-      ...payload,
-      DepositType: "dtCredit",
-      CheckLines: [],
-      BOELines: Array.isArray(payload.BOELines) ? payload.BOELines : []
-    }
+      ...(wrappedExternal ? payload : {}),
+      ExternalReconciliation: normalizedExternal
+    } as SapExternalReconciliationPayload
   }
 
-  private async buildSapCreditDepositPayload(
+  private async buildSapExternalReconciliationPayload(
     actor: AuthUser,
     config: CompanyErpConfig,
-    payload: SendSapDepositDto,
+    payload: SendSapExternalReconciliationDto,
     reconciliation: Reconciliation | null
-  ): Promise<SapCreditDepositPayload> {
-    const inputLines = payload.creditLines ?? []
-    if (inputLines.length === 0) {
-      throw new BadRequestException(
-        "Debes enviar creditLines o un payload SAP crudo para crear el deposito."
-      )
-    }
-
+  ): Promise<SapExternalReconciliationPayload> {
     const statement = payload.bankStatementId
-      ? await this.requireBankStatementForDeposit(actor, config, payload.bankStatementId)
+      ? await this.requireBankStatementForExternalReconciliation(
+          actor,
+          config,
+          payload.bankStatementId
+        )
       : null
     const account = statement?.companyBankAccount ?? reconciliation?.companyBankAccount ?? null
-    const userBank = statement?.userBank ?? reconciliation?.userBank ?? null
 
-    if (!account) {
+    if (!account && !payload.accountCode) {
       throw new BadRequestException(
-        "Para generar el deposito SAP debes enviar bankStatementId o reconciliationId."
+        "Para conciliar en SAP debes enviar accountCode, bankStatementId o reconciliationId."
       )
     }
 
-    if (config.company.id !== account.company.id) {
+    if (account && config.company.id !== account.company.id) {
       throw new BadRequestException(
         "La configuracion ERP no pertenece a la empresa de la cuenta bancaria."
       )
     }
 
-    const depositAccount = this.normalizeRequired(
-      account.majorAccountNumber,
-      "cuenta mayor de la cuenta bancaria"
+    const fallbackAccountCode =
+      this.normalizeOptional(payload.accountCode) ??
+      this.getSettingsString(config, [
+        "sapBankStatementAccountCode",
+        "bankStatementAccountCode",
+        "sapExternalReconciliationAccountCode",
+        "externalReconciliationAccountCode"
+      ]) ??
+      this.normalizeOptional(account?.majorAccountNumber) ??
+      this.normalizeOptional(account?.bankErpId) ??
+      this.normalizeOptional(account?.accountNumber)
+    const allowRowNumberAsSequence = this.getSettingsBoolean(config, [
+      "sapExternalReconciliationUseRowNumberAsSequence",
+      "useRowNumberAsSequence"
+    ])
+    const bankStatementLines = this.buildBankStatementLines(
+      payload.bankStatementLines,
+      payload.matches,
+      statement,
+      fallbackAccountCode,
+      allowRowNumberAsSequence
     )
-    const voucherAccount = this.normalizeRequired(
-      account.paymentAccountNumber ?? "",
-      "cuenta de pago de la cuenta bancaria"
-    )
-    const currency = this.toSapCurrency(payload.depositCurrency ?? account.currency)
+    const journalEntryLines = this.buildJournalEntryLines(payload.journalEntryLines, payload.matches)
+
+    return {
+      ExternalReconciliation: {
+        ReconciliationAccountType: this.resolveExternalReconciliationAccountType(
+          payload.reconciliationAccountType,
+          config
+        ),
+        ReconciliationBankStatementLines: bankStatementLines,
+        ReconciliationJournalEntryLines: journalEntryLines
+      }
+    }
+  }
+
+  private buildBankStatementLines(
+    inputLines: SapExternalReconciliationBankStatementLineDto[] | undefined,
+    matches: SapExternalReconciliationMatchDto[] | undefined,
+    statement: BankStatement | null,
+    fallbackAccountCode: string | null,
+    allowRowNumberAsSequence: boolean
+  ): SapExternalReconciliationBankStatementLinePayload[] {
+    if (inputLines?.length) {
+      return inputLines.map((line, index) => {
+        const sequence = this.toPositiveInteger(line.sequence ?? line.bankStatementLineSequence)
+        const accountCode = this.normalizeOptional(line.bankStatementAccountCode) ?? fallbackAccountCode
+
+        if (!sequence) {
+          throw new BadRequestException(
+            `No se encontro Sequence para la linea bancaria ${index + 1}.`
+          )
+        }
+
+        if (!accountCode) {
+          throw new BadRequestException(
+            `No se encontro BankStatementAccountCode para la linea bancaria ${index + 1}.`
+          )
+        }
+
+        return {
+          BankStatementAccountCode: accountCode,
+          Sequence: sequence
+        }
+      })
+    }
+
+    if (!matches?.length) {
+      throw new BadRequestException(
+        "Debes enviar bankStatementLines o matches para construir la conciliacion externa SAP."
+      )
+    }
+
     const rowsBySourceId = new Map<string, BankStatementRow>()
     const rowsByDbId = new Map<number, BankStatementRow>()
-
     for (const row of statement?.rows ?? []) {
       rowsBySourceId.set(row.sourceRowId, row)
       rowsByDbId.set(row.id, row)
     }
 
-    const creditLines = inputLines.map((line, index) =>
-      this.buildSapCreditLine(line, index, payload, config, currency, rowsBySourceId, rowsByDbId)
-    )
-    const totalLC = this.roundMoney(
-      creditLines.reduce((total, line) => total + Number(line.Total || 0), 0)
-    )
-    const firstPayDate = creditLines[0]?.PayDate ?? this.toSapDate(new Date())
-    const depositDate =
-      this.toSapDate(payload.depositDate) ??
-      this.toSapDate(new Date()) ??
-      firstPayDate ??
-      new Date().toISOString()
-    const bankReference =
-      this.normalizeOptional(payload.bankReference) ??
-      this.formatSapReferenceDate(firstPayDate) ??
-      statement?.name ??
-      reconciliation?.name ??
-      ""
-    const journalRemarks = this.truncate(
-      this.normalizeOptional(payload.journalRemarks) ??
-        `Conciliacion ${statement?.name ?? reconciliation?.name ?? bankReference}`,
-      254
-    )
-    const bankName =
-      this.normalizeOptional(account.bankErpId) ??
-      this.normalizeOptional(userBank?.alias) ??
-      this.normalizeOptional(userBank?.name) ??
-      ""
+    return matches.map((match, index) => {
+      const bankRow =
+        (match.bankStatementRowId ? rowsByDbId.get(match.bankStatementRowId) : null) ??
+        (match.bankRowId ? rowsBySourceId.get(match.bankRowId) : null) ??
+        null
+      const sequence =
+        this.toPositiveInteger(match.sequence ?? match.bankStatementLineSequence) ??
+        this.readRowNumber(bankRow, [
+          "Sequence",
+          "sequence",
+          "BankStatementLineSequence",
+          "bankStatementLineSequence",
+          "lineSequence",
+          "secuencia",
+          "lineaBanco",
+          "nroLineaBanco",
+          "linea"
+        ]) ??
+        (allowRowNumberAsSequence && bankRow?.rowNumber && bankRow.rowNumber > 0
+          ? bankRow.rowNumber
+          : null)
+      const accountCode =
+        this.normalizeOptional(match.bankStatementAccountCode) ??
+        this.readRowText(bankRow, [
+          "BankStatementAccountCode",
+          "bankStatementAccountCode",
+          "AccountCode",
+          "accountCode",
+          "cuentaSap",
+          "cuentaSAP",
+          "codigoCuenta",
+          "codigoCuentaBanco"
+        ]) ??
+        fallbackAccountCode
 
-    return {
-      DepositType: "dtCredit",
-      DepositDate: depositDate,
-      DepositCurrency: currency,
-      DepositAccount: depositAccount,
-      DepositorName: null,
-      Bank: bankName,
-      BankAccountNum: account.accountNumber ?? "",
-      BankBranch: userBank?.branch ?? "",
-      BankReference: this.truncate(bankReference, 80),
-      JournalRemarks: journalRemarks,
-      TotalLC: totalLC,
-      TotalFC: 0,
-      TotalSC: 0,
-      AllocationAccount: "",
-      DocRate: 0,
-      TaxAccount: "",
-      TaxAmount: 0,
-      CommissionAccount: null,
-      Commission: 0,
-      CommissionDate: null,
-      TaxCode: "",
-      DepositAccountType: "datBankAccount",
-      ReconcileAfterDeposit: "tYES",
-      VoucherAccount: voucherAccount,
-      Series: this.getSettingsNumber(config, ["sapDepositSeries", "depositSeries"]),
-      Project: null,
-      DistributionRule: null,
-      DistributionRule2: null,
-      DistributionRule3: null,
-      DistributionRule4: null,
-      DistributionRule5: null,
-      CommissionCurrency: currency,
-      CommissionSC: 0,
-      CommissionFC: 0,
-      TaxAmountSC: 0,
-      TaxAmountFC: 0,
-      BPLID: this.getSettingsNumber(config, ["sapBplId", "bplId"]),
-      CheckDepositType: "cdtCashChecks",
-      AttachmentEntry: null,
-      IncomeTaxAccount: null,
-      IncomeTaxAmount: 0,
-      IncomeTaxAmountSC: 0,
-      IncomeTaxAmountFC: 0,
-      CheckLines: [],
-      CreditLines: creditLines,
-      BOELines: []
-    }
+      if (!sequence) {
+        throw new BadRequestException(
+          `No se encontro Sequence para el match ${index + 1}. Mapea o envia la secuencia OBNK de SAP.`
+        )
+      }
+
+      if (!accountCode) {
+        throw new BadRequestException(
+          `No se encontro BankStatementAccountCode para el match ${index + 1}. Configuralo en la cuenta bancaria o en settings del ERP.`
+        )
+      }
+
+      return {
+        BankStatementAccountCode: accountCode,
+        Sequence: sequence
+      }
+    })
   }
 
-  private buildSapCreditLine(
-    input: SapCreditDepositLineDto,
-    index: number,
-    request: SendSapDepositDto,
-    config: CompanyErpConfig,
-    fallbackCurrency: string,
-    rowsBySourceId: Map<string, BankStatementRow>,
-    rowsByDbId: Map<number, BankStatementRow>
-  ): SapCreditDepositLinePayload {
-    const bankRow =
-      (input.bankStatementRowId ? rowsByDbId.get(input.bankStatementRowId) : null) ??
-      (input.bankRowId ? rowsBySourceId.get(input.bankRowId) : null) ??
-      null
-    const creditCard =
-      input.creditCard ??
-      request.creditCard ??
-      this.getSettingsNumber(config, ["sapCreditCardId", "sapCreditCard", "creditCardId"]) ??
-      this.toPositiveInteger(config.company.cardsId)
-    const paymentMethodCode =
-      input.paymentMethodCode ??
-      request.paymentMethodCode ??
-      this.getSettingsNumber(config, [
-        "sapPaymentMethodCode",
-        "paymentMethodCode",
-        "defaultPaymentMethodCode"
-      ]) ??
-      2
-    const voucherNumber =
-      this.normalizeOptional(input.voucherNumber) ??
-      this.normalizeOptional(input.ref3) ??
-      this.readRowText(bankRow, ["ref3", "voucherNumber", "comprobante", "referencia", "reference"]) ??
-      input.bankRowId ??
-      bankRow?.sourceRowId ??
-      String(index + 1)
-    const payDate =
-      this.toSapDate(input.payDate) ??
-      this.toSapDate(this.readRowText(bankRow, ["fecha", "payDate", "date"])) ??
-      this.toSapDate(new Date()) ??
-      new Date().toISOString()
-    const customer =
-      this.normalizeOptional(input.customer) ??
-      this.normalizeOptional(request.defaultCustomer) ??
-      this.readRowText(bankRow, [
-        "customer",
-        "cliente",
-        "cardCode",
-        "codigoCliente",
-        "codigo_cliente"
-      ])
-    const total = input.total ?? this.readRowNumber(bankRow, ["monto", "amount", "total"])
-    const creditCurrency = this.toSapCurrency(input.creditCurrency ?? fallbackCurrency)
+  private buildJournalEntryLines(
+    inputLines: SendSapExternalReconciliationDto["journalEntryLines"],
+    matches: SapExternalReconciliationMatchDto[] | undefined
+  ): SapExternalReconciliationJournalEntryLinePayload[] {
+    if (inputLines?.length) {
+      return inputLines.map((line, index) => {
+        const transactionNumber = this.toPositiveInteger(line.transactionNumber)
+        const lineNumber = this.toNonNegativeInteger(line.lineNumber)
 
-    if (!creditCard) {
+        if (!transactionNumber) {
+          throw new BadRequestException(
+            `No se encontro TransactionNumber para la linea contable ${index + 1}.`
+          )
+        }
+
+        if (lineNumber === null) {
+          throw new BadRequestException(
+            `No se encontro LineNumber para la linea contable ${index + 1}.`
+          )
+        }
+
+        return {
+          TransactionNumber: transactionNumber,
+          LineNumber: lineNumber
+        }
+      })
+    }
+
+    if (!matches?.length) {
       throw new BadRequestException(
-        "No se encontro CreditCard para el deposito SAP. Configuralo en el ERP, en la empresa o envialo en la linea."
+        "Debes enviar journalEntryLines o matches con TransactionNumber y LineNumber."
       )
     }
 
-    if (!customer) {
+    return matches.map((match, index) => {
+      const transactionNumber = this.toPositiveInteger(match.transactionNumber)
+      const lineNumber = this.toNonNegativeInteger(match.lineNumber)
+
+      if (!transactionNumber) {
+        throw new BadRequestException(
+          `No se encontro TransactionNumber para el match ${index + 1}. Mapea ese dato desde las filas del sistema.`
+        )
+      }
+
+      if (lineNumber === null) {
+        throw new BadRequestException(
+          `No se encontro LineNumber para el match ${index + 1}. Mapea ese dato desde las filas del sistema.`
+        )
+      }
+
+      return {
+        TransactionNumber: transactionNumber,
+        LineNumber: lineNumber
+      }
+    })
+  }
+
+  private normalizeRawBankStatementLine(
+    value: unknown,
+    index: number
+  ): SapExternalReconciliationBankStatementLinePayload {
+    const line = this.asRecord(value)
+    if (!line) {
+      throw new BadRequestException(`La linea bancaria ${index + 1} no es valida.`)
+    }
+
+    const accountCode = this.normalizeOptional(
+      line.BankStatementAccountCode ?? line.bankStatementAccountCode ?? line.AccountCode
+    )
+    const sequence = this.toPositiveInteger(
+      line.Sequence ?? line.sequence ?? line.BankStatementLineSequence ?? line.bankStatementLineSequence
+    )
+
+    if (!accountCode) {
       throw new BadRequestException(
-        `No se encontro Customer para la linea ${index + 1} del deposito SAP.`
+        `No se encontro BankStatementAccountCode para la linea bancaria ${index + 1}.`
       )
     }
 
-    if (total === null || total <= 0) {
+    if (!sequence) {
       throw new BadRequestException(
-        `No se encontro un monto valido para la linea ${index + 1} del deposito SAP.`
+        `No se encontro Sequence para la linea bancaria ${index + 1}.`
       )
     }
 
     return {
-      AbsId: input.absId ?? index + 1,
-      CreditCard: creditCard,
-      VoucherNumber: this.truncate(voucherNumber, 80),
-      PaymentMethodCode: paymentMethodCode,
-      PayDate: payDate,
-      Deposited: "tNO",
-      NumOfPayments: 1,
-      Customer: this.truncate(customer, 80),
-      Reference: this.normalizeOptional(input.reference),
-      Transferred: "tNO",
-      Total: this.roundMoney(total),
-      CreditCurrency: creditCurrency
+      ...line,
+      BankStatementAccountCode: accountCode,
+      Sequence: sequence
     }
   }
 
-  private async requireBankStatementForDeposit(
+  private normalizeRawJournalEntryLine(
+    value: unknown,
+    index: number
+  ): SapExternalReconciliationJournalEntryLinePayload {
+    const line = this.asRecord(value)
+    if (!line) {
+      throw new BadRequestException(`La linea contable ${index + 1} no es valida.`)
+    }
+
+    const transactionNumber = this.toPositiveInteger(
+      line.TransactionNumber ?? line.transactionNumber ?? line.TransId ?? line.transId
+    )
+    const lineNumber = this.toNonNegativeInteger(line.LineNumber ?? line.lineNumber)
+
+    if (!transactionNumber) {
+      throw new BadRequestException(
+        `No se encontro TransactionNumber para la linea contable ${index + 1}.`
+      )
+    }
+
+    if (lineNumber === null) {
+      throw new BadRequestException(
+        `No se encontro LineNumber para la linea contable ${index + 1}.`
+      )
+    }
+
+    return {
+      ...line,
+      TransactionNumber: transactionNumber,
+      LineNumber: lineNumber
+    }
+  }
+
+  private async requireBankStatementForExternalReconciliation(
     actor: AuthUser,
     config: CompanyErpConfig,
     bankStatementId: number
@@ -644,10 +768,6 @@ export class SapErpService {
       return
     }
 
-    if (isGestorRole(actor.roleCode) && statement.user.id === actor.id) {
-      return
-    }
-
     throw new ForbiddenException("No tenes permisos para enviar este extracto al ERP.")
   }
 
@@ -687,8 +807,29 @@ export class SapErpService {
     }
   }
 
-  private normalizeRequired(value: string, field: string): string {
-    const trimmed = value.trim()
+  private resolveExternalReconciliationAccountType(
+    value: unknown,
+    config: CompanyErpConfig
+  ): SapExternalReconciliationAccountType {
+    const candidate =
+      this.normalizeOptional(value) ??
+      this.getSettingsString(config, [
+        "sapExternalReconciliationAccountType",
+        "externalReconciliationAccountType"
+      ]) ??
+      "rat_GLAccount"
+
+    if ((sapExternalReconciliationAccountTypes as readonly string[]).includes(candidate)) {
+      return candidate as SapExternalReconciliationAccountType
+    }
+
+    throw new BadRequestException(
+      "ReconciliationAccountType debe ser rat_GLAccount o rat_BusinessPartner."
+    )
+  }
+
+  private normalizeRequired(value: unknown, field: string): string {
+    const trimmed = this.normalizeOptional(value)
     if (!trimmed) {
       throw new BadRequestException(`${field} es obligatorio.`)
     }
@@ -696,84 +837,38 @@ export class SapErpService {
     return trimmed
   }
 
-  private normalizeOptional(value: string | null | undefined): string | null {
-    if (typeof value !== "string") {
+  private normalizeOptional(value: unknown): string | null {
+    if (value === undefined || value === null) {
       return null
     }
 
-    const trimmed = value.trim()
+    const trimmed = String(value).trim()
     return trimmed ? trimmed : null
   }
 
-  private toSapCurrency(value: string | null | undefined): string {
-    const normalized = this.normalizeOptional(value)?.toUpperCase() ?? "GS"
-    return ["PYG", "GUARANI", "GUARANIES"].includes(normalized) ? "GS" : normalized
-  }
-
-  private toSapDate(value: Date | string | null | undefined): string | null {
-    if (value instanceof Date) {
-      return `${value.toISOString().slice(0, 10)}T00:00:00Z`
-    }
-
-    const text = this.normalizeOptional(value)
-    if (!text) {
-      return null
-    }
-
-    const dateOnly = text.match(/^(\d{4}-\d{2}-\d{2})/)
-    if (dateOnly) {
-      return `${dateOnly[1]}T00:00:00Z`
-    }
-
-    const parsed = Date.parse(text)
-    if (Number.isNaN(parsed)) {
-      return null
-    }
-
-    return `${new Date(parsed).toISOString().slice(0, 10)}T00:00:00Z`
-  }
-
-  private formatSapReferenceDate(value: string | null): string | null {
-    const sapDate = this.toSapDate(value)
-    if (!sapDate) {
-      return null
-    }
-
-    const [year, month, day] = sapDate.slice(0, 10).split("-")
-    return `${day}.${month}.${year}`
-  }
-
-  private readRowText(row: BankStatementRow | null, keys: string[]): string | null {
+  private readRowText(row: SapReadableRow | null, keys: string[]): string | null {
     if (!row) {
       return null
     }
 
     for (const key of keys) {
-      const value = row.normalized?.[key] ?? row.values?.[key]
-      if (typeof value === "string" && value.trim()) {
-        return value.trim()
-      }
-      if (typeof value === "number" && Number.isFinite(value)) {
-        return String(value)
+      const value = this.readRowValue(row, key)
+      if (value !== undefined && value !== null && String(value).trim()) {
+        return String(value).trim()
       }
     }
 
     return null
   }
 
-  private readRowNumber(row: BankStatementRow | null, keys: string[]): number | null {
+  private readRowNumber(row: SapReadableRow | null, keys: string[]): number | null {
     if (!row) {
       return null
     }
 
     for (const key of keys) {
-      const value = row.normalized?.[key] ?? row.values?.[key]
-      const numberValue =
-        typeof value === "number"
-          ? value
-          : typeof value === "string"
-            ? Number(value.replace(/\./g, "").replace(",", "."))
-            : Number.NaN
+      const value = this.readRowValue(row, key)
+      const numberValue = this.toNumber(value)
 
       if (Number.isFinite(numberValue)) {
         return Math.abs(numberValue)
@@ -783,24 +878,57 @@ export class SapErpService {
     return null
   }
 
-  private getSettingsNumber(config: CompanyErpConfig, keys: string[]): number | null {
+  private readRowValue(row: SapReadableRow, key: string): unknown {
+    const sources = [row.normalized, row.values]
+    const normalizedKey = this.normalizeLookupKey(key)
+
+    for (const source of sources) {
+      if (!source) continue
+
+      const direct = source[key]
+      if (direct !== undefined && direct !== null) return direct
+
+      const found = Object.entries(source).find(
+        ([entryKey]) => this.normalizeLookupKey(entryKey) === normalizedKey
+      )
+      if (found?.[1] !== undefined && found[1] !== null) return found[1]
+    }
+
+    if (this.normalizeLookupKey("rowNumber") === normalizedKey && row.rowNumber !== undefined) {
+      return row.rowNumber
+    }
+
+    return undefined
+  }
+
+  private getSettingsString(config: CompanyErpConfig, keys: string[]): string | null {
     for (const key of keys) {
-      const parsed = this.toPositiveInteger(config.settings?.[key])
-      if (parsed) {
-        return parsed
+      const value = this.normalizeOptional(config.settings?.[key])
+      if (value) {
+        return value
       }
     }
 
     return null
   }
 
+  private getSettingsBoolean(config: CompanyErpConfig, keys: string[]): boolean {
+    for (const key of keys) {
+      const value = config.settings?.[key]
+      if (typeof value === "boolean") {
+        return value
+      }
+
+      if (typeof value === "string" && value.trim()) {
+        return ["true", "1", "yes", "y", "si"].includes(value.trim().toLowerCase())
+      }
+    }
+
+    return false
+  }
+
   private toPositiveInteger(value: unknown): number | null {
-    const numberValue =
-      typeof value === "number"
-        ? value
-        : typeof value === "string" && value.trim()
-          ? Number(value.trim())
-          : Number.NaN
+    const numberValue = this.toNumber(value)
 
     if (!Number.isInteger(numberValue) || numberValue <= 0) {
       return null
@@ -809,12 +937,26 @@ export class SapErpService {
     return numberValue
   }
 
-  private roundMoney(value: number): number {
-    return Math.round((value + Number.EPSILON) * 100) / 100
+  private toNonNegativeInteger(value: unknown): number | null {
+    const numberValue = this.toNumber(value)
+
+    if (!Number.isInteger(numberValue) || numberValue < 0) {
+      return null
+    }
+
+    return numberValue
   }
 
-  private truncate(value: string, maxLength: number): string {
-    return value.length > maxLength ? value.slice(0, maxLength) : value
+  private toNumber(value: unknown): number {
+    if (typeof value === "number") {
+      return value
+    }
+
+    if (typeof value !== "string" || !value.trim()) {
+      return Number.NaN
+    }
+
+    return Number(value.trim().replace(/\./g, "").replace(",", "."))
   }
 
   private decryptSessionCookie(value: string | null): string {
@@ -835,14 +977,98 @@ export class SapErpService {
   ): string | null {
     if (!payload) return null
 
-    for (const key of candidates) {
-      const value = payload[key]
-      if (value !== undefined && value !== null && String(value).trim()) {
-        return String(value).trim()
+    for (const source of [
+      payload,
+      this.asRecord(payload.ExternalReconciliation),
+      this.asRecord(payload.value)
+    ]) {
+      if (!source) continue
+
+      for (const key of candidates) {
+        const value = source[key]
+        if (value !== undefined && value !== null && String(value).trim()) {
+          return String(value).trim()
+        }
       }
     }
 
     return null
+  }
+
+  private asRecord(value: unknown): Record<string, unknown> | null {
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      return null
+    }
+
+    return value as Record<string, unknown>
+  }
+
+  private normalizeLookupKey(value: string): string {
+    return value
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/[^a-zA-Z0-9]/g, "")
+      .toLowerCase()
+  }
+
+  private logSapExternalReconciliationError(
+    error: unknown,
+    context: {
+      actorId: number
+      companyErpConfigId: number
+      companyErpConfigName: string
+      endpoint: string
+      endpointPath: string
+      sapPayload: SapExternalReconciliationPayload
+    }
+  ) {
+    const errorPayload =
+      error instanceof ExternalRequestError
+        ? {
+            message: error.message,
+            statusCode: error.statusCode ?? null,
+            responsePayload: error.responsePayload ?? null
+          }
+        : {
+            message: error instanceof Error ? error.message : String(error),
+            statusCode: null,
+            responsePayload: null,
+            stack: error instanceof Error ? error.stack : null
+          }
+    const reconciliation = context.sapPayload.ExternalReconciliation
+    const logPayload = {
+      event: "sap_external_reconciliation_failed",
+      actorId: context.actorId,
+      companyErpConfigId: context.companyErpConfigId,
+      companyErpConfigName: context.companyErpConfigName,
+      endpoint: context.endpoint,
+      endpointPath: context.endpointPath,
+      sapStatusCode: errorPayload.statusCode,
+      sapErrorMessage: errorPayload.message,
+      sapResponsePayload: errorPayload.responsePayload,
+      requestSummary: {
+        reconciliationAccountType: reconciliation.ReconciliationAccountType,
+        bankStatementLines:
+          reconciliation.ReconciliationBankStatementLines?.length ?? 0,
+        journalEntryLines:
+          reconciliation.ReconciliationJournalEntryLines?.length ?? 0
+      },
+      sapRequestPayload: context.sapPayload,
+      stack: "stack" in errorPayload ? errorPayload.stack : null
+    }
+
+    this.logger.error(this.stringifyLogPayload(logPayload))
+  }
+
+  private stringifyLogPayload(payload: Record<string, unknown>): string {
+    const text = JSON.stringify(payload, null, 2)
+    const maxLength = 12000
+
+    if (text.length <= maxLength) {
+      return text
+    }
+
+    return `${text.slice(0, maxLength)}\n... log truncado (${text.length} caracteres totales)`
   }
 
   private mapExternalError(error: unknown): {

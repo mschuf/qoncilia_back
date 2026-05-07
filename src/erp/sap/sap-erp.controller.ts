@@ -8,10 +8,10 @@ import { JwtAuthGuard } from "../../common/guards/jwt-auth.guard"
 import { ModuleAccessGuard } from "../../common/guards/module-access.guard"
 import { RolesGuard } from "../../common/guards/roles.guard"
 import { AuthUser } from "../../common/interfaces/auth-user.interface"
-import { SendSapDepositDto } from "./dto/send-sap-deposit.dto"
 import { SapLoginDto } from "./dto/sap-login.dto"
 import { SapLogoutDto } from "./dto/sap-logout.dto"
 import { SapSessionStatusQueryDto } from "./dto/sap-session-status-query.dto"
+import { SendSapExternalReconciliationDto } from "./dto/send-sap-external-reconciliation.dto"
 import { SapErpService } from "./sap-erp.service"
 
 @Controller("erp/sap")
@@ -38,9 +38,12 @@ export class SapErpController {
     return this.sapErpService.logoutSapSession(actor, body.companyErpConfigId)
   }
 
-  @Post("deposits")
-  @Roles(Role.GESTOR_COBRANZA, Role.GESTOR_PAGOS, Role.ADMIN, Role.IS_SUPER_ADMIN)
-  sendDeposit(@Body() body: SendSapDepositDto, @CurrentUser() actor: AuthUser) {
-    return this.sapErpService.sendSapDeposit(actor, body)
+  @Post("external-reconciliations")
+  @Roles(Role.ADMIN, Role.IS_SUPER_ADMIN)
+  reconcileExternal(
+    @Body() body: SendSapExternalReconciliationDto,
+    @CurrentUser() actor: AuthUser
+  ) {
+    return this.sapErpService.reconcileExternal(actor, body)
   }
 }

@@ -76,12 +76,13 @@ export class SapB1Service {
     })
   }
 
-  async postDeposit(
+  async reconcileExternal(
     config: CompanyErpConfig,
     cookieHeader: string,
-    payload: Record<string, unknown>
+    payload: Record<string, unknown>,
+    endpointPath = "ExternalReconciliationsService_Reconcile"
   ): Promise<JsonRequestResponse> {
-    return this.performJsonRequest(this.joinUrl(config.serviceLayerUrl, "Deposits"), {
+    return this.performJsonRequest(this.joinUrl(config.serviceLayerUrl, endpointPath), {
       method: "POST",
       body: payload,
       headers: {
@@ -105,7 +106,7 @@ export class SapB1Service {
     const configured = config.settings?.sapSessionCheckPath ?? config.settings?.sessionCheckPath
     return typeof configured === "string" && configured.trim()
       ? configured.trim()
-      : "Deposits?$top=1"
+      : "BankPages?$top=1"
   }
 
   private extractSessionExpiresAt(payload: Record<string, unknown> | null): Date | null {
