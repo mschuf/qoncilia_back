@@ -41,6 +41,9 @@ export class User {
   @Column({ name: "usr_activo", type: "boolean", default: false })
   activo!: boolean;
 
+  @Column({ name: "usr_foto", type: "text", nullable: true })
+  usrFoto!: string | null;
+
   @ManyToOne(() => Company, (company) => company.users, { nullable: false, onDelete: "RESTRICT" })
   @JoinColumn({ name: "emp_id", referencedColumnName: "id" })
   company!: Company;

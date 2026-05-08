@@ -191,6 +191,7 @@ export class UsersService {
       user.usrLegajo = this.normalizeRequired(payload.usrLegajo, "usrLegajo");
     }
     if (payload.activo !== undefined) user.activo = payload.activo;
+    if (payload.usrFoto !== undefined) user.usrFoto = payload.usrFoto;
 
     user.company = desiredCompany;
     user.role = desiredRole;
@@ -265,6 +266,7 @@ export class UsersService {
       usrCelular: user.usrCelular,
       usrLogin: user.usrLogin,
       usrLegajo: user.usrLegajo,
+      usrFoto: user.usrFoto,
       activo: user.activo,
       roleId: user.role?.id ?? 0,
       roleCode,

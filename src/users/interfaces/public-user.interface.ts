@@ -8,6 +8,7 @@ export interface PublicUser {
   usrCelular: string | null;
   usrLogin: string;
   usrLegajo: string;
+  usrFoto: string | null;
   activo: boolean;
   roleId: number;
   roleCode: Role;

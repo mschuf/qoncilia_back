@@ -87,4 +87,8 @@ export class UpdateUserDto {
   @IsOptional()
   @IsBoolean()
   activo?: boolean;
+
+  @IsOptional()
+  @IsString()
+  usrFoto?: string;
 }
