@@ -69,7 +69,7 @@ export class UsersService {
         const role = await this.requireRoleByCodeFromRepository(roleRepository, Role.ADMIN);
         const company = await companyRepository.save(
           companyRepository.create({
-            code: this.buildRegistrationFiscalId(login),
+            code: payload.companyFiscalId.trim(),
             name: companyName,
             active: false,
             webserviceErp: null,

@@ -37,6 +37,11 @@ export class RegisterDto {
   @MaxLength(120)
   companyName?: string;
 
+  @IsNotEmpty({ message: "El ID fiscal es obligatorio" })
+  @IsString()
+  @MaxLength(50)
+  companyFiscalId!: string;
+
   @Transform(emptyToUndefined)
   @IsOptional()
   @IsString()
