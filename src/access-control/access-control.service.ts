@@ -71,7 +71,8 @@ export class AccessControlService {
           webserviceErp: this.normalizeOptional(payload.webserviceErp),
           schemeErp: this.normalizeOptional(payload.schemeErp),
           tlsVersionErp: this.normalizeOptional(payload.tlsVersionErp),
-          cardsId: this.normalizeOptional(payload.cardsId)
+          cardsId: this.normalizeOptional(payload.cardsId),
+          logo: payload.logo ?? null
         });
 
         const created = await companyRepository.save(company);
@@ -119,6 +120,9 @@ export class AccessControlService {
     if (payload.cardsId !== undefined) {
       company.cardsId = this.normalizeOptional(payload.cardsId);
     }
+    if (payload.logo !== undefined) {
+      company.logo = payload.logo ?? null;
+    }
 
     try {
       const updated = await this.companyRepository.save(company);
@@ -146,6 +150,10 @@ export class AccessControlService {
 
     if (payload.fiscalId !== undefined) {
       company.code = this.normalizeFiscalId(payload.fiscalId);
+    }
+
+    if (payload.logo !== undefined) {
+      company.logo = payload.logo ?? null;
     }
 
     try {
@@ -366,7 +374,8 @@ export class AccessControlService {
       webserviceErp: entity.webserviceErp,
       schemeErp: entity.schemeErp,
       tlsVersionErp: entity.tlsVersionErp,
-      cardsId: entity.cardsId
+      cardsId: entity.cardsId,
+      logo: entity.logo
     };
   }
 

@@ -454,7 +454,8 @@ export class BankingService {
       webserviceErp: company.webserviceErp,
       schemeErp: company.schemeErp,
       tlsVersionErp: company.tlsVersionErp,
-      cardsId: company.cardsId
+      cardsId: company.cardsId,
+      logo: company.logo
     };
   }
 

@@ -62,4 +62,9 @@ export class CreateCompanyDto {
   @IsOptional()
   @IsBoolean()
   active?: boolean;
+
+  @Transform(emptyToUndefined)
+  @IsOptional()
+  @IsString()
+  logo?: string;
 }

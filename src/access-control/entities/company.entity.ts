@@ -23,6 +23,9 @@ export class Company {
   @Column({ name: "emp_activa", type: "boolean", default: true })
   active!: boolean;
 
+  @Column({ name: "emp_logo", type: "text", nullable: true })
+  logo!: string | null;
+
   @Column({ name: "emp_webservice_erp", type: "varchar", length: 255, nullable: true })
   webserviceErp!: string | null;
 

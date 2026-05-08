@@ -272,6 +272,7 @@ export class UsersService {
       companyId: user.company.id,
       companyCode: user.company.code,
       companyName: user.company.name,
+      companyLogo: user.company.logo,
       enabledModules,
       role: roleCode,
       creatorUserId: user.creatorUser?.id ?? null,

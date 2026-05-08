@@ -8,6 +8,7 @@ export interface PublicCompany {
   schemeErp: string | null;
   tlsVersionErp: string | null;
   cardsId: string | null;
+  logo: string | null;
 }
 
 export interface PublicRole {

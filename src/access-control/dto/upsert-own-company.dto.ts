@@ -20,4 +20,9 @@ export class UpsertOwnCompanyDto {
   @IsString()
   @MaxLength(50)
   fiscalId?: string;
+
+  @Transform(emptyToUndefined)
+  @IsOptional()
+  @IsString()
+  logo?: string;
 }

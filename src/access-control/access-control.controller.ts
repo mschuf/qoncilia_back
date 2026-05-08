@@ -56,14 +56,14 @@ export class AccessControlController {
 
   @Get("company-profile")
   @Roles(Role.ADMIN, Role.IS_SUPER_ADMIN)
-  @RequiredModule(AppModuleCode.ERP_MANAGEMENT)
+  @RequiredModule(AppModuleCode.PROFILE)
   getOwnCompany(@CurrentUser() actor: AuthUser) {
     return this.accessControlService.getOwnCompany(actor);
   }
 
   @Put("company-profile")
   @Roles(Role.ADMIN)
-  @RequiredModule(AppModuleCode.ERP_MANAGEMENT)
+  @RequiredModule(AppModuleCode.PROFILE)
   upsertOwnCompany(@Body() body: UpsertOwnCompanyDto, @CurrentUser() actor: AuthUser) {
     return this.accessControlService.upsertOwnCompany(body, actor);
   }

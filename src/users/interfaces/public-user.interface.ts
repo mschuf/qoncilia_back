@@ -15,6 +15,7 @@ export interface PublicUser {
   companyId: number;
   companyCode: string;
   companyName: string;
+  companyLogo: string | null;
   enabledModules: string[];
   role: Role;
   creatorUserId: number | null;
