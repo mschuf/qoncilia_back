@@ -323,7 +323,9 @@ export class ErpService {
       schemeErp: company.schemeErp,
       tlsVersionErp: company.tlsVersionErp,
       cardsId: company.cardsId,
-      logo: company.logo
+      logo: company.logo,
+      address: company.address,
+      validityDate: company.validityDate
     }
   }
 
