@@ -26,6 +26,12 @@ export class Company {
   @Column({ name: "emp_logo", type: "text", nullable: true })
   logo!: string | null;
 
+  @Column({ name: "emp_direccion", type: "varchar", length: 255, nullable: true })
+  address!: string | null;
+
+  @Column({ name: "emp_fecha_vigencia", type: "timestamptz", nullable: true })
+  validityDate!: Date | null;
+
   @Column({ name: "emp_webservice_erp", type: "varchar", length: 255, nullable: true })
   webserviceErp!: string | null;
 

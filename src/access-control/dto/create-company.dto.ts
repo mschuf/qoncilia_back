@@ -67,4 +67,14 @@ export class CreateCompanyDto {
   @IsOptional()
   @IsString()
   logo?: string;
+
+  @Transform(emptyToUndefined)
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  address?: string;
+
+  @IsOptional()
+  @IsString()
+  validityDate?: string;
 }

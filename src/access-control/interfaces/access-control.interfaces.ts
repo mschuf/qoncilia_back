@@ -9,6 +9,8 @@ export interface PublicCompany {
   tlsVersionErp: string | null;
   cardsId: string | null;
   logo: string | null;
+  address: string | null;
+  validityDate: Date | null;
 }
 
 export interface PublicRole {

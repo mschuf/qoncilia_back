@@ -72,7 +72,9 @@ export class AccessControlService {
           schemeErp: this.normalizeOptional(payload.schemeErp),
           tlsVersionErp: this.normalizeOptional(payload.tlsVersionErp),
           cardsId: this.normalizeOptional(payload.cardsId),
-          logo: payload.logo ?? null
+          logo: payload.logo ?? null,
+          address: this.normalizeOptional(payload.address),
+          validityDate: payload.validityDate ? new Date(payload.validityDate) : null
         });
 
         const created = await companyRepository.save(company);
@@ -123,6 +125,12 @@ export class AccessControlService {
     if (payload.logo !== undefined) {
       company.logo = payload.logo ?? null;
     }
+    if (payload.address !== undefined) {
+      company.address = this.normalizeOptional(payload.address);
+    }
+    if (payload.validityDate !== undefined) {
+      company.validityDate = payload.validityDate ? new Date(payload.validityDate) : null;
+    }
 
     try {
       const updated = await this.companyRepository.save(company);
@@ -154,6 +162,18 @@ export class AccessControlService {
 
     if (payload.logo !== undefined) {
       company.logo = payload.logo ?? null;
+    }
+
+    if (payload.address !== undefined) {
+      company.address = this.normalizeOptional(payload.address);
+    }
+
+    if (payload.webserviceErp !== undefined) {
+      company.webserviceErp = this.normalizeOptional(payload.webserviceErp);
+    }
+
+    if (payload.schemeErp !== undefined) {
+      company.schemeErp = this.normalizeOptional(payload.schemeErp);
     }
 
     try {
@@ -375,7 +395,9 @@ export class AccessControlService {
       schemeErp: entity.schemeErp,
       tlsVersionErp: entity.tlsVersionErp,
       cardsId: entity.cardsId,
-      logo: entity.logo
+      logo: entity.logo,
+      address: entity.address,
+      validityDate: entity.validityDate
     };
   }
 

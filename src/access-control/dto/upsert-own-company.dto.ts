@@ -25,4 +25,22 @@ export class UpsertOwnCompanyDto {
   @IsOptional()
   @IsString()
   logo?: string;
+
+  @Transform(emptyToUndefined)
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  address?: string;
+
+  @Transform(emptyToUndefined)
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  webserviceErp?: string;
+
+  @Transform(emptyToUndefined)
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  schemeErp?: string;
 }
