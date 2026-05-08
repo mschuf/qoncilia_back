@@ -19,7 +19,6 @@ export interface PublicCompanyBankAccountSummary {
   id: number;
   bankId: number;
   bankName: string;
-  bankAlias: string | null;
   name: string;
   currency: string;
   accountNumber: string;
@@ -29,7 +28,6 @@ export interface PublicCompanyBankAccountSummary {
 export interface PublicUserBankSummary {
   id: number;
   bankName: string;
-  alias: string | null;
   branch: string | null;
   description: string | null;
   active: boolean;
@@ -218,7 +216,6 @@ export interface ConciliationKpiResponse {
   bankBreakdown: Array<{
     userBankId: number;
     bankName: string;
-    alias: string | null;
     totalReconciliations: number;
     averageMatchPercentage: number;
   }>;
@@ -226,7 +223,6 @@ export interface ConciliationKpiResponse {
     id: number;
     name: string;
     bankName: string;
-    alias: string | null;
     companyBankAccountName: string | null;
     companyBankAccountNumber: string | null;
     layoutName: string;
@@ -250,7 +246,6 @@ export interface PublicBankStatementSummary {
   userLogin: string;
   userBankId: number;
   bankName: string;
-  bankAlias: string | null;
   companyBankAccountId: number;
   companyBankAccountName: string;
   companyBankAccountNumber: string;

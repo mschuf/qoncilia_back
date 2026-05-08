@@ -58,13 +58,12 @@ BEGIN
     empresa_id,
     usuario_id,
     banco_nombre,
-    banco_alias,
     banco_descripcion,
     banco_activo
   )
   VALUES
-    (target_company_id, target_user_id, 'GNB', 'GNB PYG', 'Extractos GNB PYG', TRUE),
-    (target_company_id, target_user_id, 'Itau', 'Itau PYG', 'Extractos Itau PYG', TRUE)
+    (target_company_id, target_user_id, 'GNB', 'Extractos GNB PYG', TRUE),
+    (target_company_id, target_user_id, 'Itau', 'Extractos Itau PYG', TRUE)
   ON CONFLICT DO NOTHING;
 
   SELECT banco_id INTO banco_gnb_id

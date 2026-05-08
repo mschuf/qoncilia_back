@@ -123,7 +123,6 @@ Bancos operativos asignados a usuarios dentro de una empresa.
 | `usuario_id` | Usuario responsable o asignado a operar el banco. |
 | `banco_origen_id` | Banco origen cuando se sincroniza de admin a gestor. |
 | `banco_nombre` | Nombre oficial del banco. |
-| `banco_alias` | Nombre corto para mostrar en pantallas. |
 | `banco_descripcion` | Detalle administrativo del banco. |
 | `banco_sucursal` | Sucursal o referencia operativa. |
 | `banco_activo` | Habilita el banco para seleccionarlo. |

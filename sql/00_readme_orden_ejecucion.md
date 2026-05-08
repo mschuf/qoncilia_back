@@ -22,6 +22,8 @@ Estos scripts estan pensados para un `DROP`/recreacion limpia. Los scripts princ
 16. `17_create_erp_sessions_and_gestor_access.sql`
 17. `18_create_user_template_availability.sql` (habilitaciones globales por usuario admin)
 18. `19_seed_template_base_mappings.sql` (completa campos en plantillas base y copias existentes)
+19. `v20_add_company_details.sql`
+20. `21_drop_bank_alias.sql` (elimina `banco_alias` de bases existentes)
 
 ## Notas
 
@@ -36,3 +38,4 @@ Estos scripts estan pensados para un `DROP`/recreacion limpia. Los scripts princ
 - Los seeds `11` y `12` cargan bancos, cuentas, sistemas y plantillas sobre el esquema nuevo.
 - Desde `18`, las plantillas base habilitadas por superadmin son globales por usuario admin; el script migra lo que exista en la tabla legacy por banco.
 - `19` es incremental e idempotente: agrega mappings faltantes a plantillas base y plantillas ya copiadas a usuarios.
+- `21` es incremental e idempotente: elimina solo la columna `banco_alias` de `public.bancos`.

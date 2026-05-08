@@ -61,7 +61,6 @@ CREATE TABLE public.bancos (
   usuario_id INTEGER NOT NULL,
   banco_origen_id INTEGER NULL,
   banco_nombre VARCHAR(160) NOT NULL,
-  banco_alias VARCHAR(120) NULL,
   banco_descripcion VARCHAR(255) NULL,
   banco_sucursal VARCHAR(120) NULL,
   banco_activo BOOLEAN NOT NULL DEFAULT TRUE,

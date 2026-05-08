@@ -38,9 +38,6 @@ export class BankEntity {
   @Column({ name: "banco_nombre", type: "varchar", length: 160 })
   name!: string;
 
-  @Column({ name: "banco_alias", type: "varchar", length: 120, nullable: true })
-  alias!: string | null;
-
   @Column({ name: "banco_descripcion", type: "varchar", length: 255, nullable: true })
   description!: string | null;
 

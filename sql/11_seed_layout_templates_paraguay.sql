@@ -57,14 +57,13 @@ BEGIN
     empresa_id,
     usuario_id,
     banco_nombre,
-    banco_alias,
     banco_descripcion,
     banco_activo
   )
   VALUES
-    (target_company_id, target_user_id, 'Banco Familiar', 'Familiar PYG', 'Extracto Banco Familiar PYG', TRUE),
-    (target_company_id, target_user_id, 'Sudameris', 'Sudameris PYG', 'Extracto Sudameris PYG', TRUE),
-    (target_company_id, target_user_id, 'Continental', 'Continental PYG', 'Extracto Continental PYG', TRUE)
+    (target_company_id, target_user_id, 'Banco Familiar', 'Extracto Banco Familiar PYG', TRUE),
+    (target_company_id, target_user_id, 'Sudameris', 'Extracto Sudameris PYG', TRUE),
+    (target_company_id, target_user_id, 'Continental', 'Extracto Continental PYG', TRUE)
   ON CONFLICT DO NOTHING;
 
   SELECT banco_id INTO banco_familiar_id

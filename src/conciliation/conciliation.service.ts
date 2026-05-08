@@ -309,7 +309,6 @@ export class ConciliationService {
       company: user.company,
       user,
       name: normalizeRequired(payload.name, "name"),
-      alias: normalizeOptional(payload.alias),
       description: normalizeOptional(payload.description),
       branch: normalizeOptional(payload.branch),
       active: payload.active ?? true
@@ -336,7 +335,6 @@ export class ConciliationService {
     if (payload.name !== undefined) {
       bank.name = normalizeRequired(payload.name, "name");
     }
-    if (payload.alias !== undefined) bank.alias = normalizeOptional(payload.alias);
     if (payload.description !== undefined) {
       bank.description = normalizeOptional(payload.description);
     }
@@ -758,7 +756,7 @@ export class ConciliationService {
             "systemLabel"
           ),
           bankLabel: normalizeRequired(
-            payload.bankLabel ?? userBank.alias ?? userBank.bankName ?? template.bankLabel,
+            payload.bankLabel ?? userBank.bankName ?? template.bankLabel,
             "bankLabel"
           ),
           autoMatchThreshold: normalizeThreshold(
@@ -1061,7 +1059,7 @@ export class ConciliationService {
             "systemLabel"
           ),
           bankLabel: normalizeRequired(
-            payload.bankLabel ?? userBank.alias ?? userBank.bankName ?? template.bankLabel,
+            payload.bankLabel ?? userBank.bankName ?? template.bankLabel,
             "bankLabel"
           ),
           autoMatchThreshold: normalizeThreshold(
@@ -1559,7 +1557,6 @@ export class ConciliationService {
       {
         userBankId: number;
         bankName: string;
-        alias: string | null;
         totalReconciliations: number;
       }
     >();
@@ -1568,7 +1565,6 @@ export class ConciliationService {
       const current = bankAggregation.get(item.userBank.id) ?? {
         userBankId: item.userBank.id,
         bankName: item.userBank.bankName,
-        alias: item.userBank.alias,
         totalReconciliations: 0
       };
 
@@ -1587,7 +1583,6 @@ export class ConciliationService {
         .map((item) => ({
           userBankId: item.userBankId,
           bankName: item.bankName,
-          alias: item.alias,
           totalReconciliations: item.totalReconciliations,
           averageMatchPercentage: 0
         }))
@@ -1596,7 +1591,6 @@ export class ConciliationService {
         id: item.id,
         name: item.name,
         bankName: item.userBank.bankName,
-        alias: item.userBank.alias,
         companyBankAccountName: item.companyBankAccount?.name ?? null,
         companyBankAccountNumber: item.companyBankAccount?.accountNumber ?? null,
         layoutName: item.layout.name,
@@ -1716,7 +1710,7 @@ export class ConciliationService {
       gestorUserId: gestorUser.id,
       sourceBankId: sourceBank.id,
       targetBankId: sourceBank.id,
-      targetBankName: sourceBank.alias ?? sourceBank.name,
+      targetBankName: sourceBank.name,
       syncedLayoutIds: sourceLayouts.map((layout) => layout.id),
       syncedAccountIds: (sourceBank.accounts ?? []).map((account) => account.id)
     };

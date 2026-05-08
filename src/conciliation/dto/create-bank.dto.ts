@@ -38,12 +38,6 @@ export class CreateBankDto {
   @Transform(emptyToUndefined)
   @IsOptional()
   @IsString()
-  @MaxLength(120)
-  alias?: string;
-
-  @Transform(emptyToUndefined)
-  @IsOptional()
-  @IsString()
   @MaxLength(255)
   description?: string;
 

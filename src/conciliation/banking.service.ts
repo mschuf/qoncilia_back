@@ -90,7 +90,6 @@ export class BankingService {
       company: owner.company,
       user: owner,
       name: this.normalizeRequired(payload.name, "name"),
-      alias: this.normalizeOptional(payload.alias),
       description: this.normalizeOptional(payload.description),
       branch: this.normalizeOptional(payload.branch),
       active: payload.active ?? true
@@ -124,9 +123,6 @@ export class BankingService {
 
     if (payload.name !== undefined) {
       bank.name = this.normalizeRequired(payload.name, "name");
-    }
-    if (payload.alias !== undefined) {
-      bank.alias = this.normalizeOptional(payload.alias);
     }
     if (payload.description !== undefined) {
       bank.description = this.normalizeOptional(payload.description);
@@ -468,7 +464,6 @@ export class BankingService {
       userId: bank.user.id,
       userLogin: bank.user.usrLogin,
       name: bank.name,
-      alias: bank.alias,
       description: bank.description,
       branch: bank.branch,
       active: bank.active
@@ -482,7 +477,6 @@ export class BankingService {
       companyName: account.company.name,
       bankId: account.bank.id,
       bankName: account.bank.name,
-      bankAlias: account.bank.alias,
       bankBranch: account.bank.branch,
       name: account.name,
       currency: account.currency,

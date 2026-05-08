@@ -6,7 +6,6 @@ export interface PublicBank {
   userId: number;
   userLogin: string;
   name: string;
-  alias: string | null;
   description: string | null;
   branch: string | null;
   active: boolean;
@@ -18,7 +17,6 @@ export interface PublicCompanyBankAccount {
   companyName: string;
   bankId: number;
   bankName: string;
-  bankAlias: string | null;
   bankBranch: string | null;
   name: string;
   currency: string;

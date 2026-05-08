@@ -59,7 +59,6 @@ export function toPublicUserBankSummary(entity: BankEntity): PublicUserBankSumma
   return {
     id: entity.id,
     bankName: entity.bankName,
-    alias: entity.alias,
     branch: entity.branch,
     description: entity.description,
     active: entity.active
@@ -185,7 +184,6 @@ export function toPublicCompanyBankAccountSummary(
     id: entity.id,
     bankId: bank.id,
     bankName: bank.name,
-    bankAlias: bank.alias,
     name: entity.name,
     currency: entity.currency,
     accountNumber: entity.accountNumber,
@@ -213,7 +211,6 @@ export function toPublicBankStatementSummary(entity: BankStatement): PublicBankS
     userLogin: entity.user.usrLogin,
     userBankId: entity.userBank.id,
     bankName: entity.userBank.bankName,
-    bankAlias: entity.userBank.alias,
     companyBankAccountId: entity.companyBankAccount.id,
     companyBankAccountName: entity.companyBankAccount.name,
     companyBankAccountNumber: entity.companyBankAccount.accountNumber,
