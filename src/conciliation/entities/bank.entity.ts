@@ -50,6 +50,8 @@ export class BankEntity {
   @OneToMany(() => CompanyBankAccount, (account) => account.bank)
   accounts!: CompanyBankAccount[];
 
+  accountCount?: number;
+
   @OneToMany(() => BankEntity, (bank) => bank.sourceBank)
   assignedBanks!: BankEntity[];
 

@@ -9,6 +9,7 @@ export interface PublicBank {
   description: string | null;
   branch: string | null;
   active: boolean;
+  accountCount: number;
 }
 
 export interface PublicCompanyBankAccount {
@@ -41,4 +42,12 @@ export interface CompanyBankingReferenceResponse {
   banks: PublicBank[];
   accounts: PublicCompanyBankAccount[];
   currencies: PublicCurrency[];
+}
+
+export interface PaginatedResponse<T> {
+  data: T[];
+  total: number;
+  page: number;
+  limit: number;
+  lastPage: number;
 }

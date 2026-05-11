@@ -38,6 +38,20 @@ export class BankingController {
     return this.bankingService.listReference(actor, query);
   }
 
+  @Get("banks")
+  @Roles(Role.ADMIN, Role.IS_SUPER_ADMIN)
+  @RequiredModule(AppModuleCode.LAYOUT_MANAGEMENT)
+  listBanks(@CurrentUser() actor: AuthUser, @Query() query: ListCompanyBankingQueryDto) {
+    return this.bankingService.listBanks(actor, query);
+  }
+
+  @Get("accounts")
+  @Roles(Role.ADMIN, Role.IS_SUPER_ADMIN)
+  @RequiredModule(AppModuleCode.LAYOUT_MANAGEMENT)
+  listAccounts(@CurrentUser() actor: AuthUser, @Query() query: ListCompanyBankingQueryDto) {
+    return this.bankingService.listAccounts(actor, query);
+  }
+
   @Post("banks")
   @Roles(Role.ADMIN, Role.IS_SUPER_ADMIN)
   @RequiredModule(AppModuleCode.LAYOUT_MANAGEMENT)

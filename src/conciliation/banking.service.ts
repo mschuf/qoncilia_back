@@ -6,7 +6,7 @@ import {
   NotFoundException
 } from "@nestjs/common";
 import { InjectRepository } from "@nestjs/typeorm";
-import { IsNull, QueryFailedError, Repository } from "typeorm";
+import { Brackets, QueryFailedError, Repository } from "typeorm";
 import { Company } from "../access-control/entities/company.entity";
 import { PublicCompany } from "../access-control/interfaces/access-control.interfaces";
 import { Role } from "../common/enums/role.enum";
@@ -23,6 +23,7 @@ import { CompanyBankAccount } from "./entities/company-bank-account.entity";
 import { Currency } from "./entities/currency.entity";
 import {
   CompanyBankingReferenceResponse,
+  PaginatedResponse,
   PublicBank,
   PublicCompanyBankAccount,
   PublicCurrency
@@ -43,43 +44,184 @@ export class BankingService {
     private readonly currencyRepository: Repository<Currency>
   ) {}
 
+  private currenciesCache: { data: Currency[]; expiresAt: number } | null = null;
+
+  private async getActiveCurrencies(): Promise<Currency[]> {
+    const now = Date.now();
+    if (this.currenciesCache && this.currenciesCache.expiresAt > now) {
+      return this.currenciesCache.data;
+    }
+    const currencies = await this.currencyRepository.find({
+      where: { active: true },
+      order: { code: "ASC", id: "ASC" }
+    });
+    this.currenciesCache = { data: currencies, expiresAt: now + 60_000 };
+    return currencies;
+  }
+
   async listReference(
     actor: AuthUser,
     query: ListCompanyBankingQueryDto
   ): Promise<CompanyBankingReferenceResponse> {
-    const companyId = await this.resolveAccessibleCompanyId(actor, query.companyId);
-    const bankWhere = { company: { id: companyId }, sourceBank: IsNull() };
-    const accountWhere = {
-      company: { id: companyId },
-      sourceAccount: IsNull(),
-      bank: { sourceBank: IsNull() }
-    };
-    const [companies, banks, accounts, currencies] = await Promise.all([
+    if (query.companyId) {
+      await this.resolveAccessibleCompanyId(actor, query.companyId);
+    }
+
+    const [companies, currencies] = await Promise.all([
       this.listCompaniesForActor(actor),
-      this.bankRepository.find({
-        where: bankWhere,
-        relations: { company: true, user: true },
-        order: { name: "ASC", id: "ASC" }
-      }),
-      this.companyBankAccountRepository.find({
-        where: accountWhere,
-        relations: { company: true, bank: { user: true, company: true } },
-        order: { name: "ASC", id: "ASC" }
-      }),
-      this.currencyRepository.find({
-        where: { active: true },
-        order: { code: "ASC", id: "ASC" }
-      })
+      this.getActiveCurrencies()
     ]);
 
     return {
       companies: companies.map((item) =>
         this.toPublicCompany(item, { includeIntegration: isSuperAdminRole(actor.roleCode) })
       ),
-      banks: banks.map((item) => this.toPublicBank(item)),
-      accounts: accounts.map((item) => this.toPublicCompanyBankAccount(item)),
+      banks: [],
+      accounts: [],
       currencies: currencies.map((item) => this.toPublicCurrency(item))
     };
+  }
+
+  async listBanks(
+    actor: AuthUser,
+    query: ListCompanyBankingQueryDto
+  ): Promise<PaginatedResponse<PublicBank>> {
+    const companyId = await this.resolveAccessibleCompanyId(actor, query.companyId);
+    const { page, limit, skip } = this.resolvePagination(query);
+    const search = this.normalizeSearch(query.search);
+
+    const queryBuilder = this.bankRepository
+      .createQueryBuilder("bank")
+      .leftJoinAndSelect("bank.company", "company")
+      .leftJoinAndSelect("bank.user", "user")
+      .loadRelationCountAndMap("bank.accountCount", "bank.accounts", "account", (accountQb) =>
+        accountQb.andWhere('"account"."cuenta_bancaria_origen_id" IS NULL')
+      )
+      .select([
+        "bank.id",
+        "bank.name",
+        "bank.description",
+        "bank.branch",
+        "bank.active",
+        "company.id",
+        "user.id",
+        "user.usrLogin"
+      ])
+      .where('"company"."emp_id" = :companyId', { companyId })
+      .andWhere('"bank"."banco_origen_id" IS NULL');
+
+    if (search) {
+      queryBuilder.andWhere(
+        new Brackets((searchQb) => {
+          searchQb
+            .where('LOWER("bank"."banco_nombre") LIKE :search', { search })
+            .orWhere('LOWER(COALESCE("bank"."banco_sucursal", \'\')) LIKE :search', {
+              search
+            })
+            .orWhere('LOWER(COALESCE("bank"."banco_descripcion", \'\')) LIKE :search', {
+              search
+            });
+        })
+      );
+    }
+
+    const [banks, total] = await queryBuilder
+      .orderBy("bank.name", "ASC")
+      .addOrderBy("bank.id", "ASC")
+      .skip(skip)
+      .take(limit)
+      .getManyAndCount();
+
+    return this.toPaginatedResponse(
+      banks.map((item) => this.toPublicBank(item)),
+      total,
+      page,
+      limit
+    );
+  }
+
+  async listAccounts(
+    actor: AuthUser,
+    query: ListCompanyBankingQueryDto
+  ): Promise<PaginatedResponse<PublicCompanyBankAccount>> {
+    const companyId = await this.resolveAccessibleCompanyId(actor, query.companyId);
+    const { page, limit, skip } = this.resolvePagination(query);
+    const search = this.normalizeSearch(query.search);
+
+    if (query.bankId) {
+      const bank = await this.requireBank(query.bankId);
+      this.ensureBankBelongsToCompany(bank, companyId);
+      this.ensureActorCanManageBank(actor, bank);
+    }
+
+    const queryBuilder = this.companyBankAccountRepository
+      .createQueryBuilder("account")
+      .leftJoinAndSelect("account.company", "company")
+      .leftJoinAndSelect("account.bank", "bank")
+      .leftJoinAndSelect("bank.company", "bankCompany")
+      .leftJoinAndSelect("bank.user", "user")
+      .select([
+        "account.id",
+        "account.name",
+        "account.currency",
+        "account.accountNumber",
+        "account.bankErpId",
+        "account.majorAccountNumber",
+        "account.paymentAccountNumber",
+        "account.active",
+        "company.id",
+        "company.name",
+        "bank.id",
+        "bank.name",
+        "bank.branch",
+        "bank.active",
+        "bankCompany.id",
+        "user.id",
+        "user.usrLogin"
+      ])
+      .where('"company"."emp_id" = :companyId', { companyId })
+      .andWhere('"account"."cuenta_bancaria_origen_id" IS NULL')
+      .andWhere('"bank"."banco_origen_id" IS NULL');
+
+    if (query.bankId) {
+      queryBuilder.andWhere('"bank"."banco_id" = :bankId', { bankId: query.bankId });
+    }
+
+    if (search) {
+      queryBuilder.andWhere(
+        new Brackets((searchQb) => {
+          searchQb
+            .where('LOWER("account"."cuenta_bancaria_nombre") LIKE :search', { search })
+            .orWhere('LOWER("account"."cuenta_bancaria_numero") LIKE :search', { search })
+            .orWhere('LOWER("account"."cuenta_bancaria_id_banco_erp") LIKE :search', {
+              search
+            })
+            .orWhere('LOWER("account"."cuenta_bancaria_numero_mayor") LIKE :search', {
+              search
+            })
+            .orWhere('LOWER(COALESCE("account"."cuenta_bancaria_numero_pago", \'\')) LIKE :search', {
+              search
+            })
+            .orWhere('LOWER("account"."moneda_codigo") LIKE :search', { search })
+            .orWhere('LOWER("bank"."banco_nombre") LIKE :search', { search });
+        })
+      );
+    }
+
+    const [accounts, total] = await queryBuilder
+      .orderBy("bank.name", "ASC")
+      .addOrderBy("account.name", "ASC")
+      .addOrderBy("account.id", "ASC")
+      .skip(skip)
+      .take(limit)
+      .getManyAndCount();
+
+    return this.toPaginatedResponse(
+      accounts.map((item) => this.toPublicCompanyBankAccount(item)),
+      total,
+      page,
+      limit
+    );
   }
 
   async createBank(payload: CreateBankDto, actor: AuthUser): Promise<PublicBank> {
@@ -279,15 +421,65 @@ export class BankingService {
     };
   }
 
+  private resolvePagination(query: ListCompanyBankingQueryDto) {
+    const page = query.page && query.page > 0 ? query.page : 1;
+    const limit = Math.min(query.limit && query.limit > 0 ? query.limit : 10, 100);
+
+    return {
+      page,
+      limit,
+      skip: (page - 1) * limit
+    };
+  }
+
+  private normalizeSearch(value?: string): string | null {
+    const trimmed = value?.trim().toLowerCase();
+    return trimmed ? `%${trimmed.slice(0, 80)}%` : null;
+  }
+
+  private toPaginatedResponse<T>(
+    data: T[],
+    total: number,
+    page: number,
+    limit: number
+  ): PaginatedResponse<T> {
+    return {
+      data,
+      total,
+      page,
+      limit,
+      lastPage: Math.ceil(total / limit) || 1
+    };
+  }
+
   private async listCompaniesForActor(actor: AuthUser): Promise<Company[]> {
+    const commonSelect = {
+      id: true,
+      code: true,
+      name: true,
+      active: true,
+      webserviceErp: true,
+      schemeErp: true,
+      tlsVersionErp: true,
+      cardsId: true,
+      logo: true,
+      address: true,
+      region: true,
+      country: true,
+      validityDate: true
+    } as const;
+
     if (isSuperAdminRole(actor.roleCode)) {
       return this.companyRepository.find({
-        order: { name: "ASC", id: "ASC" }
+        order: { name: "ASC", id: "ASC" },
+        select: commonSelect
       });
     }
 
-    const company = await this.requireCompany(actor.companyId);
-    return [company];
+    return this.companyRepository.find({
+      where: { id: actor.companyId },
+      select: commonSelect
+    });
   }
 
   private async resolveAccessibleCompanyId(
@@ -403,7 +595,16 @@ export class BankingService {
   private async requireBank(bankId: number): Promise<BankEntity> {
     const bank = await this.bankRepository.findOne({
       where: { id: bankId },
-      relations: { company: true, user: true }
+      relations: { company: true, user: true },
+      select: {
+        id: true,
+        name: true,
+        description: true,
+        branch: true,
+        active: true,
+        company: { id: true },
+        user: { id: true, usrLogin: true }
+      }
     });
 
     if (!bank) {
@@ -416,7 +617,19 @@ export class BankingService {
   private async requireCompanyBankAccount(accountId: number): Promise<CompanyBankAccount> {
     const account = await this.companyBankAccountRepository.findOne({
       where: { id: accountId },
-      relations: { company: true, bank: { company: true, user: true } }
+      relations: { company: true, bank: { company: true, user: true } },
+      select: {
+        id: true,
+        name: true,
+        currency: true,
+        accountNumber: true,
+        bankErpId: true,
+        majorAccountNumber: true,
+        paymentAccountNumber: true,
+        active: true,
+        company: { id: true, name: true },
+        bank: { id: true, name: true, branch: true, active: true, company: { id: true }, user: { id: true, usrLogin: true } }
+      }
     });
 
     if (!account) {
@@ -473,7 +686,8 @@ export class BankingService {
       name: bank.name,
       description: bank.description,
       branch: bank.branch,
-      active: bank.active
+      active: bank.active,
+      accountCount: bank.accountCount ?? 0
     };
   }
 

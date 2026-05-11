@@ -25,6 +25,7 @@ Estos scripts estan pensados para un `DROP`/recreacion limpia. Los scripts princ
 19. `v20_add_company_details.sql`
 20. `21_drop_bank_alias.sql` (elimina `banco_alias` de bases existentes)
 21. `22_add_company_region_country.sql` (agrega region y pais a empresas)
+22. `23_optimize_company_banking_pagination.sql` (indices para paginado y busqueda bancaria)
 
 ## Notas
 
@@ -41,3 +42,4 @@ Estos scripts estan pensados para un `DROP`/recreacion limpia. Los scripts princ
 - `19` es incremental e idempotente: agrega mappings faltantes a plantillas base y plantillas ya copiadas a usuarios.
 - `21` es incremental e idempotente: elimina solo la columna `banco_alias` de `public.bancos`.
 - `22` es incremental e idempotente: agrega `emp_region` y `emp_pais` a `public.empresas`.
+- `23` es incremental e idempotente: agrega `pg_trgm` e indices para busquedas paginadas de bancos y cuentas bancarias.
