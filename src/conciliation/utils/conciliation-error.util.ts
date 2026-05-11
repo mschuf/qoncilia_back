@@ -27,10 +27,6 @@ export function handleConciliationDatabaseError(error: unknown): never {
         throw new ConflictException("Ya existe una plantilla base con ese nombre.");
       }
 
-      if (constraint.includes("uq_sistemas_nombre")) {
-        throw new ConflictException("Ya existe un sistema con ese nombre.");
-      }
-
       if (constraint.includes("uq_plantillas_conciliacion_activa")) {
         throw new ConflictException("Solo puede haber una plantilla activa por banco.");
       }

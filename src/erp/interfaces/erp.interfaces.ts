@@ -18,10 +18,9 @@ export interface PublicCompanyErpConfig {
   code: string
   name: string
   erpType: ErpType
-  description: string | null
   active: boolean
   isDefault: boolean
-  sapUsername: string | null
+  userSystem: string | null
   dbName: string | null
   cmpName: string | null
   serverNode: string | null
@@ -30,6 +29,7 @@ export interface PublicCompanyErpConfig {
   tlsVersion: string | null
   allowSelfSigned: boolean
   settings: Record<string, unknown> | null
+  hasUserPass: boolean
   hasPassword: boolean
   createdAt: Date
   updatedAt: Date

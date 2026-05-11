@@ -35,11 +35,6 @@ const toNumber = ({ value }: { value: unknown }) => {
 };
 
 export class CreateLayoutDto {
-  @Transform(toNumber)
-  @IsNumber()
-  @Min(1)
-  systemId!: number;
-
   @IsNotEmpty()
   @IsString()
   @MaxLength(120)

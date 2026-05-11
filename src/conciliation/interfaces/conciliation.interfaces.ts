@@ -8,13 +8,6 @@ export type CompareOperator =
 
 export type LayoutDataType = "text" | "number" | "amount" | "date";
 
-export interface PublicConciliationSystem {
-  id: number;
-  name: string;
-  description: string | null;
-  active: boolean;
-}
-
 export interface PublicCompanyBankAccountSummary {
   id: number;
   bankId: number;
@@ -64,7 +57,6 @@ export interface PublicLayout {
   id: number;
   userBankId: number;
   templateLayoutId: number | null;
-  systemId: number;
   systemName: string;
   name: string;
   description: string | null;
@@ -77,7 +69,6 @@ export interface PublicLayout {
 
 export interface PublicTemplateLayout {
   id: number;
-  systemId: number;
   systemName: string;
   name: string;
   description: string | null;
@@ -252,7 +243,6 @@ export interface PublicBankStatementSummary {
   companyBankAccountCurrency: string;
   layoutId: number;
   layoutName: string;
-  systemId: number;
   systemName: string;
   createdAt: Date;
   updatedAt: Date;

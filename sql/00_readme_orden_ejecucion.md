@@ -26,20 +26,23 @@ Estos scripts estan pensados para un `DROP`/recreacion limpia. Los scripts princ
 20. `21_drop_bank_alias.sql` (elimina `banco_alias` de bases existentes)
 21. `22_add_company_region_country.sql` (agrega region y pais a empresas)
 22. `23_optimize_company_banking_pagination.sql` (indices para paginado y busqueda bancaria)
+23. `24_optimize_bank_statements_pagination.sql` (indices para paginado de extractos)
+24. `25_remove_systems_and_update_erp_config.sql` (migracion manual para bases ya existentes)
 
 ## Notas
 
 - `08_company_profile_and_admin_banking.sql` crea `monedas`, `bancos` y `cuentas_bancarias`.
 - El rol unico del usuario vive en `usuarios.rol_id`. `usuarios_roles` fue eliminado para evitar inconsistencias en login y permisos.
 - `04_seed_superadmin_template.sql` crea el usuario `morteira`; `05` lo enlaza con empresa Qoncilia y rol `is_super_admin`.
-- `09_create_conciliation_tables.sql` crea `sistemas`, `plantillas_base`, `plantillas_conciliacion`, `extractos_bancarios` y `extractos_bancarios_filas`.
+- `09_create_conciliation_tables.sql` crea `plantillas_base`, `plantillas_conciliacion`, `extractos_bancarios` y `extractos_bancarios_filas`.
 - Los extractos bancarios requieren `cuenta_bancaria_id` y `plantilla_id`; ya no se crean tablas para guardar Excel del sistema ni resultados de comparacion.
-- `lyt_source_layout_id` fue eliminado. La sincronizacion de plantillas admin -> gestor se hace por empresa, banco, sistema y plantilla base.
+- `lyt_source_layout_id` fue eliminado. La sincronizacion de plantillas admin -> gestor se hace por empresa, banco y plantilla base.
 - `conciliaciones`, `conciliacion_resultados` y `conciliaciones_erp_envios` fueron eliminadas del esquema operativo porque la comparacion ya es temporal.
 - `13_seed_default_templates_from_existing_layouts.sql` y `15_upgrade_conciliation_accounts_systems_and_gestors.sql` fueron retirados porque este flujo ya no migra estructuras intermedias.
-- Los seeds `11` y `12` cargan bancos, cuentas, sistemas y plantillas sobre el esquema nuevo.
+- Los seeds `11` y `12` cargan bancos, cuentas y plantillas sobre el esquema nuevo.
 - Desde `18`, las plantillas base habilitadas por superadmin son globales por usuario admin; el script migra lo que exista en la tabla legacy por banco.
 - `19` es incremental e idempotente: agrega mappings faltantes a plantillas base y plantillas ya copiadas a usuarios.
 - `21` es incremental e idempotente: elimina solo la columna `banco_alias` de `public.bancos`.
 - `22` es incremental e idempotente: agrega `emp_region` y `emp_pais` a `public.empresas`.
 - `23` es incremental e idempotente: agrega `pg_trgm` e indices para busquedas paginadas de bancos y cuentas bancarias.
+- `25` es incremental e idempotente: elimina `sistemas`, quita `sistema_id` de plantillas y ajusta `empresas_erp_configuraciones` al contrato nuevo.

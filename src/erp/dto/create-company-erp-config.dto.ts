@@ -11,7 +11,6 @@ import {
   MaxLength,
   Min
 } from "class-validator"
-import { ErpType } from "../../common/enums/erp-type.enum"
 
 export class CreateCompanyErpConfigDto {
   @Transform(({ value }) => Number(value))
@@ -30,16 +29,6 @@ export class CreateCompanyErpConfigDto {
   name!: string
 
   @IsOptional()
-  @IsString()
-  @MaxLength(255)
-  description?: string
-
-  @IsOptional()
-  @IsString()
-  @IsIn(Object.values(ErpType))
-  erpType?: ErpType
-
-  @IsOptional()
   @IsBoolean()
   active?: boolean
 
@@ -50,7 +39,12 @@ export class CreateCompanyErpConfigDto {
   @IsOptional()
   @IsString()
   @MaxLength(120)
-  sapUsername?: string
+  userSystem?: string
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  userPass?: string
 
   @IsString()
   @IsNotEmpty()

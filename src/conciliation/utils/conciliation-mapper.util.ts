@@ -3,7 +3,6 @@ import { BankStatement } from "../entities/bank-statement.entity";
 import { BankStatementRow } from "../entities/bank-statement-row.entity";
 import { BankEntity } from "../entities/bank.entity";
 import { CompanyBankAccount } from "../entities/company-bank-account.entity";
-import { ConciliationSystem } from "../entities/conciliation-system.entity";
 import { ReconciliationLayoutMapping } from "../entities/reconciliation-layout-mapping.entity";
 import { ReconciliationLayout } from "../entities/reconciliation-layout.entity";
 import { TemplateLayoutMapping } from "../entities/template-layout-mapping.entity";
@@ -14,7 +13,6 @@ import {
   PublicBankStatementDetail,
   PublicBankStatementSummary,
   PublicCompanyBankAccountSummary,
-  PublicConciliationSystem,
   PublicLayout,
   PublicLayoutMapping,
   PublicTemplateLayout,
@@ -78,11 +76,10 @@ export function toPublicLayout(
     id: entity.id,
     userBankId: resolvedUserBankId,
     templateLayoutId: entity.templateLayout?.id ?? null,
-    systemId: entity.system?.id ?? 0,
-    systemName: entity.system?.name ?? entity.systemLabel,
+    systemName: entity.systemLabel,
     name: entity.name,
     description: entity.description,
-    systemLabel: entity.system?.name ?? entity.systemLabel,
+    systemLabel: entity.systemLabel,
     bankLabel: entity.bankLabel,
     autoMatchThreshold: entity.autoMatchThreshold,
     active: entity.active,
@@ -95,12 +92,11 @@ export function toPublicLayout(
 export function toPublicTemplateLayout(entity: TemplateLayout): PublicTemplateLayout {
   return {
     id: entity.id,
-    systemId: entity.system?.id ?? 0,
-    systemName: entity.system?.name ?? entity.systemLabel,
+    systemName: entity.systemLabel,
     name: entity.name,
     description: entity.description,
     referenceBankName: entity.referenceBankName,
-    systemLabel: entity.system?.name ?? entity.systemLabel,
+    systemLabel: entity.systemLabel,
     bankLabel: entity.bankLabel,
     autoMatchThreshold: entity.autoMatchThreshold,
     active: entity.active,
@@ -162,15 +158,6 @@ export function toPublicLayoutMapping(
   };
 }
 
-export function toPublicSystem(entity: ConciliationSystem): PublicConciliationSystem {
-  return {
-    id: entity.id,
-    name: entity.name,
-    description: entity.description,
-    active: entity.active
-  };
-}
-
 export function toPublicCompanyBankAccountSummary(
   entity: CompanyBankAccount,
   fallbackBank?: BankEntity
@@ -217,8 +204,7 @@ export function toPublicBankStatementSummary(entity: BankStatement): PublicBankS
     companyBankAccountCurrency: entity.companyBankAccount.currency,
     layoutId: entity.layout.id,
     layoutName: entity.layout.name,
-    systemId: entity.layout.system?.id ?? 0,
-    systemName: entity.layout.system?.name ?? entity.layout.systemLabel,
+    systemName: entity.layout.systemLabel,
     createdAt: entity.createdAt,
     updatedAt: entity.updatedAt
   };

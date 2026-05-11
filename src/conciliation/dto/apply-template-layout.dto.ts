@@ -30,12 +30,6 @@ const toNumber = ({ value }: { value: unknown }) => {
 };
 
 export class ApplyTemplateLayoutDto {
-  @Transform(toNumber)
-  @IsOptional()
-  @IsNumber()
-  @Min(1)
-  systemId?: number;
-
   @Transform(emptyToUndefined)
   @IsOptional()
   @IsString()

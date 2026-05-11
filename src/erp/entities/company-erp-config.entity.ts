@@ -15,6 +15,8 @@ export class CompanyErpConfig {
   @PrimaryGeneratedColumn({ name: "epc_id" })
   id!: number
 
+  erpType: ErpType = ErpType.SAP_B1
+
   @ManyToOne(() => Company, { nullable: false, onDelete: "CASCADE" })
   @JoinColumn({ name: "emp_id", referencedColumnName: "id" })
   company!: Company
@@ -25,20 +27,17 @@ export class CompanyErpConfig {
   @Column({ name: "epc_nombre", type: "varchar", length: 160 })
   name!: string
 
-  @Column({ name: "epc_tipo", type: "varchar", length: 50, default: ErpType.SAP_B1 })
-  erpType!: ErpType
-
-  @Column({ name: "epc_descripcion", type: "varchar", length: 255, nullable: true })
-  description!: string | null
-
   @Column({ name: "epc_activo", type: "boolean", default: true })
   active!: boolean
 
   @Column({ name: "epc_es_predeterminado", type: "boolean", default: false })
   isDefault!: boolean
 
-  @Column({ name: "epc_sap_username", type: "varchar", length: 120, nullable: true })
-  sapUsername!: string | null
+  @Column({ name: "epc_user_system", type: "varchar", length: 120, nullable: true })
+  userSystem!: string | null
+
+  @Column({ name: "epc_user_pass", type: "text", nullable: true })
+  userPassEncrypted!: string | null
 
   @Column({ name: "epc_db_name", type: "varchar", length: 160, nullable: true })
   dbName!: string | null

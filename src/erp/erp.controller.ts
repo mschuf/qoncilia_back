@@ -50,7 +50,7 @@ export class ErpController {
   }
 
   @Patch("configs/:configId")
-  @Roles(Role.IS_SUPER_ADMIN)
+  @Roles(Role.ADMIN, Role.IS_SUPER_ADMIN)
   @RequiredModule(AppModuleCode.ERP_MANAGEMENT)
   updateCompanyErpConfig(
     @Param("configId", ParseIntPipe) configId: number,

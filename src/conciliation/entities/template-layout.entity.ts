@@ -2,13 +2,10 @@ import {
   Column,
   CreateDateColumn,
   Entity,
-  JoinColumn,
-  ManyToOne,
   OneToMany,
   PrimaryGeneratedColumn,
   UpdateDateColumn
 } from "typeorm";
-import { ConciliationSystem } from "./conciliation-system.entity";
 import { ReconciliationLayout } from "./reconciliation-layout.entity";
 import { TemplateLayoutMapping } from "./template-layout-mapping.entity";
 
@@ -25,13 +22,6 @@ export class TemplateLayout {
 
   @Column({ name: "plantilla_base_banco_referencia", type: "varchar", length: 120, nullable: true })
   referenceBankName!: string | null;
-
-  @ManyToOne(() => ConciliationSystem, (system) => system.templateLayouts, {
-    nullable: false,
-    onDelete: "RESTRICT"
-  })
-  @JoinColumn({ name: "sistema_id", referencedColumnName: "id" })
-  system!: ConciliationSystem;
 
   @Column({ name: "plantilla_base_etiqueta_sistema", type: "varchar", length: 120, default: "Sistema" })
   systemLabel!: string;

@@ -8,7 +8,6 @@ DECLARE
   target_user_id INTEGER;
   target_user_login TEXT;
   target_company_id INTEGER;
-  sistema_sap_id INTEGER;
   banco_gnb_id INTEGER;
   banco_itau_id INTEGER;
   plantilla_base_gnb_id INTEGER;
@@ -44,15 +43,6 @@ BEGIN
   IF target_user_id IS NULL THEN
     RAISE EXCEPTION 'No existe ningun usuario en public.usuarios para aplicar el seed.';
   END IF;
-
-  INSERT INTO public.sistemas (sistema_nombre, sistema_descripcion, sistema_activo)
-  VALUES ('SAP', 'Sistema base creado automaticamente por seeds de Qoncilia.', TRUE)
-  ON CONFLICT DO NOTHING;
-
-  SELECT sistema_id INTO sistema_sap_id
-  FROM public.sistemas
-  WHERE LOWER(sistema_nombre) = LOWER('SAP')
-  LIMIT 1;
 
   INSERT INTO public.bancos (
     empresa_id,
@@ -96,17 +86,16 @@ BEGIN
     plantilla_base_nombre,
     plantilla_base_descripcion,
     plantilla_base_banco_referencia,
-    sistema_id,
     plantilla_base_etiqueta_sistema,
     plantilla_base_etiqueta_banco,
     plantilla_base_umbral_auto_match,
     plantilla_base_activa
   )
   VALUES
-    ('Base GNB vs SAP B1', 'Plantilla base para hoja GNB.', 'GNB', sistema_sap_id, 'SAP B1', 'GNB', 0.75, TRUE),
-    ('Base GNB-443 vs SAP B1', 'Plantilla base para hoja GNB-443.', 'GNB-443', sistema_sap_id, 'SAP B1', 'GNB-443', 0.75, TRUE),
-    ('Base GNB3 vs SAP B1', 'Plantilla base para hoja GNB3.', 'GNB3', sistema_sap_id, 'SAP B1', 'GNB3', 0.75, TRUE),
-    ('Base Itau vs SAP B1', 'Plantilla base para extractos Itau.', 'Itau CC', sistema_sap_id, 'SAP B1', 'Itau CC', 0.75, TRUE)
+    ('Base GNB vs SAP B1', 'Plantilla base para hoja GNB.', 'GNB', 'SAP B1', 'GNB', 0.75, TRUE),
+    ('Base GNB-443 vs SAP B1', 'Plantilla base para hoja GNB-443.', 'GNB-443', 'SAP B1', 'GNB-443', 0.75, TRUE),
+    ('Base GNB3 vs SAP B1', 'Plantilla base para hoja GNB3.', 'GNB3', 'SAP B1', 'GNB3', 0.75, TRUE),
+    ('Base Itau vs SAP B1', 'Plantilla base para extractos Itau.', 'Itau CC', 'SAP B1', 'Itau CC', 0.75, TRUE)
   ON CONFLICT DO NOTHING;
 
   SELECT plantilla_base_id INTO plantilla_base_gnb_id
@@ -132,7 +121,6 @@ BEGIN
   INSERT INTO public.plantillas_conciliacion (
     banco_id,
     plantilla_base_id,
-    sistema_id,
     plantilla_nombre,
     plantilla_descripcion,
     plantilla_etiqueta_sistema,
@@ -141,10 +129,10 @@ BEGIN
     plantilla_activa
   )
   VALUES
-    (banco_gnb_id, plantilla_base_gnb_id, sistema_sap_id, 'GNB vs SAP B1', 'Comparacion GNB contra SAP B1.', 'SAP B1', 'GNB', 0.75, TRUE),
-    (banco_gnb_id, plantilla_base_gnb_443_id, sistema_sap_id, 'GNB-443 vs SAP B1', 'Comparacion GNB-443 contra SAP B1.', 'SAP B1', 'GNB-443', 0.75, FALSE),
-    (banco_gnb_id, plantilla_base_gnb3_id, sistema_sap_id, 'GNB3 vs SAP B1', 'Comparacion GNB3 contra SAP B1.', 'SAP B1', 'GNB3', 0.75, FALSE),
-    (banco_itau_id, plantilla_base_itau_id, sistema_sap_id, 'Itau vs SAP B1', 'Comparacion Itau contra SAP B1.', 'SAP B1', 'Itau CC', 0.75, TRUE)
+    (banco_gnb_id, plantilla_base_gnb_id, 'GNB vs SAP B1', 'Comparacion GNB contra SAP B1.', 'SAP B1', 'GNB', 0.75, TRUE),
+    (banco_gnb_id, plantilla_base_gnb_443_id, 'GNB-443 vs SAP B1', 'Comparacion GNB-443 contra SAP B1.', 'SAP B1', 'GNB-443', 0.75, FALSE),
+    (banco_gnb_id, plantilla_base_gnb3_id, 'GNB3 vs SAP B1', 'Comparacion GNB3 contra SAP B1.', 'SAP B1', 'GNB3', 0.75, FALSE),
+    (banco_itau_id, plantilla_base_itau_id, 'Itau vs SAP B1', 'Comparacion Itau contra SAP B1.', 'SAP B1', 'Itau CC', 0.75, TRUE)
   ON CONFLICT DO NOTHING;
 
   SELECT plantilla_id INTO plantilla_gnb_id

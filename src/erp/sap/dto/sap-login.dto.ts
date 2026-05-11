@@ -1,5 +1,5 @@
 import { Type } from "class-transformer"
-import { IsInt, IsNotEmpty, IsString, MaxLength, Min } from "class-validator"
+import { IsInt, IsOptional, IsString, MaxLength, Min } from "class-validator"
 
 export class SapLoginDto {
   @Type(() => Number)
@@ -7,13 +7,13 @@ export class SapLoginDto {
   @Min(1)
   companyErpConfigId!: number
 
+  @IsOptional()
   @IsString()
-  @IsNotEmpty()
   @MaxLength(160)
-  username!: string
+  username?: string
 
+  @IsOptional()
   @IsString()
-  @IsNotEmpty()
   @MaxLength(255)
-  password!: string
+  password?: string
 }

@@ -8,7 +8,6 @@ DECLARE
   target_user_id INTEGER;
   target_user_login TEXT;
   target_company_id INTEGER;
-  sistema_sap_id INTEGER;
   banco_familiar_id INTEGER;
   banco_sudameris_id INTEGER;
   banco_continental_id INTEGER;
@@ -43,15 +42,6 @@ BEGIN
   IF target_user_id IS NULL THEN
     RAISE EXCEPTION 'No existe ningun usuario en public.usuarios para aplicar el seed.';
   END IF;
-
-  INSERT INTO public.sistemas (sistema_nombre, sistema_descripcion, sistema_activo)
-  VALUES ('SAP', 'Sistema base creado automaticamente por seeds de Qoncilia.', TRUE)
-  ON CONFLICT DO NOTHING;
-
-  SELECT sistema_id INTO sistema_sap_id
-  FROM public.sistemas
-  WHERE LOWER(sistema_nombre) = LOWER('SAP')
-  LIMIT 1;
 
   INSERT INTO public.bancos (
     empresa_id,
@@ -102,16 +92,15 @@ BEGIN
     plantilla_base_nombre,
     plantilla_base_descripcion,
     plantilla_base_banco_referencia,
-    sistema_id,
     plantilla_base_etiqueta_sistema,
     plantilla_base_etiqueta_banco,
     plantilla_base_umbral_auto_match,
     plantilla_base_activa
   )
   VALUES
-    ('Base Familiar vs SAP B1', 'Plantilla base para extractos Banco Familiar PYG.', 'Banco Familiar', sistema_sap_id, 'SAP B1', 'Banco Familiar', 0.60, TRUE),
-    ('Base Sudameris vs SAP B1', 'Plantilla base para extractos Sudameris PYG.', 'Sudameris', sistema_sap_id, 'SAP B1', 'Sudameris', 0.60, TRUE),
-    ('Base Continental vs SAP B1', 'Plantilla base para extractos Continental PYG.', 'Continental', sistema_sap_id, 'SAP B1', 'Continental', 0.60, TRUE)
+    ('Base Familiar vs SAP B1', 'Plantilla base para extractos Banco Familiar PYG.', 'Banco Familiar', 'SAP B1', 'Banco Familiar', 0.60, TRUE),
+    ('Base Sudameris vs SAP B1', 'Plantilla base para extractos Sudameris PYG.', 'Sudameris', 'SAP B1', 'Sudameris', 0.60, TRUE),
+    ('Base Continental vs SAP B1', 'Plantilla base para extractos Continental PYG.', 'Continental', 'SAP B1', 'Continental', 0.60, TRUE)
   ON CONFLICT DO NOTHING;
 
   SELECT plantilla_base_id INTO plantilla_base_familiar_id
@@ -132,7 +121,6 @@ BEGIN
   INSERT INTO public.plantillas_conciliacion (
     banco_id,
     plantilla_base_id,
-    sistema_id,
     plantilla_nombre,
     plantilla_descripcion,
     plantilla_etiqueta_sistema,
@@ -141,9 +129,9 @@ BEGIN
     plantilla_activa
   )
   VALUES
-    (banco_familiar_id, plantilla_base_familiar_id, sistema_sap_id, 'Familiar vs SAP B1', 'Comparacion Banco Familiar contra SAP B1.', 'SAP B1', 'Banco Familiar', 0.60, TRUE),
-    (banco_sudameris_id, plantilla_base_sudameris_id, sistema_sap_id, 'Sudameris vs SAP B1', 'Comparacion Sudameris contra SAP B1.', 'SAP B1', 'Sudameris', 0.60, TRUE),
-    (banco_continental_id, plantilla_base_continental_id, sistema_sap_id, 'Continental vs SAP B1', 'Comparacion Continental contra SAP B1.', 'SAP B1', 'Continental', 0.60, TRUE)
+    (banco_familiar_id, plantilla_base_familiar_id, 'Familiar vs SAP B1', 'Comparacion Banco Familiar contra SAP B1.', 'SAP B1', 'Banco Familiar', 0.60, TRUE),
+    (banco_sudameris_id, plantilla_base_sudameris_id, 'Sudameris vs SAP B1', 'Comparacion Sudameris contra SAP B1.', 'SAP B1', 'Sudameris', 0.60, TRUE),
+    (banco_continental_id, plantilla_base_continental_id, 'Continental vs SAP B1', 'Comparacion Continental contra SAP B1.', 'SAP B1', 'Continental', 0.60, TRUE)
   ON CONFLICT DO NOTHING;
 
   SELECT plantilla_id INTO plantilla_familiar_id

@@ -21,13 +21,10 @@ import { AssignGestorBankDto } from "./dto/assign-gestor-bank.dto";
 import { CompareBankStatementDto } from "./dto/compare-bank-statement.dto";
 import { CreateBankStatementDto, PreviewBankStatementDto } from "./dto/create-bank-statement.dto";
 import { CreateBankDto } from "./dto/create-bank.dto";
-import { CreateConciliationSystemDto } from "./dto/create-conciliation-system.dto";
 import { CreateLayoutDto } from "./dto/create-layout.dto";
 import { CreateTemplateLayoutDto } from "./dto/create-template-layout.dto";
 import { CompanyBankAccount } from "./entities/company-bank-account.entity";
-import { ConciliationSystem } from "./entities/conciliation-system.entity";
 import { ListBankStatementsQueryDto } from "./dto/list-bank-statements-query.dto";
-import { UpdateConciliationSystemDto } from "./dto/update-conciliation-system.dto";
 import { UpdateBankDto } from "./dto/update-bank.dto";
 import { UpdateLayoutDto } from "./dto/update-layout.dto";
 import { UpdateTemplateLayoutDto } from "./dto/update-template-layout.dto";
@@ -47,7 +44,6 @@ import {
   DeleteUserBankResponse,
   PublicBankStatementDetail,
   PublicBankStatementSummary,
-  PublicConciliationSystem,
   PublicBankWithAvailableTemplates,
   PublicGestorAssignmentCatalog,
   PublicLayout,
@@ -70,7 +66,6 @@ import {
   toPublicBankStatementSummary,
   toPublicCompanyBankAccountSummary,
   toPublicLayout,
-  toPublicSystem,
   toPublicTemplateLayout,
   toPublicUserBank,
   toPublicUserBankDeletionAccount,
@@ -91,7 +86,6 @@ import {
   sortTemplateMappings,
   toJsonRecord
 } from "./utils/conciliation-value.util";
-import { requireSystem } from "./utils/conciliation-repository.util";
 import {
   buildAutoMatches,
   buildPreviewMetrics,
@@ -123,8 +117,6 @@ export class ConciliationService {
     private readonly bankStatementRepository: Repository<BankStatement>,
     @InjectRepository(BankStatementRow)
     private readonly bankStatementRowRepository: Repository<BankStatementRow>,
-    @InjectRepository(ConciliationSystem)
-    private readonly systemRepository: Repository<ConciliationSystem>,
     @InjectRepository(TemplateLayout)
     private readonly templateLayoutRepository: Repository<TemplateLayout>,
     @InjectRepository(TemplateLayoutMapping)
@@ -175,7 +167,6 @@ export class ConciliationService {
     const layouts = await this.layoutRepository
       .createQueryBuilder("layout")
       .leftJoinAndSelect("layout.userBank", "layoutBank")
-      .leftJoinAndSelect("layout.system", "system")
       .leftJoinAndSelect("layout.mappings", "mapping")
       .leftJoinAndSelect("layout.templateLayout", "templateLayout")
       .where("layoutBank.id IN (:...bankIds)")
@@ -184,7 +175,6 @@ export class ConciliationService {
         "layout.id", "layout.name", "layout.description", "layout.systemLabel", "layout.bankLabel",
         "layout.autoMatchThreshold", "layout.active",
         "layoutBank.id",
-        "system.id", "system.name",
         "templateLayout.id",
         "mapping.id", "mapping.fieldKey", "mapping.label", "mapping.sortOrder", "mapping.active",
         "mapping.required", "mapping.compareOperator", "mapping.weight", "mapping.tolerance",
@@ -253,7 +243,6 @@ export class ConciliationService {
 
     const templates = await this.templateLayoutRepository.find({
       relations: {
-        system: true,
         mappings: true
       },
       order: {
@@ -262,90 +251,6 @@ export class ConciliationService {
     });
 
     return templates.map((template) => toPublicTemplateLayout(template));
-  }
-
-  async listSystems(actor: AuthUser): Promise<PublicConciliationSystem[]> {
-    ensureAdminOrSuperadmin(actor);
-
-    const systems = await this.systemRepository.find({
-      order: {
-        name: "ASC",
-        id: "ASC"
-      }
-    });
-
-    return systems.map((system) => toPublicSystem(system));
-  }
-
-  async createSystem(
-    payload: CreateConciliationSystemDto,
-    actor: AuthUser
-  ): Promise<PublicConciliationSystem> {
-    ensureSuperadmin(actor);
-
-    try {
-      const created = await this.systemRepository.save(
-        this.systemRepository.create({
-          name: normalizeRequired(payload.name, "name"),
-          description: normalizeOptional(payload.description),
-          active: payload.active ?? true
-        })
-      );
-
-      return toPublicSystem(created);
-    } catch (error) {
-      handleConciliationDatabaseError(error);
-    }
-  }
-
-  async updateSystem(
-    systemId: number,
-    payload: UpdateConciliationSystemDto,
-    actor: AuthUser
-  ): Promise<PublicConciliationSystem> {
-    ensureSuperadmin(actor);
-
-    const system = await requireSystem(this.systemRepository, systemId);
-
-    if (payload.name !== undefined) {
-      system.name = normalizeRequired(payload.name, "name");
-    }
-    if (payload.description !== undefined) {
-      system.description = normalizeOptional(payload.description);
-    }
-    if (payload.active !== undefined) {
-      system.active = payload.active;
-    }
-
-    try {
-      const updated = await this.systemRepository.save(system);
-      return toPublicSystem(updated);
-    } catch (error) {
-      handleConciliationDatabaseError(error);
-    }
-  }
-
-  async deleteSystem(systemId: number, actor: AuthUser): Promise<{ message: string }> {
-    ensureSuperadmin(actor);
-
-    const system = await requireSystem(this.systemRepository, systemId);
-
-    const [templateCount, layoutCount] = await Promise.all([
-      this.templateLayoutRepository.count({ where: { system: { id: system.id } } }),
-      this.layoutRepository.count({ where: { system: { id: system.id } } })
-    ]);
-
-    if (templateCount > 0 || layoutCount > 0) {
-      throw new BadRequestException(
-        "No se puede eliminar el sistema porque ya tiene plantillas base o plantillas asociadas."
-      );
-    }
-
-    await this.systemRepository.delete(system.id);
-
-    return {
-      message: "Sistema eliminado."
-    };
   }
 
   async createUserBank(
@@ -454,20 +359,13 @@ export class ConciliationService {
     return this.templateLayoutRepository.manager.transaction(async (manager) => {
       const templateRepository = manager.getRepository(TemplateLayout);
       const mappingRepository = manager.getRepository(TemplateLayoutMapping);
-      const systemRepository = manager.getRepository(ConciliationSystem);
-      const system = await systemRepository.findOne({ where: { id: payload.systemId, active: true } });
-
-      if (!system) {
-        throw new NotFoundException("Sistema no encontrado.");
-      }
 
       const template = await templateRepository.save(
         templateRepository.create({
-          system,
           name: normalizeRequired(payload.name, "name"),
           description: normalizeOptional(payload.description),
           referenceBankName: normalizeOptional(payload.referenceBankName),
-          systemLabel: system.name,
+          systemLabel: normalizeRequired(payload.systemLabel ?? "Sistema", "systemLabel"),
           bankLabel: normalizeRequired(payload.bankLabel ?? "Banco", "bankLabel"),
           autoMatchThreshold: normalizeThreshold(payload.autoMatchThreshold),
           active: payload.active ?? true
@@ -503,7 +401,6 @@ export class ConciliationService {
       const persisted = await templateRepository.findOne({
         where: { id: template.id },
         relations: {
-          system: true,
           mappings: true
         }
       });
@@ -526,12 +423,10 @@ export class ConciliationService {
     return this.templateLayoutRepository.manager.transaction(async (manager) => {
       const templateRepository = manager.getRepository(TemplateLayout);
       const mappingRepository = manager.getRepository(TemplateLayoutMapping);
-      const systemRepository = manager.getRepository(ConciliationSystem);
 
       const template = await templateRepository.findOne({
         where: { id: templateLayoutId },
         relations: {
-          system: true,
           mappings: true
         }
       });
@@ -546,17 +441,6 @@ export class ConciliationService {
       }
       if (payload.referenceBankName !== undefined) {
         template.referenceBankName = normalizeOptional(payload.referenceBankName);
-      }
-      if (payload.systemId !== undefined) {
-        const system = await systemRepository.findOne({
-          where: { id: payload.systemId, active: true }
-        });
-        if (!system) {
-          throw new NotFoundException("Sistema no encontrado.");
-        }
-
-        template.system = system;
-        template.systemLabel = system.name;
       }
       if (payload.systemLabel !== undefined) {
         template.systemLabel = normalizeRequired(payload.systemLabel, "systemLabel");
@@ -611,7 +495,6 @@ export class ConciliationService {
       const persisted = await templateRepository.findOne({
         where: { id: templateLayoutId },
         relations: {
-          system: true,
           mappings: true
         }
       });
@@ -658,7 +541,6 @@ export class ConciliationService {
       const bankRepository = manager.getRepository(BankEntity);
       const layoutRepository = manager.getRepository(ReconciliationLayout);
       const mappingRepository = manager.getRepository(ReconciliationLayoutMapping);
-      const systemRepository = manager.getRepository(ConciliationSystem);
 
       const userBank = await bankRepository.findOne({
         where: { id: bankId, user: { id: userId } },
@@ -667,14 +549,6 @@ export class ConciliationService {
 
       if (!userBank) {
         throw new NotFoundException("Banco asignado no encontrado.");
-      }
-
-      const system = await systemRepository.findOne({
-        where: { id: payload.systemId, active: true }
-      });
-
-      if (!system) {
-        throw new NotFoundException("Sistema no encontrado.");
       }
 
       const shouldActivate = payload.active ?? (userBank.layouts?.length ?? 0) === 0;
@@ -691,10 +565,9 @@ export class ConciliationService {
       const createdLayout = await layoutRepository.save(
         layoutRepository.create({
           userBank,
-          system,
           name: normalizeRequired(payload.name, "name"),
           description: normalizeOptional(payload.description),
-          systemLabel: normalizeRequired(payload.systemLabel ?? system.name, "systemLabel"),
+          systemLabel: normalizeRequired(payload.systemLabel ?? "Sistema", "systemLabel"),
           bankLabel: normalizeRequired(payload.bankLabel ?? userBank.bankName, "bankLabel"),
           autoMatchThreshold: normalizeThreshold(payload.autoMatchThreshold),
           active: shouldActivate
@@ -731,7 +604,6 @@ export class ConciliationService {
         where: { id: createdLayout.id },
         relations: {
           userBank: true,
-          system: true,
           mappings: true,
           templateLayout: true
         }
@@ -775,7 +647,6 @@ export class ConciliationService {
       const template = await templateRepository.findOne({
         where: { id: templateLayoutId },
         relations: {
-          system: true,
           mappings: true
         }
       });
@@ -798,14 +669,10 @@ export class ConciliationService {
       const createdLayout = await layoutRepository.save(
         layoutRepository.create({
           userBank,
-          system: template.system,
           templateLayout: template,
           name: normalizeRequired(payload.name ?? template.name, "name"),
           description: normalizeOptional(payload.description ?? template.description),
-          systemLabel: normalizeRequired(
-            payload.systemLabel ?? template.system?.name ?? template.systemLabel,
-            "systemLabel"
-          ),
+          systemLabel: normalizeRequired(payload.systemLabel ?? template.systemLabel, "systemLabel"),
           bankLabel: normalizeRequired(
             payload.bankLabel ?? userBank.bankName ?? template.bankLabel,
             "bankLabel"
@@ -847,7 +714,6 @@ export class ConciliationService {
         where: { id: createdLayout.id },
         relations: {
           userBank: true,
-          system: true,
           mappings: true,
           templateLayout: true
         }
@@ -939,7 +805,6 @@ export class ConciliationService {
       .leftJoinAndSelect("userBank.user", "user")
       .leftJoinAndSelect("user.company", "company")
       .leftJoinAndSelect("userBank.layouts", "layout")
-      .leftJoinAndSelect("layout.system", "system")
       .leftJoinAndSelect("layout.mappings", "mapping")
       .leftJoinAndSelect("layout.templateLayout", "layoutTemplate");
 
@@ -958,7 +823,6 @@ export class ConciliationService {
       .createQueryBuilder("availability")
       .leftJoinAndSelect("availability.user", "availabilityUser")
       .leftJoinAndSelect("availability.templateLayout", "templateLayout")
-      .leftJoinAndSelect("templateLayout.system", "templateSystem")
       .leftJoinAndSelect("templateLayout.mappings", "templateMapping")
       .where("availabilityUser.id IN (:...userIds)", { userIds })
       .getMany();
@@ -1077,7 +941,6 @@ export class ConciliationService {
       const template = await templateRepository.findOne({
         where: { id: templateLayoutId },
         relations: {
-          system: true,
           mappings: true
         }
       });
@@ -1101,14 +964,10 @@ export class ConciliationService {
       const createdLayout = await layoutRepository.save(
         layoutRepository.create({
           userBank,
-          system: template.system,
           templateLayout: template,
           name: normalizeRequired(payload.name ?? template.name, "name"),
           description: normalizeOptional(payload.description ?? template.description),
-          systemLabel: normalizeRequired(
-            payload.systemLabel ?? template.system?.name ?? template.systemLabel,
-            "systemLabel"
-          ),
+          systemLabel: normalizeRequired(payload.systemLabel ?? template.systemLabel, "systemLabel"),
           bankLabel: normalizeRequired(
             payload.bankLabel ?? userBank.bankName ?? template.bankLabel,
             "bankLabel"
@@ -1150,7 +1009,6 @@ export class ConciliationService {
         where: { id: createdLayout.id },
         relations: {
           userBank: true,
-          system: true,
           mappings: true,
           templateLayout: true
         }
@@ -1226,7 +1084,6 @@ export class ConciliationService {
     return this.layoutRepository.manager.transaction(async (manager) => {
       const layoutRepository = manager.getRepository(ReconciliationLayout);
       const mappingRepository = manager.getRepository(ReconciliationLayoutMapping);
-      const systemRepository = manager.getRepository(ConciliationSystem);
 
       const layout = await layoutRepository.findOne({
         where: { id: layoutId, userBank: { id: bankId, user: { id: userId } } },
@@ -1234,7 +1091,6 @@ export class ConciliationService {
           userBank: {
             user: true
           },
-          system: true,
           templateLayout: true,
           mappings: true
         }
@@ -1247,18 +1103,6 @@ export class ConciliationService {
       if (payload.name !== undefined) layout.name = normalizeRequired(payload.name, "name");
       if (payload.description !== undefined) {
         layout.description = normalizeOptional(payload.description);
-      }
-      if (payload.systemId !== undefined) {
-        const system = await systemRepository.findOne({
-          where: { id: payload.systemId, active: true }
-        });
-
-        if (!system) {
-          throw new NotFoundException("Sistema no encontrado.");
-        }
-
-        layout.system = system;
-        layout.systemLabel = system.name;
       }
       if (payload.systemLabel !== undefined) {
         layout.systemLabel = normalizeRequired(payload.systemLabel, "systemLabel");
@@ -1323,7 +1167,6 @@ export class ConciliationService {
         where: { id: layoutId },
         relations: {
           userBank: true,
-          system: true,
           mappings: true,
           templateLayout: true
         }
@@ -1658,7 +1501,7 @@ export class ConciliationService {
         companyBankAccountName: item.companyBankAccount?.name ?? null,
         companyBankAccountNumber: item.companyBankAccount?.accountNumber ?? null,
         layoutName: item.layout.name,
-        systemName: item.layout.system?.name ?? item.layout.systemLabel,
+        systemName: item.layout.systemLabel,
         matchPercentage: 0,
         autoMatches: 0,
         manualMatches: 0,
@@ -1727,10 +1570,7 @@ export class ConciliationService {
           sourceAccount: true
         },
         layouts: {
-          system: true,
-          templateLayout: {
-            system: true
-          },
+          templateLayout: true,
           mappings: true
         }
       }
@@ -1792,7 +1632,6 @@ export class ConciliationService {
       .leftJoinAndSelect("statement.userBank", "userBank")
       .leftJoinAndSelect("statement.companyBankAccount", "companyBankAccount")
       .leftJoinAndSelect("statement.layout", "layout")
-      .leftJoinAndSelect("layout.system", "system")
       .leftJoinAndSelect("layout.templateLayout", "templateLayout")
       .orderBy("statement.createdAt", "DESC")
       .addOrderBy("statement.id", "DESC");
@@ -1850,7 +1689,6 @@ export class ConciliationService {
       where: { id: sourceLayout.id },
       relations: {
         userBank: true,
-        system: true,
         templateLayout: true,
         mappings: true
       }
@@ -1890,7 +1728,6 @@ export class ConciliationService {
             relations: {
               userBank: true,
               templateLayout: true,
-              system: true,
               mappings: true
             }
           })
@@ -1900,13 +1737,11 @@ export class ConciliationService {
         targetLayout = await layoutRepository.findOne({
           where: {
             userBank: { id: targetBank.id },
-            system: { id: hydratedSourceLayout.system.id },
             name: hydratedSourceLayout.name
           },
           relations: {
             userBank: true,
             templateLayout: true,
-            system: true,
             mappings: true
           }
         });
@@ -1916,7 +1751,6 @@ export class ConciliationService {
         targetLayout = layoutRepository.create({
           userBank: targetBank,
           templateLayout: hydratedSourceLayout.templateLayout,
-          system: hydratedSourceLayout.system,
           name: hydratedSourceLayout.name,
           description: hydratedSourceLayout.description,
           systemLabel: hydratedSourceLayout.systemLabel,
@@ -1927,7 +1761,6 @@ export class ConciliationService {
       } else {
         targetLayout.userBank = targetBank;
         targetLayout.templateLayout = hydratedSourceLayout.templateLayout;
-        targetLayout.system = hydratedSourceLayout.system;
         targetLayout.name = hydratedSourceLayout.name;
         targetLayout.description = hydratedSourceLayout.description;
         targetLayout.systemLabel = hydratedSourceLayout.systemLabel;
@@ -1994,7 +1827,6 @@ export class ConciliationService {
             company: true
           }
         },
-        system: true,
         mappings: true,
         templateLayout: true
       }
@@ -2056,7 +1888,6 @@ export class ConciliationService {
           bank: true
         },
         layout: {
-          system: true,
           mappings: true,
           templateLayout: true
         },
@@ -2090,7 +1921,6 @@ export class ConciliationService {
           bank: true
         },
         layout: {
-          system: true,
           mappings: true,
           templateLayout: true
         },
@@ -2304,11 +2134,8 @@ export class ConciliationService {
           bank: true
         },
         layouts: {
-          system: true,
           mappings: true,
-          templateLayout: {
-            system: true
-          }
+          templateLayout: true
         }
       }
     });

@@ -149,20 +149,7 @@ Cuentas bancarias por banco. Cada extracto bancario guardado debe apuntar a una 
 | `cuenta_bancaria_creado_en` | Fecha de creacion de la cuenta. |
 | `cuenta_bancaria_actualizado_en` | Fecha de ultima modificacion. |
 
-## Sistemas y layouts
-
-### `public.sistemas`
-
-Catalogo dinamico de sistemas origen, por ejemplo SAP. El sistema define el lado "sistema" del layout, pero sus Excel no se guardan.
-
-| Columna | Funcion |
-| --- | --- |
-| `sistema_id` | Identificador primario del sistema. |
-| `sistema_nombre` | Nombre unico del sistema. |
-| `sistema_descripcion` | Descripcion administrativa. |
-| `sistema_activo` | Permite usar o retirar el sistema. |
-| `sistema_creado_en` | Fecha de creacion. |
-| `sistema_actualizado_en` | Fecha de ultima modificacion. |
+## Layouts
 
 ### `public.plantillas_base`
 
@@ -174,7 +161,6 @@ Layouts base creados por superadmin y copiables a bancos.
 | `plantilla_base_nombre` | Nombre unico de la plantilla base. |
 | `plantilla_base_descripcion` | Descripcion funcional de la plantilla. |
 | `plantilla_base_banco_referencia` | Banco de referencia para la estructura del Excel. |
-| `sistema_id` | Sistema origen al que corresponde el lado sistema. |
 | `plantilla_base_etiqueta_sistema` | Texto visible para el lado sistema. |
 | `plantilla_base_etiqueta_banco` | Texto visible para el lado banco. |
 | `plantilla_base_umbral_auto_match` | Score minimo de 0 a 1 para match automatico. |
@@ -220,7 +206,6 @@ Layouts asignados a un banco concreto.
 | `plantilla_id` | Identificador primario del layout asignado. |
 | `banco_id` | Banco propietario del layout. |
 | `plantilla_base_id` | Plantilla base de origen, si fue copiada desde una base. |
-| `sistema_id` | Sistema que define el lado sistema del layout. |
 | `plantilla_nombre` | Nombre del layout para el usuario. |
 | `plantilla_descripcion` | Descripcion operativa del layout. |
 | `plantilla_etiqueta_sistema` | Etiqueta visible del lado sistema. |
@@ -306,11 +291,10 @@ Configuraciones ERP por empresa. Se conserva para administracion de integracione
 | `emp_id` | Empresa propietaria de la configuracion. |
 | `epc_codigo` | Codigo unico de configuracion por empresa. |
 | `epc_nombre` | Nombre visible de la configuracion. |
-| `epc_tipo` | Tipo de ERP, actualmente SAP B1. |
-| `epc_descripcion` | Descripcion administrativa. |
 | `epc_activo` | Permite usar o bloquear la configuracion. |
 | `epc_es_predeterminado` | Marca la configuracion default de la empresa. |
-| `epc_sap_username` | Usuario SAP para Service Layer. |
+| `epc_user_system` | Usuario del sistema/ERP para Service Layer. |
+| `epc_user_pass` | Password del sistema/ERP cifrada por la aplicacion. |
 | `epc_db_name` | Base de datos SAP. |
 | `epc_cmp_name` | Nombre de compania SAP. |
 | `epc_server_node` | Nodo o servidor SAP. |
@@ -327,6 +311,7 @@ Configuraciones ERP por empresa. Se conserva para administracion de integracione
 
 - `public.usuarios_bancos`: absorbida por `public.bancos`.
 - `public.usuarios_roles`: eliminada; el rol unico vive en `public.usuarios.rol_id`.
+- `public.sistemas`: eliminada; las plantillas conservan la etiqueta visible del lado sistema sin catalogo externo.
 - `public.conciliaciones`: eliminada del esquema operativo porque ya no se guardan comparaciones ni Excel del sistema.
 - `public.conciliacion_resultados`: eliminada porque las coincidencias se calculan y muestran temporalmente.
 - `public.conciliaciones_erp_envios`: eliminada porque no participa del flujo actual.

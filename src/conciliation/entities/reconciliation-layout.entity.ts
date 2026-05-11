@@ -9,7 +9,6 @@ import {
   UpdateDateColumn
 } from "typeorm";
 import { Reconciliation } from "./reconciliation.entity";
-import { ConciliationSystem } from "./conciliation-system.entity";
 import { ReconciliationLayoutMapping } from "./reconciliation-layout-mapping.entity";
 import { TemplateLayout } from "./template-layout.entity";
 import { BankEntity } from "./bank.entity";
@@ -30,13 +29,6 @@ export class ReconciliationLayout {
   })
   @JoinColumn({ name: "plantilla_base_id", referencedColumnName: "id" })
   templateLayout!: TemplateLayout | null;
-
-  @ManyToOne(() => ConciliationSystem, (system) => system.layouts, {
-    nullable: false,
-    onDelete: "RESTRICT"
-  })
-  @JoinColumn({ name: "sistema_id", referencedColumnName: "id" })
-  system!: ConciliationSystem;
 
   @Column({ name: "plantilla_nombre", type: "varchar", length: 120 })
   name!: string;

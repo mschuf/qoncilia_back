@@ -7,7 +7,6 @@ DROP TRIGGER IF EXISTS trg_plantillas_conciliacion_mapeos_touch_actualizado_en O
 DROP TRIGGER IF EXISTS trg_plantillas_conciliacion_touch_actualizado_en ON public.plantillas_conciliacion;
 DROP TRIGGER IF EXISTS trg_plantillas_base_mapeos_touch_actualizado_en ON public.plantillas_base_mapeos;
 DROP TRIGGER IF EXISTS trg_plantillas_base_touch_actualizado_en ON public.plantillas_base;
-DROP TRIGGER IF EXISTS trg_sistemas_touch_actualizado_en ON public.sistemas;
 
 DROP TRIGGER IF EXISTS trg_conciliacion_matches_touch_updated_at ON public.conciliacion_matches;
 DROP TRIGGER IF EXISTS trg_conciliaciones_touch_updated_at ON public.conciliaciones;
@@ -34,25 +33,11 @@ DROP TABLE IF EXISTS public.sistemas CASCADE;
 DROP TABLE IF EXISTS public.conciliation_systems CASCADE;
 DROP TABLE IF EXISTS public.migrations CASCADE;
 
-CREATE TABLE public.sistemas (
-  sistema_id SERIAL PRIMARY KEY,
-  sistema_nombre VARCHAR(120) NOT NULL,
-  sistema_descripcion VARCHAR(255) NULL,
-  sistema_activo BOOLEAN NOT NULL DEFAULT TRUE,
-  sistema_creado_en TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  sistema_actualizado_en TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  CONSTRAINT chk_sistemas_nombre_not_blank CHECK (length(trim(sistema_nombre)) > 0)
-);
-
-CREATE UNIQUE INDEX uq_sistemas_nombre
-  ON public.sistemas ((LOWER(sistema_nombre)));
-
 CREATE TABLE public.plantillas_base (
   plantilla_base_id SERIAL PRIMARY KEY,
   plantilla_base_nombre VARCHAR(120) NOT NULL,
   plantilla_base_descripcion VARCHAR(255) NULL,
   plantilla_base_banco_referencia VARCHAR(120) NULL,
-  sistema_id INTEGER NOT NULL,
   plantilla_base_etiqueta_sistema VARCHAR(120) NOT NULL DEFAULT 'Sistema',
   plantilla_base_etiqueta_banco VARCHAR(120) NOT NULL DEFAULT 'Banco',
   plantilla_base_umbral_auto_match DOUBLE PRECISION NOT NULL DEFAULT 1,
@@ -62,16 +47,11 @@ CREATE TABLE public.plantillas_base (
   CONSTRAINT chk_plantillas_base_nombre_not_blank CHECK (length(trim(plantilla_base_nombre)) > 0),
   CONSTRAINT chk_plantillas_base_threshold_range CHECK (
     plantilla_base_umbral_auto_match >= 0 AND plantilla_base_umbral_auto_match <= 1
-  ),
-  CONSTRAINT fk_plantillas_base_sistemas FOREIGN KEY (sistema_id)
-    REFERENCES public.sistemas (sistema_id) ON DELETE RESTRICT
+  )
 );
 
 CREATE UNIQUE INDEX uq_plantillas_base_nombre
   ON public.plantillas_base ((LOWER(plantilla_base_nombre)));
-
-CREATE INDEX idx_plantillas_base_sistema_id
-  ON public.plantillas_base (sistema_id);
 
 CREATE TABLE public.plantillas_base_mapeos (
   mapeo_base_id SERIAL PRIMARY KEY,
@@ -113,7 +93,6 @@ CREATE TABLE public.plantillas_conciliacion (
   plantilla_id SERIAL PRIMARY KEY,
   banco_id INTEGER NOT NULL,
   plantilla_base_id INTEGER NULL,
-  sistema_id INTEGER NOT NULL,
   plantilla_nombre VARCHAR(120) NOT NULL,
   plantilla_descripcion VARCHAR(255) NULL,
   plantilla_etiqueta_sistema VARCHAR(120) NOT NULL DEFAULT 'Sistema',
@@ -125,8 +104,6 @@ CREATE TABLE public.plantillas_conciliacion (
   CONSTRAINT chk_plantillas_conciliacion_nombre_not_blank CHECK (length(trim(plantilla_nombre)) > 0),
   CONSTRAINT chk_plantillas_conciliacion_threshold_range CHECK (plantilla_umbral_auto_match >= 0 AND plantilla_umbral_auto_match <= 1),
   CONSTRAINT fk_plantillas_conciliacion_bancos FOREIGN KEY (banco_id) REFERENCES public.bancos (banco_id) ON DELETE CASCADE,
-  CONSTRAINT fk_plantillas_conciliacion_sistemas FOREIGN KEY (sistema_id)
-    REFERENCES public.sistemas (sistema_id) ON DELETE RESTRICT,
   CONSTRAINT fk_plantillas_conciliacion_plantillas_base FOREIGN KEY (plantilla_base_id)
     REFERENCES public.plantillas_base (plantilla_base_id) ON DELETE SET NULL
 );
@@ -141,9 +118,6 @@ CREATE UNIQUE INDEX uq_plantillas_conciliacion_banco_base
 
 CREATE INDEX idx_plantillas_conciliacion_banco_id
   ON public.plantillas_conciliacion (banco_id);
-
-CREATE INDEX idx_plantillas_conciliacion_sistema_id
-  ON public.plantillas_conciliacion (sistema_id);
 
 CREATE INDEX idx_plantillas_conciliacion_plantilla_base_id
   ON public.plantillas_conciliacion (plantilla_base_id);
@@ -245,28 +219,6 @@ CREATE INDEX idx_extractos_bancarios_filas_extracto_id
 CREATE UNIQUE INDEX uq_extractos_bancarios_filas_origen
   ON public.extractos_bancarios_filas (extracto_id, extracto_fila_origen_id);
 
-INSERT INTO public.sistemas (
-  sistema_nombre,
-  sistema_descripcion,
-  sistema_activo
-)
-VALUES (
-  'SAP',
-  'Sistema base para seeds y plantillas iniciales de conciliacion.',
-  TRUE
-)
-ON CONFLICT DO NOTHING;
-
-CREATE OR REPLACE FUNCTION public.fn_touch_sistemas_actualizado_en()
-RETURNS TRIGGER
-LANGUAGE plpgsql
-AS $$
-BEGIN
-  NEW.sistema_actualizado_en = NOW();
-  RETURN NEW;
-END;
-$$;
-
 CREATE OR REPLACE FUNCTION public.fn_touch_plantillas_base_actualizado_en()
 RETURNS TRIGGER
 LANGUAGE plpgsql
@@ -316,11 +268,6 @@ BEGIN
   RETURN NEW;
 END;
 $$;
-
-CREATE TRIGGER trg_sistemas_touch_actualizado_en
-BEFORE UPDATE ON public.sistemas
-FOR EACH ROW
-EXECUTE FUNCTION public.fn_touch_sistemas_actualizado_en();
 
 CREATE TRIGGER trg_plantillas_base_touch_actualizado_en
 BEFORE UPDATE ON public.plantillas_base

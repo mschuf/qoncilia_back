@@ -86,9 +86,10 @@ export class SapErpService {
     this.ensureActiveConfig(config)
 
     try {
+      const credentials = this.resolveSapLoginCredentials(config, payload)
       const loginResult = await this.sapB1Service.login(config, {
-        username: this.normalizeRequired(payload.username, "username"),
-        password: payload.password
+        username: credentials.username,
+        password: credentials.password
       })
 
       const repository = this.userErpSessionRepository
@@ -106,7 +107,7 @@ export class SapErpService {
       const session = existing ?? repository.create({ user, companyErpConfig: config })
 
       session.erpType = config.erpType
-      session.username = this.normalizeRequired(payload.username, "username")
+      session.username = credentials.username
       session.sessionCookieEncrypted = encryptText(loginResult.cookieHeader, this.credentialSecret)
       session.expiresAt = loginResult.expiresAt
       session.lastValidatedAt = now
@@ -844,6 +845,31 @@ export class SapErpService {
 
     const trimmed = String(value).trim()
     return trimmed ? trimmed : null
+  }
+
+  private resolveSapLoginCredentials(
+    config: CompanyErpConfig,
+    payload: SapLoginDto
+  ): { username: string; password: string } {
+    const username = this.normalizeOptional(payload.username) ?? config.userSystem
+    const password =
+      this.normalizeOptional(payload.password) ??
+      (config.userPassEncrypted
+        ? decryptText(config.userPassEncrypted, this.credentialSecret)
+        : null)
+
+    if (!username) {
+      throw new BadRequestException("username es obligatorio.")
+    }
+
+    if (!password) {
+      throw new BadRequestException("password es obligatorio.")
+    }
+
+    return {
+      username,
+      password
+    }
   }
 
   private readRowText(row: SapReadableRow | null, keys: string[]): string | null {

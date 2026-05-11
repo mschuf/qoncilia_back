@@ -31,11 +31,9 @@ import { SetBankAvailableTemplatesDto } from "./dto/set-bank-available-templates
 import { CompareBankStatementDto } from "./dto/compare-bank-statement.dto";
 import { CreateBankStatementDto, PreviewBankStatementDto } from "./dto/create-bank-statement.dto";
 import { CreateBankDto } from "./dto/create-bank.dto";
-import { CreateConciliationSystemDto } from "./dto/create-conciliation-system.dto";
 import { CreateLayoutDto } from "./dto/create-layout.dto";
 import { CreateTemplateLayoutDto } from "./dto/create-template-layout.dto";
 import { ListBankStatementsQueryDto } from "./dto/list-bank-statements-query.dto";
-import { UpdateConciliationSystemDto } from "./dto/update-conciliation-system.dto";
 import { UpdateBankDto } from "./dto/update-bank.dto";
 import { UpdateLayoutDto } from "./dto/update-layout.dto";
 import { UpdateTemplateLayoutDto } from "./dto/update-template-layout.dto";
@@ -68,38 +66,6 @@ export class ConciliationController {
   @RequiredModule(AppModuleCode.LAYOUT_MANAGEMENT)
   listTemplateLayouts(@CurrentUser() actor: AuthUser) {
     return this.conciliationService.listTemplateLayouts(actor);
-  }
-
-  @Get(["sistemas", "systems"])
-  @Roles(Role.ADMIN, Role.IS_SUPER_ADMIN)
-  @RequiredModule(AppModuleCode.LAYOUT_MANAGEMENT)
-  listSystems(@CurrentUser() actor: AuthUser) {
-    return this.conciliationService.listSystems(actor);
-  }
-
-  @Post(["sistemas", "systems"])
-  @Roles(Role.IS_SUPER_ADMIN)
-  @RequiredModule(AppModuleCode.LAYOUT_MANAGEMENT)
-  createSystem(@Body() body: CreateConciliationSystemDto, @CurrentUser() actor: AuthUser) {
-    return this.conciliationService.createSystem(body, actor);
-  }
-
-  @Patch(["sistemas/:systemId", "systems/:systemId"])
-  @Roles(Role.IS_SUPER_ADMIN)
-  @RequiredModule(AppModuleCode.LAYOUT_MANAGEMENT)
-  updateSystem(
-    @Param("systemId", ParseIntPipe) systemId: number,
-    @Body() body: UpdateConciliationSystemDto,
-    @CurrentUser() actor: AuthUser
-  ) {
-    return this.conciliationService.updateSystem(systemId, body, actor);
-  }
-
-  @Delete(["sistemas/:systemId", "systems/:systemId"])
-  @Roles(Role.IS_SUPER_ADMIN)
-  @RequiredModule(AppModuleCode.LAYOUT_MANAGEMENT)
-  deleteSystem(@Param("systemId", ParseIntPipe) systemId: number, @CurrentUser() actor: AuthUser) {
-    return this.conciliationService.deleteSystem(systemId, actor);
   }
 
   @Get("gestor-assignments/catalog")

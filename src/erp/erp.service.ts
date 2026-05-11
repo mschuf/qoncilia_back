@@ -11,6 +11,7 @@ import { QueryFailedError, Repository } from "typeorm"
 import { Company } from "../access-control/entities/company.entity"
 import { PublicCompany } from "../access-control/interfaces/access-control.interfaces"
 import { ErpType } from "../common/enums/erp-type.enum"
+import { Role } from "../common/enums/role.enum"
 import { AuthUser } from "../common/interfaces/auth-user.interface"
 import { encryptText } from "../common/utils/encryption.util"
 import { isSuperAdminRole } from "../common/utils/role.util"
@@ -101,18 +102,15 @@ export class ErpService {
       company,
       code: this.normalizeCode(payload.code),
       name: this.normalizeRequired(payload.name, "name"),
-      erpType: payload.erpType ?? ErpType.SAP_B1,
-      description: this.normalizeOptional(payload.description),
       active: nextActive,
       isDefault: nextIsDefault,
-      sapUsername: this.normalizeOptional(payload.sapUsername),
+      userSystem: this.normalizeOptional(payload.userSystem),
+      userPassEncrypted: this.encryptOptionalCredential(payload.userPass),
       dbName: this.normalizeOptional(payload.dbName),
       cmpName: this.normalizeOptional(payload.cmpName),
       serverNode: this.normalizeOptional(payload.serverNode),
       dbUser: this.normalizeOptional(payload.dbUser),
-      dbPasswordEncrypted: preparedPassword
-        ? encryptText(preparedPassword, this.credentialSecret)
-        : null,
+      dbPasswordEncrypted: preparedPassword ? encryptText(preparedPassword, this.credentialSecret) : null,
       serviceLayerUrl: this.normalizeUrl(payload.serviceLayerUrl),
       tlsVersion: this.normalizeOptional(payload.tlsVersion),
       allowSelfSigned: payload.allowSelfSigned ?? false,
@@ -149,8 +147,6 @@ export class ErpService {
     payload: UpdateCompanyErpConfigDto,
     actor: AuthUser
   ): Promise<PublicCompanyErpConfig> {
-    this.ensureSuperadmin(actor)
-
     return this.companyErpConfigRepository.manager.transaction(async (manager) => {
       const repository = manager.getRepository(CompanyErpConfig)
       const config = await repository.findOne({
@@ -162,22 +158,25 @@ export class ErpService {
         throw new NotFoundException("Configuracion ERP no encontrada.")
       }
 
+      this.ensureCanEditConfig(actor, config)
+      this.ensureAllowedUpdatePayload(actor, payload)
+
       if (payload.companyId !== undefined && payload.companyId !== config.company.id) {
         config.company = await this.requireCompany(payload.companyId)
       }
 
       if (payload.code !== undefined) config.code = this.normalizeCode(payload.code)
       if (payload.name !== undefined) config.name = this.normalizeRequired(payload.name, "name")
-      if (payload.description !== undefined) {
-        config.description = this.normalizeOptional(payload.description)
-      }
-      if (payload.erpType !== undefined) {
-        config.erpType = payload.erpType
-      }
       if (payload.active !== undefined) config.active = payload.active
       if (payload.isDefault !== undefined) config.isDefault = payload.isDefault
-      if (payload.sapUsername !== undefined) {
-        config.sapUsername = this.normalizeOptional(payload.sapUsername)
+      if (payload.userSystem !== undefined) {
+        config.userSystem = this.normalizeOptional(payload.userSystem)
+      }
+      if (payload.userPass !== undefined) {
+        const preparedUserPass = this.normalizeOptional(payload.userPass)
+        if (preparedUserPass) {
+          config.userPassEncrypted = encryptText(preparedUserPass, this.credentialSecret)
+        }
       }
       if (payload.dbName !== undefined) config.dbName = this.normalizeOptional(payload.dbName)
       if (payload.cmpName !== undefined) config.cmpName = this.normalizeOptional(payload.cmpName)
@@ -292,6 +291,39 @@ export class ErpService {
     }
   }
 
+  private ensureCanEditConfig(actor: AuthUser, config: CompanyErpConfig) {
+    if (isSuperAdminRole(actor.roleCode)) return
+
+    if (actor.roleCode === Role.ADMIN && config.company.id === actor.companyId) {
+      return
+    }
+
+    throw new ForbiddenException("No podes editar configuraciones ERP de otra empresa.")
+  }
+
+  private ensureAllowedUpdatePayload(actor: AuthUser, payload: UpdateCompanyErpConfigDto) {
+    if (isSuperAdminRole(actor.roleCode)) return
+
+    const allowedForAdmin = new Set<keyof UpdateCompanyErpConfigDto>([
+      "userSystem",
+      "userPass",
+      "dbName",
+      "cmpName",
+      "dbUser",
+      "password",
+      "serviceLayerUrl",
+      "tlsVersion"
+    ])
+
+    const rejected = Object.keys(payload).filter(
+      (key) => !allowedForAdmin.has(key as keyof UpdateCompanyErpConfigDto)
+    )
+
+    if (rejected.length > 0) {
+      throw new ForbiddenException("No tenes permisos para editar esos campos de la configuracion ERP.")
+    }
+  }
+
   private validateProviderConfig(config: CompanyErpConfig) {
     if (config.erpType === ErpType.SAP_B1) {
       ensureSapErpType(config.erpType)
@@ -345,10 +377,9 @@ export class ErpService {
       code: config.code,
       name: config.name,
       erpType: config.erpType,
-      description: config.description,
       active: config.active,
       isDefault: config.isDefault,
-      sapUsername: config.sapUsername,
+      userSystem: config.userSystem,
       dbName: config.dbName,
       cmpName: config.cmpName,
       serverNode: config.serverNode,
@@ -357,6 +388,7 @@ export class ErpService {
       tlsVersion: config.tlsVersion,
       allowSelfSigned: config.allowSelfSigned,
       settings: config.settings,
+      hasUserPass: Boolean(config.userPassEncrypted),
       hasPassword: Boolean(config.dbPasswordEncrypted),
       createdAt: config.createdAt,
       updatedAt: config.updatedAt
@@ -386,6 +418,11 @@ export class ErpService {
     const normalized = this.normalizeOptional(value)
     if (!normalized) return null
     return normalized.replace(/\/+$/, "")
+  }
+
+  private encryptOptionalCredential(value?: string | null): string | null {
+    const normalized = this.normalizeOptional(value)
+    return normalized ? encryptText(normalized, this.credentialSecret) : null
   }
 
   private toJsonRecord(value: unknown): Record<string, unknown> | null {
