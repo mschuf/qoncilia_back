@@ -1457,7 +1457,9 @@ export class ConciliationService {
     query: ListBankStatementsQueryDto
   ): Promise<PaginatedResponse<PublicBankStatementSummary>> {
     const page = query.page && query.page > 0 ? query.page : 1;
-    const limit = query.limit && query.limit > 0 ? query.limit : 10;
+    // Cap del limite para evitar payloads enormes accidentales.
+    const requestedLimit = query.limit && query.limit > 0 ? query.limit : 10;
+    const limit = Math.min(requestedLimit, 100);
     const skip = (page - 1) * limit;
 
     const queryBuilder = await this.buildBankStatementQuery(actor, query);
@@ -1481,7 +1483,23 @@ export class ConciliationService {
     actor: AuthUser,
     statementId: number
   ): Promise<{ id: number; message: string }> {
-    const statement = await this.requireAccessibleBankStatement(actor, statementId);
+    // Para eliminar no necesitamos cargar las filas del extracto. Usamos un
+    // findOne ligero con solo las relaciones necesarias para validar acceso.
+    const statement = await this.bankStatementRepository.findOne({
+      where: { id: statementId },
+      relations: {
+        user: {
+          company: true
+        }
+      }
+    });
+
+    if (!statement) {
+      throw new NotFoundException("Extracto bancario no encontrado.");
+    }
+
+    ensureActorCanAccessTargetUser(actor, statement.user);
+
     await this.bankStatementRepository.delete(statement.id);
 
     return {
@@ -1535,59 +1553,51 @@ export class ConciliationService {
     const query = new ListBankStatementsQueryDto();
     query.userId = requestedUserId;
 
-    const statements = await (await this.buildBankStatementQuery(actor, query)).getMany();
-    const totals = statements.reduce(
-      (accumulator, item) => {
-        accumulator.totalReconciliations += 1;
-        accumulator.totalUnmatchedBank += item.rowCount;
-        return accumulator;
-      },
-      {
-        totalReconciliations: 0,
-        totalAutoMatches: 0,
-        totalManualMatches: 0,
-        totalUnmatchedSystem: 0,
-        totalUnmatchedBank: 0,
-        totalMatchPercentage: 0
-      }
-    );
+    // Construye una sola vez el query con scope/filtros y reutiliza el clone()
+    // para sumar agregados sin volver a calcular permisos.
+    const baseQuery = await this.buildBankStatementQuery(actor, query);
 
-    const bankAggregation = new Map<
-      number,
-      {
-        userBankId: number;
-        bankName: string;
-        totalReconciliations: number;
-      }
-    >();
+    // Agregados en una sola query (sin traer filas a memoria).
+    const aggregateRow = await baseQuery
+      .clone()
+      .select("COUNT(statement.id)", "totalReconciliations")
+      .addSelect("COALESCE(SUM(statement.rowCount), 0)", "totalUnmatchedBank")
+      .getRawOne<{ totalReconciliations: string; totalUnmatchedBank: string }>();
 
-    for (const item of statements) {
-      const current = bankAggregation.get(item.userBank.id) ?? {
-        userBankId: item.userBank.id,
-        bankName: item.userBank.bankName,
-        totalReconciliations: 0
-      };
+    const totalReconciliations = Number(aggregateRow?.totalReconciliations ?? 0);
+    const totalUnmatchedBank = Number(aggregateRow?.totalUnmatchedBank ?? 0);
 
-      current.totalReconciliations += 1;
-      bankAggregation.set(item.userBank.id, current);
-    }
+    // Breakdown por banco con un GROUP BY (sin cargar entidades completas).
+    const breakdownRows = await baseQuery
+      .clone()
+      .select("userBank.id", "userBankId")
+      .addSelect("userBank.bankName", "bankName")
+      .addSelect("COUNT(statement.id)", "totalReconciliations")
+      .groupBy("userBank.id")
+      .addGroupBy("userBank.bankName")
+      .orderBy("COUNT(statement.id)", "DESC")
+      .getRawMany<{ userBankId: number; bankName: string; totalReconciliations: string }>();
+
+    // Solo se traen las 12 ultimas filas con sus relaciones, no todas.
+    const recent = await baseQuery
+      .clone()
+      .take(12)
+      .getMany();
 
     return {
-      totalReconciliations: totals.totalReconciliations,
-      totalAutoMatches: totals.totalAutoMatches,
-      totalManualMatches: totals.totalManualMatches,
-      totalUnmatchedSystem: totals.totalUnmatchedSystem,
-      totalUnmatchedBank: totals.totalUnmatchedBank,
+      totalReconciliations,
+      totalAutoMatches: 0,
+      totalManualMatches: 0,
+      totalUnmatchedSystem: 0,
+      totalUnmatchedBank,
       averageMatchPercentage: 0,
-      bankBreakdown: [...bankAggregation.values()]
-        .map((item) => ({
-          userBankId: item.userBankId,
-          bankName: item.bankName,
-          totalReconciliations: item.totalReconciliations,
-          averageMatchPercentage: 0
-        }))
-        .sort((left, right) => right.totalReconciliations - left.totalReconciliations),
-      recentReconciliations: statements.slice(0, 12).map((item) => ({
+      bankBreakdown: breakdownRows.map((row) => ({
+        userBankId: Number(row.userBankId),
+        bankName: row.bankName,
+        totalReconciliations: Number(row.totalReconciliations),
+        averageMatchPercentage: 0
+      })),
+      recentReconciliations: recent.map((item) => ({
         id: item.id,
         name: item.name,
         bankName: item.userBank.bankName,
@@ -1762,7 +1772,13 @@ export class ConciliationService {
     }
 
     if (query.search) {
-      queryBuilder.andWhere("statement.name ILIKE :search", { search: `%${query.search}%` });
+      const term = query.search.trim();
+      if (term.length > 0) {
+        queryBuilder.andWhere(
+          "(statement.name ILIKE :search OR statement.fileName ILIKE :search OR userBank.bankName ILIKE :search OR companyBankAccount.name ILIKE :search OR companyBankAccount.accountNumber ILIKE :search OR layout.name ILIKE :search)",
+          { search: `%${term}%` }
+        );
+      }
     }
 
     return queryBuilder;
