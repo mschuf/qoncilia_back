@@ -9,6 +9,14 @@ const emptyToUndefined = ({ value }: { value: unknown }) => {
   return value;
 };
 
+const emptyToNull = ({ value }: { value: unknown }) => {
+  if (typeof value === "string" && value.trim() === "") {
+    return null;
+  }
+
+  return value;
+};
+
 export class UpsertOwnCompanyDto {
   @Transform(emptyToUndefined)
   @IsString()
@@ -21,10 +29,10 @@ export class UpsertOwnCompanyDto {
   @MaxLength(50)
   fiscalId?: string;
 
-  @Transform(emptyToUndefined)
+  @Transform(emptyToNull)
   @IsOptional()
   @IsString()
-  logo?: string;
+  logo?: string | null;
 
   @Transform(emptyToUndefined)
   @IsOptional()
@@ -35,12 +43,12 @@ export class UpsertOwnCompanyDto {
   @Transform(emptyToUndefined)
   @IsOptional()
   @IsString()
-  @MaxLength(255)
-  webserviceErp?: string;
+  @MaxLength(120)
+  region?: string;
 
   @Transform(emptyToUndefined)
   @IsOptional()
   @IsString()
   @MaxLength(120)
-  schemeErp?: string;
+  country?: string;
 }

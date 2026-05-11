@@ -10,6 +10,8 @@ export interface PublicCompany {
   cardsId: string | null;
   logo: string | null;
   address: string | null;
+  region: string | null;
+  country: string | null;
   validityDate: Date | null;
 }
 

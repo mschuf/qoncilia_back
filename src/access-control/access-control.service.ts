@@ -48,7 +48,9 @@ export class AccessControlService {
     ]);
 
     return {
-      companies: companies.map((item) => this.toPublicCompany(item)),
+      companies: companies.map((item) =>
+        this.toPublicCompany(item, { includeIntegration: isSuperAdminRole(actor.roleCode) })
+      ),
       roles: roles.map((item) => this.toPublicRole(item)),
       modules: modules.map((item) => this.toPublicAppModule(item))
     };
@@ -74,6 +76,8 @@ export class AccessControlService {
           cardsId: this.normalizeOptional(payload.cardsId),
           logo: payload.logo ?? null,
           address: this.normalizeOptional(payload.address),
+          region: this.normalizeOptional(payload.region),
+          country: this.normalizeOptional(payload.country),
           validityDate: payload.validityDate ? new Date(payload.validityDate) : null
         });
 
@@ -128,6 +132,12 @@ export class AccessControlService {
     if (payload.address !== undefined) {
       company.address = this.normalizeOptional(payload.address);
     }
+    if (payload.region !== undefined) {
+      company.region = this.normalizeOptional(payload.region);
+    }
+    if (payload.country !== undefined) {
+      company.country = this.normalizeOptional(payload.country);
+    }
     if (payload.validityDate !== undefined) {
       company.validityDate = payload.validityDate ? new Date(payload.validityDate) : null;
     }
@@ -142,7 +152,7 @@ export class AccessControlService {
 
   async getOwnCompany(actor: AuthUser): Promise<PublicCompany> {
     const company = await this.requireCompany(actor.companyId);
-    return this.toPublicCompany(company);
+    return this.toPublicCompany(company, { includeIntegration: isSuperAdminRole(actor.roleCode) });
   }
 
   async upsertOwnCompany(
@@ -168,17 +178,17 @@ export class AccessControlService {
       company.address = this.normalizeOptional(payload.address);
     }
 
-    if (payload.webserviceErp !== undefined) {
-      company.webserviceErp = this.normalizeOptional(payload.webserviceErp);
+    if (payload.region !== undefined) {
+      company.region = this.normalizeOptional(payload.region);
     }
 
-    if (payload.schemeErp !== undefined) {
-      company.schemeErp = this.normalizeOptional(payload.schemeErp);
+    if (payload.country !== undefined) {
+      company.country = this.normalizeOptional(payload.country);
     }
 
     try {
       const updated = await this.companyRepository.save(company);
-      return this.toPublicCompany(updated);
+      return this.toPublicCompany(updated, { includeIntegration: false });
     } catch (error) {
       this.handleDatabaseError(error);
     }
@@ -384,19 +394,24 @@ export class AccessControlService {
     }
   }
 
-  private toPublicCompany(entity: Company): PublicCompany {
+  private toPublicCompany(
+    entity: Company,
+    { includeIntegration = true }: { includeIntegration?: boolean } = {}
+  ): PublicCompany {
     return {
       id: entity.id,
       code: entity.code,
       fiscalId: entity.code,
       name: entity.name,
       active: entity.active,
-      webserviceErp: entity.webserviceErp,
-      schemeErp: entity.schemeErp,
-      tlsVersionErp: entity.tlsVersionErp,
-      cardsId: entity.cardsId,
+      webserviceErp: includeIntegration ? entity.webserviceErp : null,
+      schemeErp: includeIntegration ? entity.schemeErp : null,
+      tlsVersionErp: includeIntegration ? entity.tlsVersionErp : null,
+      cardsId: includeIntegration ? entity.cardsId : null,
       logo: entity.logo,
       address: entity.address,
+      region: entity.region,
+      country: entity.country,
       validityDate: entity.validityDate
     };
   }

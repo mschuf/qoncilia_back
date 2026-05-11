@@ -43,7 +43,9 @@ export class ErpService {
   async listReference(actor: AuthUser): Promise<ErpReferenceResponse> {
     const companies = await this.listCompaniesForActor(actor)
     return {
-      companies: companies.map((company) => this.toPublicCompany(company)),
+      companies: companies.map((company) =>
+        this.toPublicCompany(company, { includeIntegration: isSuperAdminRole(actor.roleCode) })
+      ),
       erpTypes: [
         {
           code: ErpType.SAP_B1,
@@ -312,19 +314,24 @@ export class ErpService {
       .execute()
   }
 
-  private toPublicCompany(company: Company): PublicCompany {
+  private toPublicCompany(
+    company: Company,
+    { includeIntegration = true }: { includeIntegration?: boolean } = {}
+  ): PublicCompany {
     return {
       id: company.id,
       code: company.code,
       fiscalId: company.code,
       name: company.name,
       active: company.active,
-      webserviceErp: company.webserviceErp,
-      schemeErp: company.schemeErp,
-      tlsVersionErp: company.tlsVersionErp,
-      cardsId: company.cardsId,
+      webserviceErp: includeIntegration ? company.webserviceErp : null,
+      schemeErp: includeIntegration ? company.schemeErp : null,
+      tlsVersionErp: includeIntegration ? company.tlsVersionErp : null,
+      cardsId: includeIntegration ? company.cardsId : null,
       logo: company.logo,
       address: company.address,
+      region: company.region,
+      country: company.country,
       validityDate: company.validityDate
     }
   }

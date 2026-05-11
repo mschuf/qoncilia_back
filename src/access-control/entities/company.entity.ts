@@ -29,6 +29,12 @@ export class Company {
   @Column({ name: "emp_direccion", type: "varchar", length: 255, nullable: true })
   address!: string | null;
 
+  @Column({ name: "emp_region", type: "varchar", length: 120, nullable: true })
+  region!: string | null;
+
+  @Column({ name: "emp_pais", type: "varchar", length: 120, nullable: true })
+  country!: string | null;
+
   @Column({ name: "emp_fecha_vigencia", type: "timestamptz", nullable: true })
   validityDate!: Date | null;
 

@@ -20,6 +20,14 @@ const emptyToUndefined = ({ value }: { value: unknown }) => {
   return value;
 };
 
+const emptyToNull = ({ value }: { value: unknown }) => {
+  if (typeof value === "string" && value.trim() === "") {
+    return null;
+  }
+
+  return value;
+};
+
 const toBoolean = ({ value }: { value: unknown }) => {
   if (typeof value === "boolean") return value;
   if (value === "true") return true;
@@ -88,7 +96,8 @@ export class UpdateUserDto {
   @IsBoolean()
   activo?: boolean;
 
+  @Transform(emptyToNull)
   @IsOptional()
   @IsString()
-  usrFoto?: string;
+  usrFoto?: string | null;
 }

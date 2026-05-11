@@ -73,7 +73,9 @@ export class BankingService {
     ]);
 
     return {
-      companies: companies.map((item) => this.toPublicCompany(item)),
+      companies: companies.map((item) =>
+        this.toPublicCompany(item, { includeIntegration: isSuperAdminRole(actor.roleCode) })
+      ),
       banks: banks.map((item) => this.toPublicBank(item)),
       accounts: accounts.map((item) => this.toPublicCompanyBankAccount(item)),
       currencies: currencies.map((item) => this.toPublicCurrency(item))
@@ -440,19 +442,24 @@ export class BankingService {
     return currency;
   }
 
-  private toPublicCompany(company: Company): PublicCompany {
+  private toPublicCompany(
+    company: Company,
+    { includeIntegration = true }: { includeIntegration?: boolean } = {}
+  ): PublicCompany {
     return {
       id: company.id,
       code: company.code,
       fiscalId: company.code,
       name: company.name,
       active: company.active,
-      webserviceErp: company.webserviceErp,
-      schemeErp: company.schemeErp,
-      tlsVersionErp: company.tlsVersionErp,
-      cardsId: company.cardsId,
+      webserviceErp: includeIntegration ? company.webserviceErp : null,
+      schemeErp: includeIntegration ? company.schemeErp : null,
+      tlsVersionErp: includeIntegration ? company.tlsVersionErp : null,
+      cardsId: includeIntegration ? company.cardsId : null,
       logo: company.logo,
       address: company.address,
+      region: company.region,
+      country: company.country,
       validityDate: company.validityDate
     };
   }
