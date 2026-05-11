@@ -1609,8 +1609,10 @@ export class ConciliationService {
     const baseQuery = await this.buildBankStatementQuery(actor, query);
 
     // Agregados en una sola query (sin traer filas a memoria).
+    // Se quita el ORDER BY heredado porque las funciones agregadas no lo permiten en PG.
     const aggregateRow = await baseQuery
       .clone()
+      .orderBy("")
       .select("COUNT(statement.id)", "totalReconciliations")
       .addSelect("COALESCE(SUM(statement.rowCount), 0)", "totalUnmatchedBank")
       .getRawOne<{ totalReconciliations: string; totalUnmatchedBank: string }>();
@@ -1621,11 +1623,12 @@ export class ConciliationService {
     // Breakdown por banco con un GROUP BY (sin cargar entidades completas).
     const breakdownRows = await baseQuery
       .clone()
+      .orderBy("")
       .select("userBank.id", "userBankId")
-      .addSelect("userBank.bankName", "bankName")
+      .addSelect("userBank.name", "bankName")
       .addSelect("COUNT(statement.id)", "totalReconciliations")
       .groupBy("userBank.id")
-      .addGroupBy("userBank.bankName")
+      .addGroupBy("userBank.name")
       .orderBy("COUNT(statement.id)", "DESC")
       .getRawMany<{ userBankId: number; bankName: string; totalReconciliations: string }>();
 
