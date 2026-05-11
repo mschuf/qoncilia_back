@@ -139,37 +139,88 @@ export class ConciliationService {
 
   async listCatalog(actor: AuthUser, requestedUserId?: number): Promise<PublicUserBankWithLayouts[]> {
     const scope = await this.resolveAccessibleConfigurationScope(actor, requestedUserId);
-    const queryBuilder = this.userBankRepository
+
+    // 1) Bancos basicos + usuario (sin colecciones para evitar producto cartesiano)
+    const banksQuery = this.userBankRepository
       .createQueryBuilder("userBank")
-      .leftJoinAndSelect("userBank.company", "bankCompany")
       .leftJoinAndSelect("userBank.user", "user")
-      .leftJoinAndSelect("user.company", "company")
-      .leftJoinAndSelect("userBank.accounts", "account")
-      .leftJoinAndSelect("userBank.layouts", "layout")
+      .leftJoinAndSelect("userBank.company", "bankCompany")
+      .andWhere("userBank.banco_origen_id IS NULL");
+
+    this.applyUserScopeToQuery(banksQuery, scope, "user", "bankCompany");
+    const banks = await banksQuery
+      .select(["userBank.id", "userBank.name", "userBank.description", "userBank.branch", "userBank.active", "user.id", "user.usrLogin"])
+      .orderBy("user.usrLogin", "ASC")
+      .addOrderBy("userBank.name", "ASC")
+      .addOrderBy("userBank.id", "ASC")
+      .getMany();
+
+    if (banks.length === 0) return [];
+
+    const bankIds = banks.map((b) => b.id);
+    const userIds = Array.from(new Set(banks.map((b) => b.user.id)));
+
+    // 2) Cuentas de esos bancos (query separada)
+    const accounts = await this.companyBankAccountRepository
+      .createQueryBuilder("account")
+      .leftJoinAndSelect("account.bank", "bank")
+      .where("bank.id IN (:...bankIds)", { bankIds })
+      .andWhere("account.cuenta_bancaria_origen_id IS NULL")
+      .select(["account.id", "account.name", "account.accountNumber", "account.currency", "account.active", "bank.id"])
+      .orderBy("account.name", "ASC")
+      .addOrderBy("account.id", "ASC")
+      .getMany();
+
+    // 3) Layouts de esos bancos + system + mappings (query separada)
+    const layouts = await this.layoutRepository
+      .createQueryBuilder("layout")
+      .leftJoinAndSelect("layout.userBank", "layoutBank")
       .leftJoinAndSelect("layout.system", "system")
       .leftJoinAndSelect("layout.mappings", "mapping")
-      .leftJoinAndSelect("layout.templateLayout", "templateLayout");
+      .leftJoinAndSelect("layout.templateLayout", "templateLayout")
+      .where("layoutBank.id IN (:...bankIds)")
+      .setParameter("bankIds", bankIds)
+      .select([
+        "layout.id", "layout.name", "layout.description", "layout.systemLabel", "layout.bankLabel",
+        "layout.autoMatchThreshold", "layout.active",
+        "layoutBank.id",
+        "system.id", "system.name",
+        "templateLayout.id",
+        "mapping.id", "mapping.fieldKey", "mapping.label", "mapping.sortOrder", "mapping.active",
+        "mapping.required", "mapping.compareOperator", "mapping.weight", "mapping.tolerance",
+        "mapping.systemSheet", "mapping.systemColumn", "mapping.systemStartRow", "mapping.systemEndRow",
+        "mapping.systemDataType", "mapping.bankSheet", "mapping.bankColumn", "mapping.bankStartRow",
+        "mapping.bankEndRow", "mapping.bankDataType"
+      ])
+      .orderBy("layout.name", "ASC")
+      .addOrderBy("layout.id", "ASC")
+      .addOrderBy("mapping.sortOrder", "ASC")
+      .getMany();
 
-    this.applyUserScopeToQuery(queryBuilder, scope, "user", "bankCompany");
-    queryBuilder.andWhere("userBank.banco_origen_id IS NULL");
+    // 4) Disponibilidades de templates por usuario
+    const availabilityByUser = await this.loadAvailabilityByUser(userIds);
 
-    const banks = await queryBuilder.getMany();
+    // Ensamblar estructura
+    const accountsByBank = new Map<number, CompanyBankAccount[]>();
+    for (const account of accounts) {
+      const list = accountsByBank.get(account.bank.id) ?? [];
+      list.push(account);
+      accountsByBank.set(account.bank.id, list);
+    }
 
-    const availabilityByUser = await this.loadAvailabilityByUser(
-      banks.map((bank) => bank.user.id)
-    );
+    const layoutsByBank = new Map<number, ReconciliationLayout[]>();
+    for (const layout of layouts) {
+      const bankId = layout.userBank.id;
+      const list = layoutsByBank.get(bankId) ?? [];
+      list.push(layout);
+      layoutsByBank.set(bankId, list);
+    }
 
-    return banks
-      .sort((left, right) => {
-        const byUser = left.user.usrLogin.localeCompare(right.user.usrLogin);
-        if (byUser !== 0) return byUser;
-        const byBank = left.bankName.localeCompare(right.bankName);
-        if (byBank !== 0) return byBank;
-        return left.id - right.id;
-      })
-      .map((bank) =>
-        toPublicUserBankWithLayouts(bank, availabilityByUser.get(bank.user.id) ?? [])
-      );
+    return banks.map((bank) => {
+      bank.accounts = accountsByBank.get(bank.id) ?? [];
+      bank.layouts = layoutsByBank.get(bank.id) ?? [];
+      return toPublicUserBankWithLayouts(bank, availabilityByUser.get(bank.user.id) ?? []);
+    });
   }
 
   private async loadAvailabilityByUser(userIds: number[]): Promise<Map<number, number[]>> {
