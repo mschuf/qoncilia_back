@@ -28,6 +28,7 @@ Estos scripts estan pensados para un `DROP`/recreacion limpia. Los scripts princ
 22. `23_optimize_company_banking_pagination.sql` (indices para paginado y busqueda bancaria)
 23. `24_optimize_bank_statements_pagination.sql` (indices para paginado de extractos)
 24. `25_remove_systems_and_update_erp_config.sql` (migracion manual para bases ya existentes)
+25. `26_create_erp_config_templates.sql` (plantillas ERP globales y relacion con copias por empresa)
 
 ## Notas
 
@@ -46,3 +47,4 @@ Estos scripts estan pensados para un `DROP`/recreacion limpia. Los scripts princ
 - `22` es incremental e idempotente: agrega `emp_region` y `emp_pais` a `public.empresas`.
 - `23` es incremental e idempotente: agrega `pg_trgm` e indices para busquedas paginadas de bancos y cuentas bancarias.
 - `25` es incremental e idempotente: elimina `sistemas`, quita `sistema_id` de plantillas y ajusta `empresas_erp_configuraciones` al contrato nuevo.
+- `26` es incremental e idempotente: crea plantillas ERP sin empresa y agrega `ept_id` nullable a las copias por empresa.

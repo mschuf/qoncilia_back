@@ -1,6 +1,12 @@
 import { BadRequestException } from "@nestjs/common"
 import { ErpType } from "../../common/enums/erp-type.enum"
-import { CompanyErpConfig } from "../entities/company-erp-config.entity"
+
+interface SapConfigValidationTarget {
+  dbName: string | null
+  serviceLayerUrl: string | null
+  tlsVersion: string | null
+  dbPasswordEncrypted: string | null
+}
 
 function normalizeOptional(value?: string | null): string | null {
   if (value === undefined || value === null) return null
@@ -14,7 +20,7 @@ export function ensureSapErpType(erpType: ErpType) {
   }
 }
 
-export function validateSapConfig(config: CompanyErpConfig, requirePassword: boolean) {
+export function validateSapConfig(config: SapConfigValidationTarget, requirePassword: boolean) {
   const requiredFields: Array<[string | null, string]> = [
     [config.dbName, "dbName"],
     [config.serviceLayerUrl, "serviceLayerUrl"],

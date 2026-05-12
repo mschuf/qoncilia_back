@@ -281,13 +281,38 @@ Filas parseadas del Excel del banco. No existe tabla equivalente para el sistema
 
 ## ERP
 
+### `public.erp_configuraciones_plantillas`
+
+Templates ERP globales creados por superadmin. No pertenecen a una empresa; se copian a `empresas_erp_configuraciones` cuando se asignan.
+
+| Columna | Funcion |
+| --- | --- |
+| `ept_id` | Identificador primario del template. |
+| `ept_codigo` | Codigo unico global del template. |
+| `ept_nombre` | Nombre visible del template. |
+| `ept_activo` | Valor inicial de activo para las copias. |
+| `ept_es_predeterminado` | Marca si la copia puede quedar default cuando la empresa no tiene otra default. |
+| `ept_user_system` | Usuario del sistema/ERP para Service Layer. |
+| `ept_user_pass` | Password del sistema/ERP cifrada por la aplicacion. |
+| `ept_db_name` | Base de datos SAP a copiar. |
+| `ept_server_node` | Nodo o servidor SAP. |
+| `ept_db_user` | Usuario de base o servicio. |
+| `ept_db_password_enc` | Password cifrada. |
+| `ept_service_layer_url` | URL del Service Layer. |
+| `ept_tls_version` | Version TLS requerida. |
+| `ept_allow_self_signed` | Permite certificados autofirmados si esta activo. |
+| `ept_settings` | Configuracion adicional en JSON. |
+| `ept_created_at` | Fecha de creacion. |
+| `ept_updated_at` | Fecha de ultima modificacion. |
+
 ### `public.empresas_erp_configuraciones`
 
-Configuraciones ERP por empresa. Se conserva para administracion de integraciones, aunque el nuevo flujo de conciliacion no guarda resultados.
+Configuraciones ERP por empresa. Pueden ser copias de un template global o configuraciones propias de una empresa.
 
 | Columna | Funcion |
 | --- | --- |
 | `epc_id` | Identificador primario de la configuracion. |
+| `ept_id` | Template ERP de origen, nulo si no fue creada desde un template. |
 | `emp_id` | Empresa propietaria de la configuracion. |
 | `epc_codigo` | Codigo unico de configuracion por empresa. |
 | `epc_nombre` | Nombre visible de la configuracion. |
@@ -296,7 +321,6 @@ Configuraciones ERP por empresa. Se conserva para administracion de integracione
 | `epc_user_system` | Usuario del sistema/ERP para Service Layer. |
 | `epc_user_pass` | Password del sistema/ERP cifrada por la aplicacion. |
 | `epc_db_name` | Base de datos SAP. |
-| `epc_cmp_name` | Nombre de compania SAP. |
 | `epc_server_node` | Nodo o servidor SAP. |
 | `epc_db_user` | Usuario de base o servicio. |
 | `epc_db_password_enc` | Password cifrada. |

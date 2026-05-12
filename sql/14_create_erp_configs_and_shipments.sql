@@ -17,7 +17,6 @@ CREATE TABLE IF NOT EXISTS public.empresas_erp_configuraciones (
   epc_user_system VARCHAR(120) NULL,
   epc_user_pass TEXT NULL,
   epc_db_name VARCHAR(160) NULL,
-  epc_cmp_name VARCHAR(160) NULL,
   epc_server_node VARCHAR(160) NULL,
   epc_db_user VARCHAR(160) NULL,
   epc_db_password_enc TEXT NULL,

@@ -9,6 +9,7 @@ import {
 } from "typeorm"
 import { Company } from "../../access-control/entities/company.entity"
 import { ErpType } from "../../common/enums/erp-type.enum"
+import { ErpConfigTemplate } from "./erp-config-template.entity"
 
 @Entity({ name: "empresas_erp_configuraciones" })
 export class CompanyErpConfig {
@@ -20,6 +21,13 @@ export class CompanyErpConfig {
   @ManyToOne(() => Company, { nullable: false, onDelete: "CASCADE" })
   @JoinColumn({ name: "emp_id", referencedColumnName: "id" })
   company!: Company
+
+  @ManyToOne(() => ErpConfigTemplate, (template) => template.configs, {
+    nullable: true,
+    onDelete: "SET NULL"
+  })
+  @JoinColumn({ name: "ept_id", referencedColumnName: "id" })
+  template!: ErpConfigTemplate | null
 
   @Column({ name: "epc_codigo", type: "varchar", length: 80 })
   code!: string
@@ -41,9 +49,6 @@ export class CompanyErpConfig {
 
   @Column({ name: "epc_db_name", type: "varchar", length: 160, nullable: true })
   dbName!: string | null
-
-  @Column({ name: "epc_cmp_name", type: "varchar", length: 160, nullable: true })
-  cmpName!: string | null
 
   @Column({ name: "epc_server_node", type: "varchar", length: 160, nullable: true })
   serverNode!: string | null

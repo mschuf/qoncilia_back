@@ -1,17 +1,13 @@
 import { Transform } from "class-transformer"
 import {
-  ArrayMinSize,
   IsBoolean,
-  IsInt,
   IsIn,
   IsNotEmpty,
   IsObject,
   IsOptional,
-  IsArray,
   IsString,
   IsUrl,
-  MaxLength,
-  Min
+  MaxLength
 } from "class-validator"
 
 const emptyToUndefined = ({ value }: { value: unknown }) => {
@@ -22,34 +18,7 @@ const emptyToUndefined = ({ value }: { value: unknown }) => {
   return value
 }
 
-const toOptionalNumber = ({ value }: { value: unknown }) => {
-  if (value === undefined || value === null || value === "") return undefined
-  return Number(value)
-}
-
-const toNumberArray = ({ value }: { value: unknown }) => {
-  if (value === undefined || value === null || value === "") return undefined
-  const values = Array.isArray(value) ? value : [value]
-  return values
-    .map((item) => Number(item))
-    .filter((item) => Number.isFinite(item) && item > 0)
-}
-
-export class CreateCompanyErpConfigDto {
-  @Transform(toOptionalNumber)
-  @IsOptional()
-  @IsInt()
-  @Min(1)
-  companyId?: number
-
-  @Transform(toNumberArray)
-  @IsOptional()
-  @IsArray()
-  @ArrayMinSize(1)
-  @IsInt({ each: true })
-  @Min(1, { each: true })
-  companyIds?: number[]
-
+export class CreateErpConfigTemplateDto {
   @IsString()
   @IsNotEmpty()
   @MaxLength(80)

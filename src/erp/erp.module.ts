@@ -9,6 +9,7 @@ import { BankStatement } from "../conciliation/entities/bank-statement.entity"
 import { Reconciliation } from "../conciliation/entities/reconciliation.entity"
 import { User } from "../users/entities/user.entity"
 import { CompanyErpConfig } from "./entities/company-erp-config.entity"
+import { ErpConfigTemplate } from "./entities/erp-config-template.entity"
 import { ErpController } from "./erp.controller"
 import { ErpService } from "./erp.service"
 import { UserErpSession } from "./sap/entities/user-erp-session.entity"
@@ -25,6 +26,7 @@ import { SapErpService } from "./sap/sap-erp.service"
       BankStatement,
       Reconciliation,
       CompanyErpConfig,
+      ErpConfigTemplate,
       UserErpSession
     ])
   ],

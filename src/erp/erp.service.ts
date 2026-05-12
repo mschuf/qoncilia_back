@@ -15,15 +15,26 @@ import { Role } from "../common/enums/role.enum"
 import { AuthUser } from "../common/interfaces/auth-user.interface"
 import { encryptText } from "../common/utils/encryption.util"
 import { isSuperAdminRole } from "../common/utils/role.util"
+import { CopyCompanyErpConfigDto } from "./dto/copy-company-erp-config.dto"
 import { CreateCompanyErpConfigDto } from "./dto/create-company-erp-config.dto"
+import { CreateErpConfigTemplateDto } from "./dto/create-erp-config-template.dto"
 import { ListCompanyErpConfigsQueryDto } from "./dto/list-company-erp-configs-query.dto"
 import { UpdateCompanyErpConfigDto } from "./dto/update-company-erp-config.dto"
+import { UpdateErpConfigTemplateDto } from "./dto/update-erp-config-template.dto"
 import { CompanyErpConfig } from "./entities/company-erp-config.entity"
+import { ErpConfigTemplate } from "./entities/erp-config-template.entity"
 import {
   ErpReferenceResponse,
-  PublicCompanyErpConfig
+  PublicCompanyErpConfig,
+  PublicErpConfigTemplate
 } from "./interfaces/erp.interfaces"
 import { ensureSapErpType, validateSapConfig } from "./sap/sap-config.validator"
+
+type ErpConfigPayload =
+  | CreateCompanyErpConfigDto
+  | CreateErpConfigTemplateDto
+  | UpdateCompanyErpConfigDto
+  | UpdateErpConfigTemplateDto
 
 @Injectable()
 export class ErpService {
@@ -34,6 +45,8 @@ export class ErpService {
     private readonly companyRepository: Repository<Company>,
     @InjectRepository(CompanyErpConfig)
     private readonly companyErpConfigRepository: Repository<CompanyErpConfig>,
+    @InjectRepository(ErpConfigTemplate)
+    private readonly erpConfigTemplateRepository: Repository<ErpConfigTemplate>,
     configService: ConfigService
   ) {
     this.credentialSecret =
@@ -61,16 +74,25 @@ export class ErpService {
     actor: AuthUser,
     query: ListCompanyErpConfigsQueryDto
   ): Promise<PublicCompanyErpConfig[]> {
-    const companyId = await this.resolveAccessibleCompanyId(actor, query.companyId)
-
     const queryBuilder = this.companyErpConfigRepository
       .createQueryBuilder("config")
       .leftJoinAndSelect("config.company", "company")
-      .where("company.id = :companyId", { companyId })
-      .orderBy("config.isDefault", "DESC")
-      .addOrderBy("config.active", "DESC")
+      .leftJoinAndSelect("config.template", "template")
+      .where("1 = 1")
+      .orderBy("config.code", "ASC")
       .addOrderBy("config.name", "ASC")
+      .addOrderBy("company.name", "ASC")
       .addOrderBy("config.id", "ASC")
+
+    if (isSuperAdminRole(actor.roleCode)) {
+      if (query.companyId) {
+        await this.requireCompany(query.companyId)
+        queryBuilder.andWhere("company.id = :companyId", { companyId: query.companyId })
+      }
+    } else {
+      const companyId = await this.resolveAccessibleCompanyId(actor, query.companyId)
+      queryBuilder.andWhere("company.id = :companyId", { companyId })
+    }
 
     if (query.activeOnly) {
       queryBuilder.andWhere("config.active = :active", { active: true })
@@ -80,22 +102,423 @@ export class ErpService {
     return configs.map((config) => this.toPublicCompanyErpConfig(config))
   }
 
+  async listErpConfigTemplates(actor: AuthUser): Promise<PublicErpConfigTemplate[]> {
+    this.ensureSuperadmin(actor)
+
+    const templates = await this.erpConfigTemplateRepository.find({
+      relations: { configs: { company: true } },
+      order: { code: "ASC", name: "ASC", id: "ASC" }
+    })
+
+    return templates.map((template) => this.toPublicErpConfigTemplate(template))
+  }
+
+  async createErpConfigTemplate(
+    payload: CreateErpConfigTemplateDto,
+    actor: AuthUser
+  ): Promise<PublicErpConfigTemplate> {
+    this.ensureSuperadmin(actor)
+
+    const template = this.buildErpConfigTemplate(payload)
+
+    try {
+      const saved = await this.erpConfigTemplateRepository.save(template)
+      const persisted = await this.erpConfigTemplateRepository.findOne({
+        where: { id: saved.id },
+        relations: { configs: { company: true } }
+      })
+
+      if (!persisted) {
+        throw new NotFoundException("No se pudo recuperar la plantilla ERP creada.")
+      }
+
+      return this.toPublicErpConfigTemplate(persisted)
+    } catch (error) {
+      this.handleDatabaseError(error)
+    }
+  }
+
+  async updateErpConfigTemplate(
+    templateId: number,
+    payload: UpdateErpConfigTemplateDto,
+    actor: AuthUser
+  ): Promise<PublicErpConfigTemplate> {
+    this.ensureSuperadmin(actor)
+
+    const template = await this.erpConfigTemplateRepository.findOne({
+      where: { id: templateId },
+      relations: { configs: { company: true } }
+    })
+
+    if (!template) {
+      throw new NotFoundException("Plantilla ERP no encontrada.")
+    }
+
+    this.applyTemplatePayload(template, payload)
+    this.validateTemplateConfig(template)
+
+    try {
+      await this.erpConfigTemplateRepository.save(template)
+      const persisted = await this.erpConfigTemplateRepository.findOne({
+        where: { id: template.id },
+        relations: { configs: { company: true } }
+      })
+
+      if (!persisted) {
+        throw new NotFoundException("No se pudo recuperar la plantilla ERP actualizada.")
+      }
+
+      return this.toPublicErpConfigTemplate(persisted)
+    } catch (error) {
+      this.handleDatabaseError(error)
+    }
+  }
+
+  async deleteErpConfigTemplate(
+    templateId: number,
+    actor: AuthUser
+  ): Promise<{ id: number; code: string; message: string }> {
+    this.ensureSuperadmin(actor)
+
+    const template = await this.erpConfigTemplateRepository.findOne({
+      where: { id: templateId }
+    })
+
+    if (!template) {
+      throw new NotFoundException("Plantilla ERP no encontrada.")
+    }
+
+    await this.erpConfigTemplateRepository.delete(template.id)
+
+    return {
+      id: template.id,
+      code: template.code,
+      message: "Plantilla ERP eliminada."
+    }
+  }
+
+  async copyErpConfigTemplate(
+    templateId: number,
+    payload: CopyCompanyErpConfigDto,
+    actor: AuthUser
+  ): Promise<PublicCompanyErpConfig[]> {
+    this.ensureSuperadmin(actor)
+
+    const companyIds = this.normalizeCompanyIds(payload.companyIds)
+    if (companyIds.length === 0) {
+      throw new BadRequestException("Selecciona al menos una empresa para asignar la plantilla.")
+    }
+
+    const template = await this.erpConfigTemplateRepository.findOne({
+      where: { id: templateId }
+    })
+
+    if (!template) {
+      throw new NotFoundException("Plantilla ERP no encontrada.")
+    }
+
+    const companies = await this.requireCompanies(companyIds)
+
+    try {
+      return this.companyErpConfigRepository.manager.transaction(async (manager) => {
+        const repository = manager.getRepository(CompanyErpConfig)
+        const existingConfigs = await repository
+          .createQueryBuilder("config")
+          .leftJoinAndSelect("config.company", "company")
+          .where("company.id IN (:...companyIds)", { companyIds })
+          .andWhere("LOWER(config.code) = LOWER(:code)", { code: template.code })
+          .getMany()
+
+        if (existingConfigs.length > 0) {
+          throw new ConflictException(
+            `Ya existe la configuracion ${template.code} en: ${existingConfigs
+              .map((config) => config.company.name)
+              .join(", ")}.`
+          )
+        }
+
+        const createdConfigs: PublicCompanyErpConfig[] = []
+        for (const company of companies) {
+          const existingCount = await repository.count({
+            where: { company: { id: company.id } }
+          })
+          const erpConfig = this.cloneTemplateToCompanyConfig(template, company, existingCount)
+
+          if (erpConfig.isDefault) {
+            await this.clearDefaultConfigForCompany(repository, company.id)
+          }
+
+          const saved = await repository.save(erpConfig)
+          const persisted = await repository.findOne({
+            where: { id: saved.id },
+            relations: { company: true, template: true }
+          })
+
+          if (!persisted) {
+            throw new NotFoundException("No se pudo recuperar la configuracion ERP copiada.")
+          }
+
+          createdConfigs.push(this.toPublicCompanyErpConfig(persisted))
+        }
+
+        return createdConfigs
+      })
+    } catch (error) {
+      this.handleDatabaseError(error)
+    }
+  }
+
+  private buildErpConfigTemplate(payload: CreateErpConfigTemplateDto): ErpConfigTemplate {
+    const template = this.erpConfigTemplateRepository.create({
+      code: this.normalizeCode(payload.code),
+      name: this.normalizeRequired(payload.name, "name"),
+      active: payload.active ?? this.hasOperationalConfig(payload),
+      isDefault: payload.isDefault ?? false,
+      userSystem: this.normalizeOptional(payload.userSystem),
+      userPassEncrypted: this.encryptOptionalCredential(payload.userPass),
+      dbName: this.normalizeOptional(payload.dbName),
+      serverNode: this.normalizeOptional(payload.serverNode),
+      dbUser: this.normalizeOptional(payload.dbUser),
+      dbPasswordEncrypted: this.encryptOptionalCredential(payload.password),
+      serviceLayerUrl: this.normalizeUrl(payload.serviceLayerUrl),
+      tlsVersion: this.normalizeOptional(payload.tlsVersion),
+      allowSelfSigned: payload.allowSelfSigned ?? false,
+      settings: this.toJsonRecord(payload.settings)
+    })
+
+    this.validateTemplateConfig(template)
+
+    return template
+  }
+
+  private applyTemplatePayload(template: ErpConfigTemplate, payload: UpdateErpConfigTemplateDto) {
+    if (payload.code !== undefined) template.code = this.normalizeCode(payload.code)
+    if (payload.name !== undefined) template.name = this.normalizeRequired(payload.name, "name")
+    if (payload.active !== undefined) template.active = payload.active
+    if (payload.isDefault !== undefined) template.isDefault = payload.isDefault
+    if (payload.userSystem !== undefined) {
+      template.userSystem = this.normalizeOptional(payload.userSystem)
+    }
+    if (payload.userPass !== undefined) {
+      const preparedUserPass = this.normalizeOptional(payload.userPass)
+      if (preparedUserPass) {
+        template.userPassEncrypted = encryptText(preparedUserPass, this.credentialSecret)
+      }
+    }
+    if (payload.dbName !== undefined) template.dbName = this.normalizeOptional(payload.dbName)
+    if (payload.serverNode !== undefined) {
+      template.serverNode = this.normalizeOptional(payload.serverNode)
+    }
+    if (payload.dbUser !== undefined) template.dbUser = this.normalizeOptional(payload.dbUser)
+    if (payload.serviceLayerUrl !== undefined) {
+      template.serviceLayerUrl = this.normalizeUrl(payload.serviceLayerUrl)
+    }
+    if (payload.tlsVersion !== undefined) {
+      template.tlsVersion = this.normalizeOptional(payload.tlsVersion)
+    }
+    if (payload.allowSelfSigned !== undefined) {
+      template.allowSelfSigned = payload.allowSelfSigned
+    }
+    if (payload.settings !== undefined) {
+      template.settings = this.toJsonRecord(payload.settings)
+    }
+
+    const preparedPassword = this.normalizeOptional(payload.password)
+    if (preparedPassword) {
+      template.dbPasswordEncrypted = encryptText(preparedPassword, this.credentialSecret)
+    }
+  }
+
+  private validateTemplateConfig(template: ErpConfigTemplate) {
+    if (template.isDefault && !template.active) {
+      throw new BadRequestException("Una plantilla predeterminada no puede quedar inactiva.")
+    }
+
+    this.validateProviderConfig(template)
+  }
+
+  private cloneTemplateToCompanyConfig(
+    template: ErpConfigTemplate,
+    company: Company,
+    existingCount: number
+  ): CompanyErpConfig {
+    const erpConfig = this.companyErpConfigRepository.create({
+      template,
+      company,
+      code: template.code,
+      name: template.name,
+      active: template.active,
+      isDefault: template.isDefault && template.active && existingCount === 0,
+      userSystem: template.userSystem,
+      userPassEncrypted: template.userPassEncrypted,
+      dbName: template.dbName,
+      serverNode: template.serverNode,
+      dbUser: template.dbUser,
+      dbPasswordEncrypted: template.dbPasswordEncrypted,
+      serviceLayerUrl: template.serviceLayerUrl,
+      tlsVersion: template.tlsVersion,
+      allowSelfSigned: template.allowSelfSigned,
+      settings: this.toJsonRecord(template.settings)
+    })
+
+    this.validateProviderConfig(erpConfig)
+
+    return erpConfig
+  }
+
   async createCompanyErpConfig(
     payload: CreateCompanyErpConfigDto,
     actor: AuthUser
-  ): Promise<PublicCompanyErpConfig> {
+  ): Promise<PublicCompanyErpConfig | PublicCompanyErpConfig[]> {
     this.ensureSuperadmin(actor)
 
-    const company = await this.requireCompany(payload.companyId)
-    const existingCount = await this.companyErpConfigRepository.count({
-      where: { company: { id: company.id } }
+    const companyIds = this.resolveTargetCompanyIds(payload)
+    const companies = await this.requireCompanies(companyIds)
+
+    try {
+      return this.companyErpConfigRepository.manager.transaction(async (manager) => {
+        const repository = manager.getRepository(CompanyErpConfig)
+        const createdConfigs: PublicCompanyErpConfig[] = []
+
+        for (const company of companies) {
+          const existingCount = await repository.count({
+            where: { company: { id: company.id } }
+          })
+          const erpConfig = this.buildCompanyErpConfig(payload, company, existingCount)
+
+          if (erpConfig.isDefault) {
+            await this.clearDefaultConfigForCompany(repository, company.id)
+          }
+
+          const saved = await repository.save(erpConfig)
+          const persisted = await repository.findOne({
+            where: { id: saved.id },
+            relations: { company: true, template: true }
+          })
+
+          if (!persisted) {
+            throw new NotFoundException("No se pudo recuperar la configuracion ERP creada.")
+          }
+
+          createdConfigs.push(this.toPublicCompanyErpConfig(persisted))
+        }
+
+        return createdConfigs.length === 1 ? createdConfigs[0] : createdConfigs
+      })
+    } catch (error) {
+      this.handleDatabaseError(error)
+    }
+  }
+
+  async copyCompanyErpConfig(
+    sourceConfigId: number,
+    payload: CopyCompanyErpConfigDto,
+    actor: AuthUser
+  ): Promise<PublicCompanyErpConfig[]> {
+    this.ensureSuperadmin(actor)
+
+    const targetCompanyIds = this.normalizeCompanyIds(payload.companyIds)
+    const sourceConfig = await this.companyErpConfigRepository.findOne({
+      where: { id: sourceConfigId },
+      relations: { company: true, template: true }
     })
 
-    const nextIsDefault = payload.isDefault ?? existingCount === 0
-    const nextActive = payload.active ?? true
-    if (nextIsDefault && !nextActive) {
-      throw new BadRequestException("Una configuracion predeterminada no puede quedar inactiva.")
+    if (!sourceConfig) {
+      throw new NotFoundException("Configuracion ERP origen no encontrada.")
     }
+
+    const copyCompanyIds = targetCompanyIds.filter((companyId) => companyId !== sourceConfig.company.id)
+    if (copyCompanyIds.length === 0) {
+      throw new BadRequestException("Selecciona al menos una empresa distinta para copiar la configuracion.")
+    }
+
+    const companies = await this.requireCompanies(copyCompanyIds)
+
+    try {
+      return this.companyErpConfigRepository.manager.transaction(async (manager) => {
+        const repository = manager.getRepository(CompanyErpConfig)
+        const existingConfigs = await repository
+          .createQueryBuilder("config")
+          .leftJoinAndSelect("config.company", "company")
+          .where("company.id IN (:...companyIds)", { companyIds: copyCompanyIds })
+          .andWhere("LOWER(config.code) = LOWER(:code)", { code: sourceConfig.code })
+          .getMany()
+
+        if (existingConfigs.length > 0) {
+          throw new ConflictException(
+            `Ya existe la configuracion ${sourceConfig.code} en: ${existingConfigs
+              .map((config) => config.company.name)
+              .join(", ")}.`
+          )
+        }
+
+        const createdConfigs: PublicCompanyErpConfig[] = []
+        for (const company of companies) {
+          const existingCount = await repository.count({
+            where: { company: { id: company.id } }
+          })
+          const erpConfig = this.cloneCompanyErpConfig(sourceConfig, company, existingCount)
+
+          if (erpConfig.isDefault) {
+            await this.clearDefaultConfigForCompany(repository, company.id)
+          }
+
+          const saved = await repository.save(erpConfig)
+          const persisted = await repository.findOne({
+            where: { id: saved.id },
+            relations: { company: true, template: true }
+          })
+
+          if (!persisted) {
+            throw new NotFoundException("No se pudo recuperar la configuracion ERP copiada.")
+          }
+
+          createdConfigs.push(this.toPublicCompanyErpConfig(persisted))
+        }
+
+        return createdConfigs
+      })
+    } catch (error) {
+      this.handleDatabaseError(error)
+    }
+  }
+
+  private cloneCompanyErpConfig(
+    sourceConfig: CompanyErpConfig,
+    company: Company,
+    existingCount: number
+  ): CompanyErpConfig {
+    const erpConfig = this.companyErpConfigRepository.create({
+      template: sourceConfig.template,
+      company,
+      code: sourceConfig.code,
+      name: sourceConfig.name,
+      active: sourceConfig.active,
+      isDefault: sourceConfig.active && existingCount === 0,
+      userSystem: sourceConfig.userSystem,
+      userPassEncrypted: sourceConfig.userPassEncrypted,
+      dbName: sourceConfig.dbName,
+      serverNode: sourceConfig.serverNode,
+      dbUser: sourceConfig.dbUser,
+      dbPasswordEncrypted: sourceConfig.dbPasswordEncrypted,
+      serviceLayerUrl: sourceConfig.serviceLayerUrl,
+      tlsVersion: sourceConfig.tlsVersion,
+      allowSelfSigned: sourceConfig.allowSelfSigned,
+      settings: this.toJsonRecord(sourceConfig.settings)
+    })
+
+    this.validateProviderConfig(erpConfig)
+
+    return erpConfig
+  }
+
+  private buildCompanyErpConfig(
+    payload: CreateCompanyErpConfigDto,
+    company: Company,
+    existingCount: number
+  ): CompanyErpConfig {
+    const nextActive = payload.active ?? this.hasOperationalConfig(payload)
+    const nextIsDefault = payload.isDefault ?? (nextActive && existingCount === 0)
 
     const preparedPassword = this.normalizeOptional(payload.password)
     const erpConfig = this.companyErpConfigRepository.create({
@@ -107,7 +530,6 @@ export class ErpService {
       userSystem: this.normalizeOptional(payload.userSystem),
       userPassEncrypted: this.encryptOptionalCredential(payload.userPass),
       dbName: this.normalizeOptional(payload.dbName),
-      cmpName: this.normalizeOptional(payload.cmpName),
       serverNode: this.normalizeOptional(payload.serverNode),
       dbUser: this.normalizeOptional(payload.dbUser),
       dbPasswordEncrypted: preparedPassword ? encryptText(preparedPassword, this.credentialSecret) : null,
@@ -117,29 +539,13 @@ export class ErpService {
       settings: this.toJsonRecord(payload.settings)
     })
 
+    if (erpConfig.isDefault && !erpConfig.active) {
+      throw new BadRequestException("Una configuracion predeterminada no puede quedar inactiva.")
+    }
+
     this.validateProviderConfig(erpConfig)
 
-    try {
-      return this.companyErpConfigRepository.manager.transaction(async (manager) => {
-        if (erpConfig.isDefault) {
-          await this.clearDefaultConfigForCompany(manager.getRepository(CompanyErpConfig), company.id)
-        }
-
-        const saved = await manager.getRepository(CompanyErpConfig).save(erpConfig)
-        const persisted = await manager.getRepository(CompanyErpConfig).findOne({
-          where: { id: saved.id },
-          relations: { company: true }
-        })
-
-        if (!persisted) {
-          throw new NotFoundException("No se pudo recuperar la configuracion ERP creada.")
-        }
-
-        return this.toPublicCompanyErpConfig(persisted)
-      })
-    } catch (error) {
-      this.handleDatabaseError(error)
-    }
+    return erpConfig
   }
 
   async updateCompanyErpConfig(
@@ -151,7 +557,7 @@ export class ErpService {
       const repository = manager.getRepository(CompanyErpConfig)
       const config = await repository.findOne({
         where: { id: configId },
-        relations: { company: true }
+        relations: { company: true, template: true }
       })
 
       if (!config) {
@@ -179,7 +585,6 @@ export class ErpService {
         }
       }
       if (payload.dbName !== undefined) config.dbName = this.normalizeOptional(payload.dbName)
-      if (payload.cmpName !== undefined) config.cmpName = this.normalizeOptional(payload.cmpName)
       if (payload.serverNode !== undefined) {
         config.serverNode = this.normalizeOptional(payload.serverNode)
       }
@@ -228,7 +633,7 @@ export class ErpService {
 
       const persisted = await repository.findOne({
         where: { id: config.id },
-        relations: { company: true }
+        relations: { company: true, template: true }
       })
 
       if (!persisted) {
@@ -237,6 +642,31 @@ export class ErpService {
 
       return this.toPublicCompanyErpConfig(persisted)
     })
+  }
+
+  async deleteCompanyErpConfig(
+    configId: number,
+    actor: AuthUser
+  ): Promise<{ id: number; companyId: number; code: string; message: string }> {
+    this.ensureSuperadmin(actor)
+
+    const config = await this.companyErpConfigRepository.findOne({
+      where: { id: configId },
+      relations: { company: true, template: true }
+    })
+
+    if (!config) {
+      throw new NotFoundException("Configuracion ERP no encontrada.")
+    }
+
+    await this.companyErpConfigRepository.delete(config.id)
+
+    return {
+      id: config.id,
+      companyId: config.company.id,
+      code: config.code,
+      message: "Configuracion ERP eliminada de la empresa."
+    }
   }
 
   private async listCompaniesForActor(actor: AuthUser): Promise<Company[]> {
@@ -285,6 +715,35 @@ export class ErpService {
     return company
   }
 
+  private async requireCompanies(companyIds: number[]): Promise<Company[]> {
+    const companies = await this.companyRepository.find({
+      where: companyIds.map((id) => ({ id })),
+      order: { name: "ASC", id: "ASC" }
+    })
+
+    if (companies.length !== companyIds.length) {
+      const missing = companyIds.filter((id) => !companies.some((company) => company.id === id))
+      throw new NotFoundException(`Empresa no encontrada: ${missing.join(", ")}.`)
+    }
+
+    const companyById = new Map(companies.map((company) => [company.id, company]))
+    return companyIds.map((id) => companyById.get(id)).filter((company): company is Company => Boolean(company))
+  }
+
+  private resolveTargetCompanyIds(payload: CreateCompanyErpConfigDto): number[] {
+    const ids = payload.companyIds?.length ? payload.companyIds : payload.companyId ? [payload.companyId] : []
+    const uniqueIds = this.normalizeCompanyIds(ids)
+    if (uniqueIds.length === 0) {
+      throw new BadRequestException("Debes seleccionar al menos una empresa.")
+    }
+
+    return uniqueIds
+  }
+
+  private normalizeCompanyIds(companyIds: number[]): number[] {
+    return Array.from(new Set(companyIds.filter((id) => Number.isFinite(id) && id > 0)))
+  }
+
   private ensureSuperadmin(actor: AuthUser) {
     if (!isSuperAdminRole(actor.roleCode)) {
       throw new ForbiddenException("Solo el super admin puede administrar configuraciones ERP.")
@@ -305,10 +764,12 @@ export class ErpService {
     if (isSuperAdminRole(actor.roleCode)) return
 
     const allowedForAdmin = new Set<keyof UpdateCompanyErpConfigDto>([
+      "name",
+      "active",
+      "isDefault",
       "userSystem",
       "userPass",
       "dbName",
-      "cmpName",
       "dbUser",
       "password",
       "serviceLayerUrl",
@@ -324,10 +785,12 @@ export class ErpService {
     }
   }
 
-  private validateProviderConfig(config: CompanyErpConfig) {
+  private validateProviderConfig(config: CompanyErpConfig | ErpConfigTemplate) {
     if (config.erpType === ErpType.SAP_B1) {
       ensureSapErpType(config.erpType)
-      validateSapConfig(config, false)
+      if (config.active) {
+        validateSapConfig(config, false)
+      }
       return
     }
 
@@ -371,6 +834,7 @@ export class ErpService {
   private toPublicCompanyErpConfig(config: CompanyErpConfig): PublicCompanyErpConfig {
     return {
       id: config.id,
+      templateId: config.template?.id ?? null,
       companyId: config.company.id,
       companyCode: config.company.code,
       companyName: config.company.name,
@@ -381,7 +845,6 @@ export class ErpService {
       isDefault: config.isDefault,
       userSystem: config.userSystem,
       dbName: config.dbName,
-      cmpName: config.cmpName,
       serverNode: config.serverNode,
       dbUser: config.dbUser,
       serviceLayerUrl: config.serviceLayerUrl,
@@ -392,6 +855,37 @@ export class ErpService {
       hasPassword: Boolean(config.dbPasswordEncrypted),
       createdAt: config.createdAt,
       updatedAt: config.updatedAt
+    }
+  }
+
+  private toPublicErpConfigTemplate(template: ErpConfigTemplate): PublicErpConfigTemplate {
+    const configs = [...(template.configs ?? [])].sort(
+      (left, right) => left.company.name.localeCompare(right.company.name) || left.id - right.id
+    )
+    configs.forEach((config) => {
+      config.template = template
+    })
+
+    return {
+      id: template.id,
+      code: template.code,
+      name: template.name,
+      erpType: template.erpType,
+      active: template.active,
+      isDefault: template.isDefault,
+      userSystem: template.userSystem,
+      dbName: template.dbName,
+      serverNode: template.serverNode,
+      dbUser: template.dbUser,
+      serviceLayerUrl: template.serviceLayerUrl,
+      tlsVersion: template.tlsVersion,
+      allowSelfSigned: template.allowSelfSigned,
+      settings: template.settings,
+      hasUserPass: Boolean(template.userPassEncrypted),
+      hasPassword: Boolean(template.dbPasswordEncrypted),
+      configs: configs.map((config) => this.toPublicCompanyErpConfig(config)),
+      createdAt: template.createdAt,
+      updatedAt: template.updatedAt
     }
   }
 
@@ -425,6 +919,14 @@ export class ErpService {
     return normalized ? encryptText(normalized, this.credentialSecret) : null
   }
 
+  private hasOperationalConfig(payload: ErpConfigPayload): boolean {
+    return Boolean(
+      this.normalizeOptional(payload.dbName) &&
+        this.normalizeOptional(payload.serviceLayerUrl) &&
+        this.normalizeOptional(payload.tlsVersion)
+    )
+  }
+
   private toJsonRecord(value: unknown): Record<string, unknown> | null {
     if (value === null || value === undefined) {
       return null
@@ -449,6 +951,10 @@ export class ErpService {
 
         if (constraint.includes("uq_empresas_erp_configuraciones_codigo") || detail.includes("epc_codigo")) {
           throw new ConflictException("Ya existe una configuracion ERP con ese codigo en la empresa.")
+        }
+
+        if (constraint.includes("uq_erp_configuraciones_plantillas_codigo") || detail.includes("ept_codigo")) {
+          throw new ConflictException("Ya existe una plantilla ERP con ese codigo.")
         }
 
         if (constraint.includes("uq_empresas_erp_configuraciones_default")) {
