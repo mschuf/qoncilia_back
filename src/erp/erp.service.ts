@@ -247,6 +247,9 @@ export class ErpService {
           if (erpConfig.isDefault) {
             await this.clearDefaultConfigForCompany(repository, company.id)
           }
+          if (erpConfig.active) {
+            await this.clearActiveConfigForCompany(repository, company.id)
+          }
 
           const saved = await repository.save(erpConfig)
           const persisted = await repository.findOne({
@@ -389,6 +392,9 @@ export class ErpService {
           if (erpConfig.isDefault) {
             await this.clearDefaultConfigForCompany(repository, company.id)
           }
+          if (erpConfig.active) {
+            await this.clearActiveConfigForCompany(repository, company.id)
+          }
 
           const saved = await repository.save(erpConfig)
           const persisted = await repository.findOne({
@@ -461,6 +467,9 @@ export class ErpService {
 
           if (erpConfig.isDefault) {
             await this.clearDefaultConfigForCompany(repository, company.id)
+          }
+          if (erpConfig.active) {
+            await this.clearActiveConfigForCompany(repository, company.id)
           }
 
           const saved = await repository.save(erpConfig)
@@ -605,6 +614,10 @@ export class ErpService {
       const preparedPassword = this.normalizeOptional(payload.password)
       if (preparedPassword) {
         config.dbPasswordEncrypted = encryptText(preparedPassword, this.credentialSecret)
+      }
+
+      if (config.active) {
+        await this.clearActiveConfigForCompany(repository, config.company.id, config.id)
       }
 
       if (config.isDefault && !config.active) {
@@ -807,6 +820,24 @@ export class ErpService {
       .set({ isDefault: false })
       .where("emp_id = :companyId", { companyId })
       .execute()
+  }
+
+  private async clearActiveConfigForCompany(
+    repository: Repository<CompanyErpConfig>,
+    companyId: number,
+    excludeConfigId?: number
+  ) {
+    const query = repository
+      .createQueryBuilder()
+      .update(CompanyErpConfig)
+      .set({ active: false })
+      .where("emp_id = :companyId", { companyId })
+
+    if (excludeConfigId) {
+      query.andWhere("epc_id <> :configId", { configId: excludeConfigId })
+    }
+
+    await query.execute()
   }
 
   private toPublicCompany(
