@@ -1320,14 +1320,15 @@ export class ConciliationService {
       layout.mappings,
       "bank"
     );
+    const filteredRows = this.excludeBankStatementRows(rows, payload.excludedRowIds);
 
     return {
       userBank: toPublicUserBankSummary(userBank),
       companyBankAccount: toPublicCompanyBankAccountSummary(companyBankAccount),
       layout: toPublicLayout(layout),
       fileName: file.originalname,
-      rowCount: rows.length,
-      rows
+      rowCount: filteredRows.length,
+      rows: filteredRows
     };
   }
 
@@ -1351,6 +1352,7 @@ export class ConciliationService {
       layout.mappings,
       "bank"
     );
+    const filteredRows = this.excludeBankStatementRows(rows, payload.excludedRowIds);
 
     return this.bankStatementRepository.manager.transaction(async (manager) => {
       const statementRepository = manager.getRepository(BankStatement);
@@ -1371,17 +1373,18 @@ export class ConciliationService {
           name: normalizeRequired(payload.name, "name"),
           fileName: file.originalname,
           status: "saved",
-          rowCount: rows.length,
+          rowCount: filteredRows.length,
           metadata: toJsonRecord({
             source: "bank_excel",
-            uploadedByUserId: actor.id
+            uploadedByUserId: actor.id,
+            excludedRowIds: payload.excludedRowIds ?? []
           })
         })
       );
 
-      if (rows.length > 0) {
+      if (filteredRows.length > 0) {
         await rowRepository.save(
-          rows.map((row) =>
+          filteredRows.map((row) =>
             rowRepository.create({
               statement,
               sourceRowId: row.rowId,
@@ -1451,7 +1454,8 @@ export class ConciliationService {
       layout.mappings,
       "bank"
     );
-    const preparedRows = this.buildSapBankPageRows(rows, accountCode);
+    const filteredRows = this.excludeBankStatementRows(rows, payload.excludedRowIds);
+    const preparedRows = this.buildSapBankPageRows(filteredRows, accountCode);
     const endpointPath = this.getConfigString(config, [
       "sapBankPagesEndpoint",
       "bankPagesEndpoint"
@@ -1511,10 +1515,11 @@ export class ConciliationService {
           name: normalizeRequired(payload.name, "name"),
           fileName: file.originalname,
           status: "sap_b1_processed",
-          rowCount: rows.length,
+          rowCount: filteredRows.length,
           metadata: toJsonRecord({
             source: "bank_excel",
             uploadedByUserId: actor.id,
+            excludedRowIds: payload.excludedRowIds ?? [],
             processedWith: "sap_b1_bank_pages",
             sap: {
               companyErpConfigId: config.id,
@@ -1531,9 +1536,9 @@ export class ConciliationService {
         })
       );
 
-      if (rows.length > 0) {
+      if (filteredRows.length > 0) {
         await rowRepository.save(
-          rows.map((row) => {
+          filteredRows.map((row) => {
             const result = resultByRowId.get(row.rowId);
             const sequence = result?.sequence ?? null;
             const sentPayload = result?.payload ?? null;
@@ -2401,6 +2406,15 @@ export class ConciliationService {
         payload
       };
     });
+  }
+
+  private excludeBankStatementRows(
+    rows: ConciliationPreviewRow[],
+    excludedRowIds?: string[]
+  ): ConciliationPreviewRow[] {
+    const excluded = new Set((excludedRowIds ?? []).filter(Boolean));
+    if (excluded.size === 0) return rows;
+    return rows.filter((row) => !excluded.has(row.rowId));
   }
 
   private readPreviewRowString(row: ConciliationPreviewRow, keys: string[]): string | null {

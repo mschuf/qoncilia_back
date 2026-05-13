@@ -1,10 +1,34 @@
 import { Transform } from "class-transformer";
-import { IsInt, IsNotEmpty, IsOptional, IsPositive, IsString, MaxLength } from "class-validator";
+import {
+  IsArray,
+  IsInt,
+  IsNotEmpty,
+  IsOptional,
+  IsPositive,
+  IsString,
+  MaxLength
+} from "class-validator";
 
 const toNumber = ({ value }: { value: unknown }) => {
   if (typeof value === "number") return value;
   if (typeof value === "string" && value.trim() !== "") return Number(value);
   return value;
+};
+
+const toStringArray = ({ value }: { value: unknown }) => {
+  if (value == null || value === "") return [];
+  if (Array.isArray(value)) return value;
+  if (typeof value !== "string") return value;
+
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed : value;
+  } catch {
+    return value
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean);
+  }
 };
 
 class BankStatementSelectionDto {
@@ -22,6 +46,12 @@ class BankStatementSelectionDto {
   @IsInt()
   @IsPositive()
   layoutId!: number;
+
+  @Transform(toStringArray)
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  excludedRowIds?: string[];
 }
 
 export class CreateBankStatementDto extends BankStatementSelectionDto {
