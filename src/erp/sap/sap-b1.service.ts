@@ -19,6 +19,15 @@ export type SapLoginResult = {
   expiresAt: Date | null
 }
 
+export type SapBankPagePayload = {
+  AccountCode: string
+  DueDate: string
+  Memo: string
+  Reference: string
+  DebitAmount: number
+  CreditAmount: number
+}
+
 export class ExternalRequestError extends Error {
   constructor(
     message: string,
@@ -50,7 +59,9 @@ export class SapB1Service {
       allowSelfSigned: config.allowSelfSigned
     })
 
-    const cookieHeader = this.buildCookieHeader(response.headers["set-cookie"])
+    const cookieHeader =
+      this.buildCookieHeader(response.headers["set-cookie"]) ??
+      this.buildSessionCookieFromPayload(response.bodyJson)
     if (!cookieHeader) {
       throw new ExternalRequestError("SAP no devolvio una sesion valida al autenticar.")
     }
@@ -61,6 +72,24 @@ export class SapB1Service {
       httpStatus: response.statusCode,
       expiresAt: this.extractSessionExpiresAt(response.bodyJson)
     }
+  }
+
+  async createBankPage(
+    config: CompanyErpConfig,
+    cookieHeader: string,
+    payload: SapBankPagePayload,
+    endpointPath = "BankPages"
+  ): Promise<JsonRequestResponse> {
+    return this.performJsonRequest(this.joinUrl(config.serviceLayerUrl, endpointPath), {
+      method: "POST",
+      body: payload,
+      headers: {
+        Accept: "application/json",
+        Cookie: cookieHeader
+      },
+      tlsVersion: config.tlsVersion,
+      allowSelfSigned: config.allowSelfSigned
+    })
   }
 
   async checkSession(config: CompanyErpConfig, cookieHeader: string): Promise<JsonRequestResponse> {
@@ -126,7 +155,7 @@ export class SapB1Service {
     return new Date(Date.now() + timeoutMinutes * 60_000 - safetyWindowMs)
   }
 
-  private buildCookieHeader(setCookieHeader?: string[] | string): string {
+  private buildCookieHeader(setCookieHeader?: string[] | string): string | null {
     const entries = Array.isArray(setCookieHeader)
       ? setCookieHeader
       : typeof setCookieHeader === "string"
@@ -136,7 +165,14 @@ export class SapB1Service {
     return entries
       .map((item) => item.split(";")[0]?.trim())
       .filter((item): item is string => Boolean(item))
-      .join("; ")
+      .join("; ") || null
+  }
+
+  private buildSessionCookieFromPayload(payload: Record<string, unknown> | null): string | null {
+    const sessionId = payload?.SessionId
+    return typeof sessionId === "string" && sessionId.trim()
+      ? `B1SESSION=${sessionId.trim()}`
+      : null
   }
 
   private async performJsonRequest(

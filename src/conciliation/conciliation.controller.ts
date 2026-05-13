@@ -346,11 +346,39 @@ export class ConciliationController {
     return this.conciliationService.createBankStatement(actor, body, file);
   }
 
+  @Post(["extractos-bancarios/procesar-sap-b1", "bank-statements/process-sap-b1"])
+  @Roles(Role.ADMIN, Role.IS_SUPER_ADMIN, Role.GESTOR_COBRANZA, Role.GESTOR_PAGOS)
+  @RequiredModule(AppModuleCode.CONCILIATION)
+  @UseInterceptors(
+    FileInterceptor("file", {
+      limits: {
+        fileSize: 10 * 1024 * 1024
+      }
+    })
+  )
+  processBankStatementWithSapB1(
+    @Body() body: CreateBankStatementDto,
+    @UploadedFile() file: UploadedMemoryFile,
+    @CurrentUser() actor: AuthUser
+  ) {
+    return this.conciliationService.processBankStatementWithSapB1(actor, body, file);
+  }
+
   @Get(["extractos-bancarios", "bank-statements"])
   @Roles(Role.ADMIN, Role.IS_SUPER_ADMIN, Role.GESTOR_COBRANZA, Role.GESTOR_PAGOS)
   @RequiredModule(AppModuleCode.CONCILIATION)
   listBankStatements(@CurrentUser() actor: AuthUser, @Query() query: ListBankStatementsQueryDto) {
     return this.conciliationService.listBankStatements(actor, query);
+  }
+
+  @Get(["extractos-bancarios/sap-b1-config", "bank-statements/sap-b1-config"])
+  @Roles(Role.ADMIN, Role.IS_SUPER_ADMIN, Role.GESTOR_COBRANZA, Role.GESTOR_PAGOS)
+  @RequiredModule(AppModuleCode.CONCILIATION)
+  getSapB1BankStatementConfigStatus(
+    @CurrentUser() actor: AuthUser,
+    @Query() query: ConciliationKpiQueryDto
+  ) {
+    return this.conciliationService.getSapB1BankStatementConfigStatus(actor, query.userId);
   }
 
   @Get(["extractos-bancarios/:id", "bank-statements/:id"])

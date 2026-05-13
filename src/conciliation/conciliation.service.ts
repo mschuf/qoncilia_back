@@ -1,10 +1,14 @@
 import {
+  BadGatewayException,
   BadRequestException,
   ConflictException,
   ForbiddenException,
+  GatewayTimeoutException,
   Injectable,
+  Logger,
   NotFoundException
 } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
 import { InjectRepository } from "@nestjs/typeorm";
 import {
   EntityManager,
@@ -12,8 +16,12 @@ import {
   Repository,
   SelectQueryBuilder
 } from "typeorm";
+import { CompanyErpConfig } from "../erp/entities/company-erp-config.entity";
+import { ExternalRequestError, SapB1Service, SapBankPagePayload } from "../erp/sap/sap-b1.service";
+import { ensureSapErpType, validateSapConfig } from "../erp/sap/sap-config.validator";
 import { Role } from "../common/enums/role.enum";
 import { AuthUser } from "../common/interfaces/auth-user.interface";
+import { decryptText } from "../common/utils/encryption.util";
 import { isGestorRole } from "../common/utils/role.util";
 import { User } from "../users/entities/user.entity";
 import { ApplyTemplateLayoutDto } from "./dto/apply-template-layout.dto";
@@ -39,6 +47,7 @@ import { SetBankAvailableTemplatesDto } from "./dto/set-bank-available-templates
 import { UserTemplateAvailability } from "./entities/user-template-availability.entity";
 import {
   BankStatementPreviewResponse,
+  ConciliationPreviewRow,
   ConciliationKpiResponse,
   ConciliationPreviewResponse,
   DeleteUserBankResponse,
@@ -104,8 +113,46 @@ type AccessibleUserScope = {
   companyId?: number;
 };
 
+type SapB1BankStatementConfigStatus = {
+  enabled: boolean;
+  companyErpConfigId: number | null;
+  companyErpConfigName: string | null;
+  code: string | null;
+};
+
+type SapBankPageRowResult = {
+  rowId: string;
+  rowNumber: number;
+  sequence: number | null;
+  httpStatus: number;
+  responsePayload: Record<string, unknown> | null;
+  payload: SapBankPagePayload;
+};
+
+type SapBankPageProcessResponse = PublicBankStatementDetail & {
+  sap: {
+    companyErpConfigId: number;
+    companyErpConfigName: string;
+    endpoint: string;
+    processedRows: number;
+    sequences: Array<{
+      rowId: string;
+      rowNumber: number;
+      sequence: number | null;
+    }>;
+  };
+};
+
+type PreparedSapBankPageRow = {
+  source: ConciliationPreviewRow;
+  payload: SapBankPagePayload;
+};
+
 @Injectable()
 export class ConciliationService {
+  private readonly logger = new Logger(ConciliationService.name);
+  private readonly credentialSecret: string;
+
   constructor(
     @InjectRepository(User)
     private readonly userRepository: Repository<User>,
@@ -126,8 +173,16 @@ export class ConciliationService {
     @InjectRepository(ReconciliationLayout)
     private readonly layoutRepository: Repository<ReconciliationLayout>,
     @InjectRepository(ReconciliationLayoutMapping)
-    private readonly layoutMappingRepository: Repository<ReconciliationLayoutMapping>
-  ) {}
+    private readonly layoutMappingRepository: Repository<ReconciliationLayoutMapping>,
+    @InjectRepository(CompanyErpConfig)
+    private readonly companyErpConfigRepository: Repository<CompanyErpConfig>,
+    configService: ConfigService,
+    private readonly sapB1Service: SapB1Service
+  ) {
+    this.credentialSecret =
+      configService.get<string>("ERP_CREDENTIAL_SECRET")?.trim() ||
+      configService.get<string>("JWT_SECRET", "CHANGE_THIS_FOR_A_LONG_RANDOM_SECRET");
+  }
 
   async listCatalog(actor: AuthUser, requestedUserId?: number): Promise<PublicUserBankWithLayouts[]> {
     const scope = await this.resolveAccessibleConfigurationScope(actor, requestedUserId);
@@ -1346,6 +1401,196 @@ export class ConciliationService {
     });
   }
 
+  async getSapB1BankStatementConfigStatus(
+    actor: AuthUser,
+    requestedUserId?: number
+  ): Promise<SapB1BankStatementConfigStatus> {
+    const companyId = await this.resolveCompanyIdForSapB1Status(actor, requestedUserId);
+    const config = await this.findActiveSapB1Config(companyId);
+
+    return {
+      enabled: Boolean(config),
+      companyErpConfigId: config?.id ?? null,
+      companyErpConfigName: config?.name ?? null,
+      code: config?.code ?? null
+    };
+  }
+
+  async processBankStatementWithSapB1(
+    actor: AuthUser,
+    payload: CreateBankStatementDto,
+    file?: UploadedMemoryFile
+  ): Promise<SapBankPageProcessResponse> {
+    if (!file?.buffer) {
+      throw new BadRequestException("Debes subir el Excel del extracto bancario.");
+    }
+
+    const { userBank, layout, companyBankAccount } = await this.requireAccessibleLayoutAndAccount(
+      actor,
+      payload.userBankId,
+      payload.layoutId,
+      payload.companyBankAccountId
+    );
+    const accountCode = normalizeRequired(
+      companyBankAccount.majorAccountNumber,
+      "cuenta_bancaria_numero_mayor"
+    );
+    const config = await this.findActiveSapB1Config(companyBankAccount.company.id);
+
+    if (!config) {
+      throw new BadRequestException(
+        "La empresa no tiene una configuracion ERP activa con codigo SAP_B1."
+      );
+    }
+
+    ensureSapErpType(config.erpType);
+    validateSapConfig(config, false);
+
+    const rows = extractRowsFromWorkbook(
+      readWorkbook(file.buffer, file.originalname),
+      layout.mappings,
+      "bank"
+    );
+    const preparedRows = this.buildSapBankPageRows(rows, accountCode);
+    const endpointPath = this.getConfigString(config, [
+      "sapBankPagesEndpoint",
+      "bankPagesEndpoint"
+    ]) ?? "BankPages";
+    const endpoint = this.sapB1Service.joinUrl(config.serviceLayerUrl, endpointPath);
+    const credentials = this.resolveSapSystemCredentials(config);
+    const sapResults: SapBankPageRowResult[] = [];
+
+    try {
+      const login = await this.sapB1Service.login(config, credentials);
+
+      for (const preparedRow of preparedRows) {
+        try {
+          const sapResponse = await this.sapB1Service.createBankPage(
+            config,
+            login.cookieHeader,
+            preparedRow.payload,
+            endpointPath
+          );
+          sapResults.push({
+            rowId: preparedRow.source.rowId,
+            rowNumber: preparedRow.source.rowNumber,
+            sequence: this.extractSapSequence(sapResponse.bodyJson),
+            httpStatus: sapResponse.statusCode,
+            responsePayload: sapResponse.bodyJson,
+            payload: preparedRow.payload
+          });
+        } catch (error) {
+          throw this.mapSapBankPageError(error, preparedRow.source.rowNumber, sapResults.length);
+        }
+      }
+    } catch (error) {
+      if (error instanceof BadGatewayException || error instanceof GatewayTimeoutException) {
+        throw error;
+      }
+
+      throw this.mapSapConnectionError(error);
+    }
+
+    const detail = await this.bankStatementRepository.manager.transaction(async (manager) => {
+      const statementRepository = manager.getRepository(BankStatement);
+      const rowRepository = manager.getRepository(BankStatementRow);
+      const userRepository = manager.getRepository(User);
+
+      const persistedActor = await userRepository.findOne({ where: { id: actor.id } });
+      if (!persistedActor) {
+        throw new NotFoundException("Usuario ejecutor no encontrado.");
+      }
+
+      const resultByRowId = new Map(sapResults.map((result) => [result.rowId, result]));
+      const statement = await statementRepository.save(
+        statementRepository.create({
+          user: persistedActor,
+          userBank,
+          companyBankAccount,
+          layout,
+          name: normalizeRequired(payload.name, "name"),
+          fileName: file.originalname,
+          status: "sap_b1_processed",
+          rowCount: rows.length,
+          metadata: toJsonRecord({
+            source: "bank_excel",
+            uploadedByUserId: actor.id,
+            processedWith: "sap_b1_bank_pages",
+            sap: {
+              companyErpConfigId: config.id,
+              companyErpConfigName: config.name,
+              endpoint,
+              processedRows: sapResults.length,
+              sequences: sapResults.map((result) => ({
+                rowId: result.rowId,
+                rowNumber: result.rowNumber,
+                sequence: result.sequence
+              }))
+            }
+          })
+        })
+      );
+
+      if (rows.length > 0) {
+        await rowRepository.save(
+          rows.map((row) => {
+            const result = resultByRowId.get(row.rowId);
+            const sequence = result?.sequence ?? null;
+            const sentPayload = result?.payload ?? null;
+
+            return rowRepository.create({
+              statement,
+              sourceRowId: row.rowId,
+              rowNumber: row.rowNumber,
+              values: {
+                ...row.values,
+                AccountCode: accountCode,
+                Sequence: sequence === null ? null : String(sequence)
+              },
+              normalized: {
+                ...row.normalized,
+                AccountCode: accountCode,
+                accountCode,
+                BankStatementAccountCode: accountCode,
+                bankStatementAccountCode: accountCode,
+                Sequence: sequence,
+                sequence,
+                BankStatementLineSequence: sequence,
+                bankStatementLineSequence: sequence,
+                DueDate: sentPayload?.DueDate ?? null,
+                Reference: sentPayload?.Reference ?? null,
+                Memo: sentPayload?.Memo ?? null,
+                DebitAmount: sentPayload?.DebitAmount ?? null,
+                CreditAmount: sentPayload?.CreditAmount ?? null
+              }
+            });
+          })
+        );
+      }
+
+      return this.requirePersistedBankStatement(
+        manager,
+        statement.id,
+        "No se pudo recuperar el extracto bancario procesado."
+      );
+    });
+
+    return {
+      ...detail,
+      sap: {
+        companyErpConfigId: config.id,
+        companyErpConfigName: config.name,
+        endpoint,
+        processedRows: sapResults.length,
+        sequences: sapResults.map((result) => ({
+          rowId: result.rowId,
+          rowNumber: result.rowNumber,
+          sequence: result.sequence
+        }))
+      }
+    };
+  }
+
   async listBankStatements(
     actor: AuthUser,
     query: ListBankStatementsQueryDto
@@ -1966,6 +2211,481 @@ export class ConciliationService {
     ensureActorCanAccessCompany(actor, account.company.id);
 
     return account;
+  }
+
+  private async resolveCompanyIdForSapB1Status(
+    actor: AuthUser,
+    requestedUserId?: number
+  ): Promise<number> {
+    const scope = await this.resolveAccessibleConfigurationScope(actor, requestedUserId);
+
+    if (scope.companyId) {
+      return scope.companyId;
+    }
+
+    if (scope.userId) {
+      const targetUser = await this.requireUser(scope.userId);
+      return targetUser.company.id;
+    }
+
+    if (actor.companyId) {
+      return actor.companyId;
+    }
+
+    throw new BadRequestException("No se pudo resolver la empresa para consultar SAP_B1.");
+  }
+
+  private async findActiveSapB1Config(companyId: number): Promise<CompanyErpConfig | null> {
+    return this.companyErpConfigRepository
+      .createQueryBuilder("config")
+      .leftJoinAndSelect("config.company", "company")
+      .where("company.id = :companyId", { companyId })
+      .andWhere("config.active = :active", { active: true })
+      .andWhere("LOWER(config.code) = LOWER(:code)", { code: "SAP_B1" })
+      .orderBy("config.isDefault", "DESC")
+      .addOrderBy("config.id", "ASC")
+      .getOne();
+  }
+
+  private resolveSapSystemCredentials(
+    config: CompanyErpConfig
+  ): { username: string; password: string } {
+    const username = this.normalizeUnknownText(config.userSystem);
+
+    if (!username) {
+      throw new BadRequestException("La configuracion SAP_B1 no tiene epc_user_system.");
+    }
+
+    if (!config.userPassEncrypted) {
+      throw new BadRequestException("La configuracion SAP_B1 no tiene epc_user_pass.");
+    }
+
+    try {
+      const password = decryptText(config.userPassEncrypted, this.credentialSecret);
+      if (!password.trim()) {
+        throw new BadRequestException("La configuracion SAP_B1 no tiene epc_user_pass.");
+      }
+
+      return { username, password };
+    } catch (error) {
+      if (error instanceof BadRequestException) {
+        throw error;
+      }
+
+      throw new BadRequestException("No se pudo descifrar epc_user_pass de SAP_B1.");
+    }
+  }
+
+  private buildSapBankPageRows(
+    rows: ConciliationPreviewRow[],
+    accountCode: string
+  ): PreparedSapBankPageRow[] {
+    if (rows.length === 0) {
+      throw new BadRequestException("El Excel no tiene filas bancarias para procesar.");
+    }
+
+    const seen = new Set<string>();
+
+    return rows.map((row, index) => {
+      const rowLabel = row.rowNumber || index + 1;
+      const dueDate = this.normalizeSapDate(
+        this.readPreviewRowString(row, [
+          "DueDate",
+          "dueDate",
+          "fecha",
+          "fechaMovimiento",
+          "fechaContable",
+          "fechaContabilizacion",
+          "date"
+        ])
+      );
+      if (!dueDate) {
+        throw new BadRequestException(`No se encontro Fecha valida para la fila ${rowLabel}.`);
+      }
+
+      const memo =
+        this.readPreviewRowString(row, [
+          "Memo",
+          "memo",
+          "descripcion",
+          "description",
+          "concepto",
+          "detalle"
+        ]) ?? "";
+      const reference =
+        this.readPreviewRowString(row, [
+          "Reference",
+          "reference",
+          "movimiento",
+          "referencia",
+          "ref1",
+          "ref",
+          "numeroMovimiento",
+          "nroMovimiento"
+        ]) ?? String(rowLabel);
+      const explicitCredit = this.readPreviewRowAmount(row, [
+        "CreditAmount",
+        "creditAmount",
+        "creditos",
+        "credito",
+        "haber",
+        "acreditacion",
+        "montoCredito"
+      ]);
+      const fallbackAmount =
+        explicitCredit ?? this.readPreviewRowAmount(row, ["monto", "importe", "amount"]);
+      const explicitDebit = this.readPreviewRowAmount(row, [
+        "DebitAmount",
+        "debitAmount",
+        "debitos",
+        "debito",
+        "debe",
+        "montoDebito"
+      ]);
+      let creditAmount = explicitCredit ?? fallbackAmount;
+      let debitAmount = explicitDebit ?? 0;
+
+      if (creditAmount === null && explicitDebit !== null) {
+        creditAmount = 0;
+      }
+
+      if (creditAmount === null) {
+        throw new BadRequestException(
+          `No se encontro Creditos o Importe para la fila ${rowLabel}.`
+        );
+      }
+
+      if (creditAmount < 0) {
+        debitAmount = debitAmount > 0 ? debitAmount : Math.abs(creditAmount);
+        creditAmount = 0;
+      }
+
+      if (debitAmount < 0) {
+        debitAmount = Math.abs(debitAmount);
+      }
+
+      creditAmount = this.roundSapAmount(creditAmount);
+      debitAmount = this.roundSapAmount(debitAmount);
+
+      if (creditAmount === 0 && debitAmount === 0) {
+        throw new BadRequestException(
+          `La fila ${rowLabel} no tiene importe de credito o debito para enviar a SAP.`
+        );
+      }
+
+      const payload = {
+        AccountCode: accountCode,
+        DueDate: dueDate,
+        Memo: memo,
+        Reference: reference,
+        DebitAmount: debitAmount,
+        CreditAmount: creditAmount
+      };
+      const duplicateKey = [
+        payload.AccountCode,
+        payload.DueDate,
+        payload.Reference,
+        payload.DebitAmount,
+        payload.CreditAmount
+      ].join("|");
+
+      if (seen.has(duplicateKey)) {
+        throw new BadRequestException(
+          `El Excel tiene una fila duplicada para AccountCode + Fecha + Referencia + Importe en la fila ${rowLabel}.`
+        );
+      }
+      seen.add(duplicateKey);
+
+      return {
+        source: row,
+        payload
+      };
+    });
+  }
+
+  private readPreviewRowString(row: ConciliationPreviewRow, keys: string[]): string | null {
+    for (const key of keys) {
+      const value = this.readPreviewRowValue(row, key);
+      if (value !== undefined && value !== null && String(value).trim()) {
+        return String(value).trim();
+      }
+    }
+
+    return null;
+  }
+
+  private readPreviewRowAmount(row: ConciliationPreviewRow, keys: string[]): number | null {
+    for (const key of keys) {
+      const value = this.readPreviewRowValue(row, key);
+      const numberValue = this.toSapNumber(value);
+      if (numberValue !== null) {
+        return numberValue;
+      }
+    }
+
+    return null;
+  }
+
+  private readPreviewRowValue(row: ConciliationPreviewRow, key: string): unknown {
+    const sources = [row.normalized, row.values];
+    const normalizedKey = this.normalizeLookupKey(key);
+
+    for (const source of sources) {
+      if (!source) continue;
+
+      const direct = source[key];
+      if (direct !== undefined && direct !== null) return direct;
+
+      const found = Object.entries(source).find(
+        ([entryKey]) => this.normalizeLookupKey(entryKey) === normalizedKey
+      );
+      if (found?.[1] !== undefined && found[1] !== null) {
+        return found[1];
+      }
+    }
+
+    return undefined;
+  }
+
+  private normalizeSapDate(value: string | null): string | null {
+    if (!value) return null;
+
+    const raw = value.trim();
+    const isoMatch = raw.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+    if (isoMatch) {
+      return this.formatSapDateParts(Number(isoMatch[1]), Number(isoMatch[2]), Number(isoMatch[3]));
+    }
+
+    const slashMatch = raw.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2}|\d{4})$/);
+    if (slashMatch) {
+      let year = Number(slashMatch[3]);
+      if (year < 100) {
+        year += year >= 70 ? 1900 : 2000;
+      }
+
+      return this.formatSapDateParts(year, Number(slashMatch[2]), Number(slashMatch[1]));
+    }
+
+    const nativeDate = new Date(raw);
+    if (!Number.isNaN(nativeDate.getTime())) {
+      return nativeDate.toISOString().slice(0, 10);
+    }
+
+    return null;
+  }
+
+  private formatSapDateParts(year: number, month: number, day: number): string | null {
+    if (!Number.isInteger(year) || !Number.isInteger(month) || !Number.isInteger(day)) {
+      return null;
+    }
+
+    if (year < 1900 || month < 1 || month > 12 || day < 1 || day > 31) {
+      return null;
+    }
+
+    const date = new Date(Date.UTC(year, month - 1, day));
+    if (
+      date.getUTCFullYear() !== year ||
+      date.getUTCMonth() !== month - 1 ||
+      date.getUTCDate() !== day
+    ) {
+      return null;
+    }
+
+    return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+  }
+
+  private toSapNumber(value: unknown): number | null {
+    if (typeof value === "number" && Number.isFinite(value)) {
+      return value;
+    }
+
+    if (value === null || value === undefined) {
+      return null;
+    }
+
+    const text = String(value).trim();
+    if (!text || text === "-") return null;
+
+    const cleaned = text
+      .replace(/[A-Za-z$%]/g, "")
+      .replace(/\s+/g, "")
+      .replace(/[^\d,.\-+]/g, "");
+    const normalized = this.normalizeNumericText(cleaned);
+
+    if (!normalized || !/^[-+]?\d+(\.\d+)?$/.test(normalized)) {
+      return null;
+    }
+
+    const parsed = Number(normalized);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  private normalizeNumericText(value: string): string | null {
+    if (!value) return null;
+
+    const sign = value.startsWith("-") ? "-" : value.startsWith("+") ? "+" : "";
+    const unsigned = value.replace(/^[-+]/, "");
+    const lastDot = unsigned.lastIndexOf(".");
+    const lastComma = unsigned.lastIndexOf(",");
+
+    if (lastDot >= 0 && lastComma >= 0) {
+      const decimalSeparator = lastDot > lastComma ? "." : ",";
+      const thousandsSeparator = decimalSeparator === "." ? "," : ".";
+      return `${sign}${unsigned
+        .replace(new RegExp(`\\${thousandsSeparator}`, "g"), "")
+        .replace(decimalSeparator, ".")}`;
+    }
+
+    if (lastComma >= 0) {
+      const groups = unsigned.split(",");
+      const isThousandsOnly =
+        groups.length > 1 && groups.slice(1).every((group) => group.length === 3);
+      return `${sign}${isThousandsOnly ? groups.join("") : unsigned.replace(",", ".")}`;
+    }
+
+    if (lastDot >= 0) {
+      const groups = unsigned.split(".");
+      const isThousandsOnly =
+        groups.length > 1 && groups.slice(1).every((group) => group.length === 3);
+      return `${sign}${isThousandsOnly ? groups.join("") : unsigned}`;
+    }
+
+    return `${sign}${unsigned}`;
+  }
+
+  private roundSapAmount(value: number): number {
+    return Math.round(value * 10000) / 10000;
+  }
+
+  private extractSapSequence(payload: Record<string, unknown> | null): number | null {
+    for (const source of [payload, this.asRecord(payload?.value)]) {
+      if (!source) continue;
+
+      for (const key of ["Sequence", "sequence", "BankStatementLineSequence"]) {
+        const sequence = this.toSapNumber(source[key]);
+        if (sequence !== null && Number.isInteger(sequence) && sequence > 0) {
+          return sequence;
+        }
+      }
+    }
+
+    return null;
+  }
+
+  private getConfigString(config: CompanyErpConfig, keys: string[]): string | null {
+    for (const key of keys) {
+      const value = this.normalizeUnknownText(config.settings?.[key]);
+      if (value) {
+        return value;
+      }
+    }
+
+    return null;
+  }
+
+  private normalizeUnknownText(value: unknown): string | null {
+    if (value === undefined || value === null) {
+      return null;
+    }
+
+    const trimmed = String(value).trim();
+    return trimmed ? trimmed : null;
+  }
+
+  private normalizeLookupKey(value: string): string {
+    return value
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/[^a-zA-Z0-9]/g, "")
+      .toLowerCase();
+  }
+
+  private asRecord(value: unknown): Record<string, unknown> | null {
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      return null;
+    }
+
+    return value as Record<string, unknown>;
+  }
+
+  private mapSapBankPageError(
+    error: unknown,
+    rowNumber: number,
+    processedRows: number
+  ): BadGatewayException | GatewayTimeoutException {
+    const mapped = this.buildSapErrorMessage(error);
+    const message = [
+      `SAP rechazo la fila ${rowNumber} del extracto.`,
+      mapped.message,
+      processedRows > 0 ? `Filas enviadas antes del error: ${processedRows}.` : null
+    ]
+      .filter((item): item is string => Boolean(item))
+      .join(" ");
+
+    this.logger.error(
+      this.compactJson({
+        event: "sap_bank_page_failed",
+        rowNumber,
+        processedRows,
+        error: mapped.logPayload
+      })
+    );
+
+    return mapped.timeout ? new GatewayTimeoutException(message) : new BadGatewayException(message);
+  }
+
+  private mapSapConnectionError(error: unknown): BadGatewayException | GatewayTimeoutException {
+    const mapped = this.buildSapErrorMessage(error);
+    const message = `No se pudo procesar el extracto en SAP_B1. ${mapped.message}`;
+
+    this.logger.error(
+      this.compactJson({
+        event: "sap_bank_pages_process_failed",
+        error: mapped.logPayload
+      })
+    );
+
+    return mapped.timeout ? new GatewayTimeoutException(message) : new BadGatewayException(message);
+  }
+
+  private buildSapErrorMessage(error: unknown): {
+    message: string;
+    timeout: boolean;
+    logPayload: Record<string, unknown>;
+  } {
+    if (error instanceof ExternalRequestError) {
+      const payloadText = error.responsePayload ? ` Respuesta SAP: ${this.compactJson(error.responsePayload)}` : "";
+      const statusText = error.statusCode ? `HTTP ${error.statusCode}. ` : "";
+      const message = `${statusText}${error.message || "SAP rechazo la solicitud."}${payloadText}`;
+
+      return {
+        message,
+        timeout: message.toLowerCase().includes("tiempo de espera"),
+        logPayload: {
+          message: error.message,
+          statusCode: error.statusCode ?? null,
+          responsePayload: error.responsePayload ?? null
+        }
+      };
+    }
+
+    const message = error instanceof Error ? error.message : String(error);
+    return {
+      message,
+      timeout: message.toLowerCase().includes("tiempo de espera"),
+      logPayload: {
+        message,
+        stack: error instanceof Error ? error.stack : null
+      }
+    };
+  }
+
+  private compactJson(payload: Record<string, unknown>): string {
+    const text = JSON.stringify(payload);
+    const maxLength = 1500;
+
+    return text.length <= maxLength ? text : `${text.slice(0, maxLength)}...`;
   }
 
   private async resolveAccessibleUserScope(

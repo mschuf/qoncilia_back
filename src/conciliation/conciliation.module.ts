@@ -1,6 +1,9 @@
 import { Module } from "@nestjs/common";
+import { ConfigModule } from "@nestjs/config";
 import { TypeOrmModule } from "@nestjs/typeorm";
 import { Company } from "../access-control/entities/company.entity";
+import { CompanyErpConfig } from "../erp/entities/company-erp-config.entity";
+import { SapB1Service } from "../erp/sap/sap-b1.service";
 import { JwtAuthGuard } from "../common/guards/jwt-auth.guard";
 import { ModuleAccessGuard } from "../common/guards/module-access.guard";
 import { RolesGuard } from "../common/guards/roles.guard";
@@ -25,9 +28,11 @@ import { UserTemplateAvailability } from "./entities/user-template-availability.
 
 @Module({
   imports: [
+    ConfigModule,
     TypeOrmModule.forFeature([
       User,
       Company,
+      CompanyErpConfig,
       BankEntity,
       BankStatement,
       BankStatementRow,
@@ -44,7 +49,14 @@ import { UserTemplateAvailability } from "./entities/user-template-availability.
     ])
   ],
   controllers: [ConciliationController, BankingController],
-  providers: [ConciliationService, BankingService, JwtAuthGuard, RolesGuard, ModuleAccessGuard],
+  providers: [
+    ConciliationService,
+    BankingService,
+    SapB1Service,
+    JwtAuthGuard,
+    RolesGuard,
+    ModuleAccessGuard
+  ],
   exports: [ConciliationService]
 })
 export class ConciliationModule {}
