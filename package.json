@@ -19,6 +19,7 @@
     "@nestjs/platform-express": "^10.4.20",
     "@nestjs/swagger": "^7.4.2",
     "@nestjs/typeorm": "^10.0.2",
+    "@sap/hana-client": "^2.28.20",
     "bcryptjs": "^2.4.3",
     "class-transformer": "^0.5.1",
     "class-validator": "^0.14.2",

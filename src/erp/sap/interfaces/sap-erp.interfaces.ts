@@ -36,6 +36,22 @@ export interface PublicSapErpSession {
   checkedAt: Date
 }
 
+export interface PublicSapB1QueryTable {
+  columns: string[]
+  rows: Record<string, unknown>[]
+}
+
+export interface PublicSapB1QueryPreviewResult {
+  companyErpConfigId: number
+  companyErpConfigName: string
+  companyDb: string
+  accountCode: string
+  dateFrom: string
+  dateTo: string
+  bank: PublicSapB1QueryTable
+  system: PublicSapB1QueryTable
+}
+
 export type SapExternalReconciliationAccountType =
   | "rat_GLAccount"
   | "rat_BusinessPartner"

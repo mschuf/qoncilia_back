@@ -10,6 +10,7 @@ import { RolesGuard } from "../../common/guards/roles.guard"
 import { AuthUser } from "../../common/interfaces/auth-user.interface"
 import { SapLoginDto } from "./dto/sap-login.dto"
 import { SapLogoutDto } from "./dto/sap-logout.dto"
+import { RunSapB1QueryPreviewDto } from "./dto/run-sap-b1-query-preview.dto"
 import { SapSessionStatusQueryDto } from "./dto/sap-session-status-query.dto"
 import { SendSapExternalReconciliationDto } from "./dto/send-sap-external-reconciliation.dto"
 import { SapErpService } from "./sap-erp.service"
@@ -36,6 +37,15 @@ export class SapErpController {
   @Roles(Role.GESTOR_COBRANZA, Role.GESTOR_PAGOS, Role.ADMIN, Role.IS_SUPER_ADMIN)
   logout(@Body() body: SapLogoutDto, @CurrentUser() actor: AuthUser) {
     return this.sapErpService.logoutSapSession(actor, body.companyErpConfigId)
+  }
+
+  @Post("query-preview")
+  @Roles(Role.GESTOR_COBRANZA, Role.GESTOR_PAGOS, Role.ADMIN, Role.IS_SUPER_ADMIN)
+  runQueryPreview(
+    @Body() body: RunSapB1QueryPreviewDto,
+    @CurrentUser() actor: AuthUser
+  ) {
+    return this.sapErpService.runSapB1QueryPreview(actor, body)
   }
 
   @Post("external-reconciliations")

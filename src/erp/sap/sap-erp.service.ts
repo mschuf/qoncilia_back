@@ -17,8 +17,10 @@ import { decryptText, encryptText } from "../../common/utils/encryption.util"
 import { isSuperAdminRole } from "../../common/utils/role.util"
 import { BankStatement } from "../../conciliation/entities/bank-statement.entity"
 import { BankStatementRow } from "../../conciliation/entities/bank-statement-row.entity"
+import { CompanyBankAccount } from "../../conciliation/entities/company-bank-account.entity"
 import { Reconciliation } from "../../conciliation/entities/reconciliation.entity"
 import { User } from "../../users/entities/user.entity"
+import { RunSapB1QueryPreviewDto } from "./dto/run-sap-b1-query-preview.dto"
 import { SapLoginDto } from "./dto/sap-login.dto"
 import {
   SapExternalReconciliationBankStatementLineDto,
@@ -29,6 +31,8 @@ import {
 import { UserErpSession } from "./entities/user-erp-session.entity"
 import {
   PublicSapErpSession,
+  PublicSapB1QueryPreviewResult,
+  PublicSapB1QueryTable,
   PublicSapExternalReconciliationResult,
   PublicSapSessionStatus,
   SapExternalReconciliationAccountType,
@@ -47,6 +51,32 @@ type SapReadableRow = {
   normalized?: Record<string, unknown> | null
 }
 
+type HanaConnectionParams = {
+  serverNode: string
+  uid: string
+  pwd: string
+}
+
+type HanaConnection = {
+  connect(params: HanaConnectionParams, callback: (error?: Error | null) => void): void
+  exec(sql: string, callback: (error: Error | null, rows?: Record<string, unknown>[]) => void): void
+  exec(
+    sql: string,
+    params: unknown[],
+    callback: (error: Error | null, rows?: Record<string, unknown>[]) => void
+  ): void
+  disconnect(callback?: (error?: Error | null) => void): void
+}
+
+type HanaClientModule = {
+  createConnection(): HanaConnection
+}
+
+type PreparedSapB1Query = {
+  sql: string
+  params: unknown[]
+}
+
 @Injectable()
 export class SapErpService {
   private readonly logger = new Logger(SapErpService.name)
@@ -57,6 +87,8 @@ export class SapErpService {
     private readonly userRepository: Repository<User>,
     @InjectRepository(BankStatement)
     private readonly bankStatementRepository: Repository<BankStatement>,
+    @InjectRepository(CompanyBankAccount)
+    private readonly companyBankAccountRepository: Repository<CompanyBankAccount>,
     @InjectRepository(Reconciliation)
     private readonly reconciliationRepository: Repository<Reconciliation>,
     @InjectRepository(CompanyErpConfig)
@@ -200,6 +232,82 @@ export class SapErpService {
     return this.toPublicSapSession(session, "logged_out", checkedAt)
   }
 
+  async runSapB1QueryPreview(
+    actor: AuthUser,
+    payload: RunSapB1QueryPreviewDto
+  ): Promise<PublicSapB1QueryPreviewResult> {
+    const config = await this.requireConfigForActor(actor, payload.companyErpConfigId)
+    const account = await this.requireCompanyBankAccountForConfig(
+      actor,
+      config,
+      payload.companyBankAccountId
+    )
+
+    ensureSapErpType(config.erpType)
+    this.ensureActiveConfig(config)
+
+    const companyDb = this.normalizeRequired(config.dbName, "CompanyDB")
+    const accountCode = this.normalizeRequired(
+      account.majorAccountNumber,
+      "Cuenta Mayor"
+    )
+    const dateFrom = this.normalizeRequired(payload.dateFrom, "Fecha Desde")
+    const dateTo = this.normalizeRequired(payload.dateTo, "Fecha Hasta")
+
+    if (new Date(dateFrom).getTime() > new Date(dateTo).getTime()) {
+      throw new BadRequestException("Fecha Desde no puede ser mayor a Fecha Hasta.")
+    }
+
+    const parameterValues = { accountCode, dateFrom, dateTo }
+    const bankQuery = this.prepareSapB1PreviewQuery(
+      config.queryBanco,
+      companyDb,
+      "query_banco",
+      parameterValues
+    )
+    const systemQuery = this.prepareSapB1PreviewQuery(
+      config.querySistema,
+      companyDb,
+      "query_sistema",
+      parameterValues
+    )
+    const connection = await this.connectSapHana(config, companyDb)
+
+    try {
+      const bank = await this.executeSapB1PreviewQuery(connection, bankQuery, "query_banco")
+      const system = await this.executeSapB1PreviewQuery(connection, systemQuery, "query_sistema")
+
+      return {
+        companyErpConfigId: config.id,
+        companyErpConfigName: config.name,
+        companyDb,
+        accountCode,
+        dateFrom,
+        dateTo,
+        bank,
+        system
+      }
+    } catch (error) {
+      this.logger.error(
+        this.stringifyLogPayload({
+          event: "sap_b1_query_preview_failed",
+          actorId: actor.id,
+          companyErpConfigId: config.id,
+          companyBankAccountId: account.id,
+          error: error instanceof Error ? error.message : String(error)
+        })
+      )
+
+      throw new BadGatewayException(
+        error instanceof Error
+          ? `No se pudieron ejecutar las consultas SAP_B1. ${error.message}`
+          : "No se pudieron ejecutar las consultas SAP_B1."
+      )
+    } finally {
+      await this.disconnectSapHana(connection).catch(() => undefined)
+    }
+  }
+
   async reconcileExternal(
     actor: AuthUser,
     payload: SendSapExternalReconciliationDto
@@ -332,6 +440,227 @@ export class SapErpService {
     if (!config.active) {
       throw new BadRequestException("La configuracion ERP seleccionada esta inactiva.")
     }
+  }
+
+  private async requireCompanyBankAccountForConfig(
+    actor: AuthUser,
+    config: CompanyErpConfig,
+    companyBankAccountId: number
+  ): Promise<CompanyBankAccount> {
+    const account = await this.companyBankAccountRepository.findOne({
+      where: { id: companyBankAccountId },
+      relations: { company: true, bank: true }
+    })
+
+    if (!account) {
+      throw new NotFoundException("Cuenta bancaria no encontrada.")
+    }
+
+    if (!isSuperAdminRole(actor.roleCode) && account.company.id !== actor.companyId) {
+      throw new ForbiddenException("No podes consultar cuentas bancarias de otra empresa.")
+    }
+
+    if (account.company.id !== config.company.id) {
+      throw new BadRequestException(
+        "La cuenta bancaria no pertenece a la empresa de la configuracion ERP."
+      )
+    }
+
+    return account
+  }
+
+  private async connectSapHana(
+    config: CompanyErpConfig,
+    companyDb: string
+  ): Promise<HanaConnection> {
+    const serverNode = this.normalizeRequired(config.serverNode, "Server Node")
+    const dbUser = this.normalizeRequired(config.dbUser, "DB user")
+
+    if (!config.dbPasswordEncrypted) {
+      throw new BadRequestException("DB password es obligatorio para ejecutar consultas SAP_B1.")
+    }
+
+    const password = decryptText(config.dbPasswordEncrypted, this.credentialSecret)
+    const hana = this.requireSapHanaClient()
+    const connection = hana.createConnection()
+    const connectionParams = {
+      serverNode,
+      uid: dbUser,
+      pwd: password
+    }
+
+    console.log("[SAP_HANA] Conexion preparada", {
+      serverNode,
+      uid: dbUser,
+      schema: companyDb,
+      hasPassword: Boolean(password)
+    })
+
+    await new Promise<void>((resolve, reject) => {
+      connection.connect(connectionParams, (error) => {
+        if (error) {
+          console.error("[SAP_HANA] Error de conexion", {
+            serverNode,
+            uid: dbUser,
+            schema: companyDb,
+            error: error.message
+          })
+          reject(error)
+          return
+        }
+
+        console.log("[SAP_HANA] Conectado", { serverNode, uid: dbUser, schema: companyDb })
+        resolve()
+      })
+    })
+
+    await this.executeSapHanaCommand(connection, `SET SCHEMA "${companyDb.replace(/"/g, '""')}"`)
+    console.log("[SAP_HANA] Schema activo", { schema: companyDb })
+
+    return connection
+  }
+
+  private requireSapHanaClient(): HanaClientModule {
+    try {
+      return require("@sap/hana-client") as HanaClientModule
+    } catch {
+      throw new BadRequestException(
+        "No esta instalado @sap/hana-client. Ejecuta npm install @sap/hana-client en QonciliaBack."
+      )
+    }
+  }
+
+  private async disconnectSapHana(connection: HanaConnection): Promise<void> {
+    await new Promise<void>((resolve, reject) => {
+      connection.disconnect((error) => {
+        if (error) {
+          reject(error)
+          return
+        }
+
+        resolve()
+      })
+    })
+  }
+
+  private prepareSapB1PreviewQuery(
+    rawQuery: string | null,
+    companyDb: string,
+    field: string,
+    values: { accountCode: string; dateFrom: string; dateTo: string }
+  ): PreparedSapB1Query {
+    const normalized = this.normalizeRequired(rawQuery, field)
+    const withoutTrailingSemicolon = normalized.replace(/;\s*$/, "")
+
+    if (withoutTrailingSemicolon.includes(";")) {
+      throw new BadRequestException(`${field} no puede contener multiples sentencias.`)
+    }
+
+    if (!/^select\b/i.test(withoutTrailingSemicolon)) {
+      throw new BadRequestException(`${field} debe ser una consulta SELECT.`)
+    }
+
+    const forbidden =
+      /\b(insert|update|delete|drop|alter|truncate|create|grant|revoke|call|do|execute)\b/i
+    if (forbidden.test(withoutTrailingSemicolon)) {
+      throw new BadRequestException(`${field} contiene una operacion no permitida.`)
+    }
+
+    const sqlWithSchema = withoutTrailingSemicolon.replace(
+      /\$\{CompanyDB\}/g,
+      companyDb.replace(/"/g, '""')
+    )
+    const params: unknown[] = []
+    const sql = sqlWithSchema.replace(/\$(1|2|3)\b/g, (_match, index: string) => {
+      const valueByIndex: Record<string, unknown> = {
+        "1": values.accountCode,
+        "2": values.dateFrom,
+        "3": values.dateTo
+      }
+      params.push(valueByIndex[index])
+      return "?"
+    })
+
+    console.log("[SAP_HANA] Query armado", {
+      field,
+      sql,
+      params
+    })
+
+    return { sql, params }
+  }
+
+  private async executeSapB1PreviewQuery(
+    connection: HanaConnection,
+    query: PreparedSapB1Query,
+    label: string
+  ): Promise<PublicSapB1QueryTable> {
+    console.log("[SAP_HANA] Ejecutando query", {
+      label,
+      sql: query.sql,
+      params: query.params
+    })
+    const rows = await this.executeSapHanaQuery(connection, query.sql, query.params)
+    const columns = this.resolveQueryColumns(rows)
+
+    return {
+      columns,
+      rows: rows.map((row) => this.toPublicQueryRow(row))
+    }
+  }
+
+  private async executeSapHanaCommand(connection: HanaConnection, sql: string): Promise<void> {
+    await new Promise<void>((resolve, reject) => {
+      connection.exec(sql, (error) => {
+        if (error) {
+          reject(error)
+          return
+        }
+
+        resolve()
+      })
+    })
+  }
+
+  private async executeSapHanaQuery(
+    connection: HanaConnection,
+    sql: string,
+    params: unknown[]
+  ): Promise<Record<string, unknown>[]> {
+    return new Promise<Record<string, unknown>[]>((resolve, reject) => {
+      connection.exec(sql, params, (error, rows) => {
+        if (error) {
+          reject(error)
+          return
+        }
+
+        resolve(rows ?? [])
+      })
+    })
+  }
+
+  private resolveQueryColumns(rows: Record<string, unknown>[]): string[] {
+    const columns = new Set<string>()
+    rows.forEach((row) => {
+      Object.keys(row).forEach((key) => columns.add(key))
+    })
+    return [...columns]
+  }
+
+  private toPublicQueryRow(row: Record<string, unknown>): Record<string, unknown> {
+    return Object.fromEntries(
+      Object.entries(row).map(([key, value]) => {
+        if (value instanceof Date) {
+          return [key, value.toISOString()]
+        }
+
+        if (typeof value === "bigint") {
+          return [key, value.toString()]
+        }
+
+        return [key, value]
+      })
+    )
   }
 
   private ensureCanRunExternalReconciliation(actor: AuthUser) {

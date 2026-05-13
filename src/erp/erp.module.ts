@@ -6,6 +6,7 @@ import { JwtAuthGuard } from "../common/guards/jwt-auth.guard"
 import { ModuleAccessGuard } from "../common/guards/module-access.guard"
 import { RolesGuard } from "../common/guards/roles.guard"
 import { BankStatement } from "../conciliation/entities/bank-statement.entity"
+import { CompanyBankAccount } from "../conciliation/entities/company-bank-account.entity"
 import { Reconciliation } from "../conciliation/entities/reconciliation.entity"
 import { User } from "../users/entities/user.entity"
 import { CompanyErpConfig } from "./entities/company-erp-config.entity"
@@ -24,6 +25,7 @@ import { SapErpService } from "./sap/sap-erp.service"
       Company,
       User,
       BankStatement,
+      CompanyBankAccount,
       Reconciliation,
       CompanyErpConfig,
       ErpConfigTemplate,
