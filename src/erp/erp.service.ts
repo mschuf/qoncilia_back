@@ -508,6 +508,8 @@ export class ErpService {
       userPassEncrypted: sourceConfig.userPassEncrypted,
       dbName: sourceConfig.dbName,
       serverNode: sourceConfig.serverNode,
+      queryBanco: sourceConfig.queryBanco,
+      querySistema: sourceConfig.querySistema,
       dbUser: sourceConfig.dbUser,
       dbPasswordEncrypted: sourceConfig.dbPasswordEncrypted,
       serviceLayerUrl: sourceConfig.serviceLayerUrl,
@@ -540,6 +542,8 @@ export class ErpService {
       userPassEncrypted: this.encryptOptionalCredential(payload.userPass),
       dbName: this.normalizeOptional(payload.dbName),
       serverNode: this.normalizeOptional(payload.serverNode),
+      queryBanco: this.normalizeOptional(payload.queryBanco),
+      querySistema: this.normalizeOptional(payload.querySistema),
       dbUser: this.normalizeOptional(payload.dbUser),
       dbPasswordEncrypted: preparedPassword ? encryptText(preparedPassword, this.credentialSecret) : null,
       serviceLayerUrl: this.normalizeUrl(payload.serviceLayerUrl),
@@ -596,6 +600,12 @@ export class ErpService {
       if (payload.dbName !== undefined) config.dbName = this.normalizeOptional(payload.dbName)
       if (payload.serverNode !== undefined) {
         config.serverNode = this.normalizeOptional(payload.serverNode)
+      }
+      if (payload.queryBanco !== undefined) {
+        config.queryBanco = this.normalizeOptional(payload.queryBanco)
+      }
+      if (payload.querySistema !== undefined) {
+        config.querySistema = this.normalizeOptional(payload.querySistema)
       }
       if (payload.dbUser !== undefined) config.dbUser = this.normalizeOptional(payload.dbUser)
       if (payload.serviceLayerUrl !== undefined) {
@@ -783,6 +793,9 @@ export class ErpService {
       "userSystem",
       "userPass",
       "dbName",
+      "serverNode",
+      "queryBanco",
+      "querySistema",
       "dbUser",
       "password",
       "serviceLayerUrl",
@@ -877,6 +890,8 @@ export class ErpService {
       userSystem: config.userSystem,
       dbName: config.dbName,
       serverNode: config.serverNode,
+      queryBanco: config.queryBanco,
+      querySistema: config.querySistema,
       dbUser: config.dbUser,
       serviceLayerUrl: config.serviceLayerUrl,
       tlsVersion: config.tlsVersion,

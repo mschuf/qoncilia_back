@@ -55,7 +55,7 @@ export class CreateErpConfigTemplateDto {
 
   @IsOptional()
   @IsString()
-  @MaxLength(160)
+  @MaxLength(100)
   serverNode?: string
 
   @IsOptional()

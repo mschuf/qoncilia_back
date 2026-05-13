@@ -50,8 +50,14 @@ export class CompanyErpConfig {
   @Column({ name: "epc_db_name", type: "varchar", length: 160, nullable: true })
   dbName!: string | null
 
-  @Column({ name: "epc_server_node", type: "varchar", length: 160, nullable: true })
+  @Column({ name: "epc_server_node", type: "varchar", length: 100, nullable: true })
   serverNode!: string | null
+
+  @Column({ name: "query_banco", type: "text", nullable: true })
+  queryBanco!: string | null
+
+  @Column({ name: "query_sistema", type: "text", nullable: true })
+  querySistema!: string | null
 
   @Column({ name: "epc_db_user", type: "varchar", length: 160, nullable: true })
   dbUser!: string | null

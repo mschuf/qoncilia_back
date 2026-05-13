@@ -86,8 +86,18 @@ export class CreateCompanyErpConfigDto {
 
   @IsOptional()
   @IsString()
-  @MaxLength(160)
+  @MaxLength(100)
   serverNode?: string
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(20000)
+  queryBanco?: string
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(20000)
+  querySistema?: string
 
   @IsOptional()
   @IsString()

@@ -37,7 +37,7 @@ export class ErpConfigTemplate {
   @Column({ name: "ept_db_name", type: "varchar", length: 160, nullable: true })
   dbName!: string | null
 
-  @Column({ name: "ept_server_node", type: "varchar", length: 160, nullable: true })
+  @Column({ name: "ept_server_node", type: "varchar", length: 100, nullable: true })
   serverNode!: string | null
 
   @Column({ name: "ept_db_user", type: "varchar", length: 160, nullable: true })
