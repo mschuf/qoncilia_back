@@ -1627,14 +1627,16 @@ export class ConciliationService {
     actor: AuthUser,
     statementId: number
   ): Promise<{ id: number; message: string }> {
-    // Para eliminar no necesitamos cargar las filas del extracto. Usamos un
-    // findOne ligero con solo las relaciones necesarias para validar acceso.
     const statement = await this.bankStatementRepository.findOne({
       where: { id: statementId },
       relations: {
         user: {
           company: true
-        }
+        },
+        companyBankAccount: {
+          company: true
+        },
+        rows: true
       }
     });
 
@@ -1643,6 +1645,10 @@ export class ConciliationService {
     }
 
     ensureActorCanAccessTargetUser(actor, statement.user);
+
+    if (this.isSapB1ProcessedBankStatement(statement)) {
+      await this.deleteSapB1BankStatementRows(statement);
+    }
 
     await this.bankStatementRepository.delete(statement.id);
 
@@ -2417,6 +2423,90 @@ export class ConciliationService {
     return rows.filter((row) => !excluded.has(row.rowId));
   }
 
+  private isSapB1ProcessedBankStatement(statement: BankStatement): boolean {
+    const source = this.normalizeUnknownText(statement.metadata?.source);
+    const processedWith = this.normalizeUnknownText(statement.metadata?.processedWith);
+    return statement.status === "sap_b1_processed" || processedWith === "sap_b1_bank_pages" || source === "sap_b1";
+  }
+
+  private async deleteSapB1BankStatementRows(statement: BankStatement): Promise<void> {
+    const companyId = statement.companyBankAccount.company.id;
+    const config = await this.findActiveSapB1Config(companyId);
+
+    if (!config) {
+      throw new BadRequestException(
+        "La empresa no tiene una configuracion ERP activa con codigo SAP_B1 para eliminar el extracto en SAP."
+      );
+    }
+
+    ensureSapErpType(config.erpType);
+    validateSapConfig(config, false);
+
+    const endpointPath = this.getConfigString(config, [
+      "sapBankPagesEndpoint",
+      "bankPagesEndpoint"
+    ]) ?? "BankPages";
+    const credentials = this.resolveSapSystemCredentials(config);
+    const accountCode = normalizeRequired(
+      statement.companyBankAccount.majorAccountNumber,
+      "cuenta_bancaria_numero_mayor"
+    );
+    const login = await this.sapB1Service.login(config, credentials);
+    const rows = [...(statement.rows ?? [])].sort((left, right) => left.rowNumber - right.rowNumber);
+
+    for (const row of rows) {
+      const sequence = this.readSapBankPageSequence(row);
+      const rowAccountCode =
+        this.normalizeUnknownText(row.normalized?.accountCode) ??
+        this.normalizeUnknownText(row.normalized?.AccountCode) ??
+        this.normalizeUnknownText(row.values?.AccountCode) ??
+        accountCode;
+
+      if (!sequence) {
+        throw new BadRequestException(
+          `No se encontro Sequence de SAP_B1 para eliminar la fila ${row.rowNumber} del extracto.`
+        );
+      }
+
+      try {
+        await this.sapB1Service.deleteBankPage(
+          config,
+          login.cookieHeader,
+          rowAccountCode,
+          sequence,
+          endpointPath
+        );
+      } catch (error) {
+        throw this.mapSapBankPageDeleteError(error, row.rowNumber, sequence);
+      }
+    }
+  }
+
+  private readSapBankPageSequence(row: BankStatementRow): number | null {
+    const candidates = [
+      row.normalized?.sequence,
+      row.normalized?.Sequence,
+      row.normalized?.BankStatementLineSequence,
+      row.normalized?.bankStatementLineSequence,
+      row.values?.Sequence
+    ];
+
+    for (const candidate of candidates) {
+      const sequence =
+        typeof candidate === "number"
+          ? candidate
+          : typeof candidate === "string"
+            ? Number(candidate)
+            : null;
+
+      if (sequence !== null && Number.isInteger(sequence) && sequence > 0) {
+        return sequence;
+      }
+    }
+
+    return null;
+  }
+
   private readPreviewRowString(row: ConciliationPreviewRow, keys: string[]): string | null {
     for (const key of keys) {
       const value = this.readPreviewRowValue(row, key);
@@ -2642,6 +2732,26 @@ export class ConciliationService {
         event: "sap_bank_page_failed",
         rowNumber,
         processedRows,
+        error: mapped.logPayload
+      })
+    );
+
+    return mapped.timeout ? new GatewayTimeoutException(message) : new BadGatewayException(message);
+  }
+
+  private mapSapBankPageDeleteError(
+    error: unknown,
+    rowNumber: number,
+    sequence: number
+  ): BadGatewayException | GatewayTimeoutException {
+    const mapped = this.buildSapErrorMessage(error);
+    const message = `No se pudo eliminar en SAP_B1 la fila ${rowNumber} del extracto (Sequence ${sequence}). ${mapped.message}`;
+
+    this.logger.error(
+      this.compactJson({
+        event: "sap_bank_page_delete_failed",
+        rowNumber,
+        sequence,
         error: mapped.logPayload
       })
     );

@@ -92,6 +92,27 @@ export class SapB1Service {
     })
   }
 
+  async deleteBankPage(
+    config: CompanyErpConfig,
+    cookieHeader: string,
+    accountCode: string,
+    sequence: number,
+    endpointPath = "BankPages"
+  ): Promise<JsonRequestResponse> {
+    const escapedAccountCode = accountCode.replace(/'/g, "''")
+    const path = `${endpointPath}(AccountCode='${escapedAccountCode}',Sequence=${sequence})`
+
+    return this.performJsonRequest(this.joinUrl(config.serviceLayerUrl, path), {
+      method: "DELETE",
+      headers: {
+        Accept: "application/json",
+        Cookie: cookieHeader
+      },
+      tlsVersion: config.tlsVersion,
+      allowSelfSigned: config.allowSelfSigned
+    })
+  }
+
   async checkSession(config: CompanyErpConfig, cookieHeader: string): Promise<JsonRequestResponse> {
     const path = this.resolveSessionCheckPath(config)
     return this.performJsonRequest(this.joinUrl(config.serviceLayerUrl, path), {
@@ -178,7 +199,7 @@ export class SapB1Service {
   private async performJsonRequest(
     targetUrl: string,
     options: {
-      method: "POST" | "GET"
+      method: "POST" | "GET" | "DELETE"
       body?: Record<string, unknown>
       headers?: Record<string, string>
       tlsVersion?: string | null
