@@ -9,6 +9,8 @@ import {
 } from "@nestjs/common"
 import { ConfigService } from "@nestjs/config"
 import { InjectRepository } from "@nestjs/typeorm"
+import { appendFile, mkdir } from "fs/promises"
+import { join } from "path"
 import { Repository } from "typeorm"
 import { CompanyErpConfig } from "../entities/company-erp-config.entity"
 import { Role } from "../../common/enums/role.enum"
@@ -75,6 +77,16 @@ type HanaClientModule = {
 type PreparedSapB1Query = {
   sql: string
   params: unknown[]
+}
+
+type SapExternalReconciliationTraceContext = {
+  actorId: number
+  companyErpConfigId: number
+  companyErpConfigName: string
+  endpoint: string
+  endpointPath: string
+  reconciliationId: number | null
+  sapPayload: SapExternalReconciliationPayload
 }
 
 @Injectable()
@@ -362,8 +374,18 @@ export class SapErpService {
       payload,
       reconciliation
     )
+    const traceContext: SapExternalReconciliationTraceContext = {
+      actorId: actor.id,
+      companyErpConfigId: config.id,
+      companyErpConfigName: config.name,
+      endpoint,
+      endpointPath,
+      reconciliationId: reconciliation?.id ?? null,
+      sapPayload
+    }
 
     try {
+      await this.logSapExternalReconciliationRequest(traceContext)
       const cookieHeader = this.decryptSessionCookie(session.sessionCookieEncrypted)
       const sapResponse = await this.sapB1Service.reconcileExternal(
         config,
@@ -374,6 +396,11 @@ export class SapErpService {
       const now = new Date()
       session.lastValidatedAt = now
       await this.userErpSessionRepository.save(session)
+      await this.logSapExternalReconciliationSuccess({
+        ...traceContext,
+        sapStatusCode: sapResponse.statusCode,
+        sapResponsePayload: sapResponse.bodyJson
+      })
 
       return {
         id: 0,
@@ -403,14 +430,7 @@ export class SapErpService {
         await this.userErpSessionRepository.save(session)
       }
 
-      this.logSapExternalReconciliationError(error, {
-        actorId: actor.id,
-        companyErpConfigId: config.id,
-        companyErpConfigName: config.name,
-        endpoint,
-        endpointPath,
-        sapPayload
-      })
+      await this.logSapExternalReconciliationError(error, traceContext)
       const mapped = this.mapExternalError(error)
       throw mapped.exception
     }
@@ -762,10 +782,7 @@ export class SapErpService {
       )
     }
 
-    return {
-      ...(wrappedExternal ? payload : {}),
-      ExternalReconciliation: normalizedExternal
-    } as SapExternalReconciliationPayload
+    return normalizedExternal as SapExternalReconciliationPayload
   }
 
   private async buildSapExternalReconciliationPayload(
@@ -820,14 +837,12 @@ export class SapErpService {
     const journalEntryLines = this.buildJournalEntryLines(payload.journalEntryLines, payload.matches)
 
     return {
-      ExternalReconciliation: {
-        ReconciliationAccountType: this.resolveExternalReconciliationAccountType(
-          payload.reconciliationAccountType,
-          config
-        ),
-        ReconciliationBankStatementLines: bankStatementLines,
-        ReconciliationJournalEntryLines: journalEntryLines
-      }
+      ReconciliationAccountType: this.resolveExternalReconciliationAccountType(
+        payload.reconciliationAccountType,
+        config
+      ),
+      ReconciliationBankStatementLines: bankStatementLines,
+      ReconciliationJournalEntryLines: journalEntryLines
     }
   }
 
@@ -1154,7 +1169,7 @@ export class SapErpService {
     }
 
     throw new BadRequestException(
-      "ReconciliationAccountType debe ser rat_GLAccount o rat_BusinessPartner."
+      "ReconciliationAccountType debe ser rat_Account, rat_GLAccount o rat_BusinessPartner."
     )
   }
 
@@ -1366,17 +1381,50 @@ export class SapErpService {
       .toLowerCase()
   }
 
-  private logSapExternalReconciliationError(
-    error: unknown,
-    context: {
-      actorId: number
-      companyErpConfigId: number
-      companyErpConfigName: string
-      endpoint: string
-      endpointPath: string
-      sapPayload: SapExternalReconciliationPayload
+  private async logSapExternalReconciliationRequest(
+    context: SapExternalReconciliationTraceContext
+  ): Promise<void> {
+    const logPayload = this.buildSapExternalReconciliationLogPayload(
+      "sap_external_reconciliation_request",
+      context
+    )
+
+    console.log("[SAP_B1][ExternalReconciliation][REQUEST]", {
+      endpoint: context.endpoint,
+      payload: context.sapPayload
+    })
+    this.logger.log(this.stringifyLogPayload(logPayload))
+    await this.persistSapExternalReconciliationLog(logPayload)
+  }
+
+  private async logSapExternalReconciliationSuccess(
+    context: SapExternalReconciliationTraceContext & {
+      sapStatusCode: number
+      sapResponsePayload: Record<string, unknown> | null
     }
-  ) {
+  ): Promise<void> {
+    const logPayload = this.buildSapExternalReconciliationLogPayload(
+      "sap_external_reconciliation_success",
+      context,
+      {
+        sapStatusCode: context.sapStatusCode,
+        sapResponsePayload: context.sapResponsePayload
+      }
+    )
+
+    console.log("[SAP_B1][ExternalReconciliation][RESPONSE]", {
+      endpoint: context.endpoint,
+      statusCode: context.sapStatusCode,
+      responsePayload: context.sapResponsePayload
+    })
+    this.logger.log(this.stringifyLogPayload(logPayload))
+    await this.persistSapExternalReconciliationLog(logPayload)
+  }
+
+  private async logSapExternalReconciliationError(
+    error: unknown,
+    context: SapExternalReconciliationTraceContext
+  ): Promise<void> {
     const errorPayload =
       error instanceof ExternalRequestError
         ? {
@@ -1390,18 +1438,49 @@ export class SapErpService {
             responsePayload: null,
             stack: error instanceof Error ? error.stack : null
           }
-    const reconciliation = context.sapPayload.ExternalReconciliation
-    const logPayload = {
-      event: "sap_external_reconciliation_failed",
+
+    const logPayload = this.buildSapExternalReconciliationLogPayload(
+      "sap_external_reconciliation_failed",
+      context,
+      {
+        sapStatusCode: errorPayload.statusCode,
+        sapErrorMessage: errorPayload.message,
+        sapResponsePayload: errorPayload.responsePayload,
+        stack: "stack" in errorPayload ? errorPayload.stack : null
+      }
+    )
+
+    console.log("[SAP_B1][ExternalReconciliation][ERROR]", {
+      endpoint: context.endpoint,
+      statusCode: errorPayload.statusCode,
+      message: errorPayload.message,
+      responsePayload: errorPayload.responsePayload,
+      requestPayload: context.sapPayload
+    })
+    this.logger.error(this.stringifyLogPayload(logPayload))
+    await this.persistSapExternalReconciliationLog(logPayload)
+  }
+
+  private buildSapExternalReconciliationLogPayload(
+    event: string,
+    context: SapExternalReconciliationTraceContext,
+    extra: Record<string, unknown> = {}
+  ): Record<string, unknown> {
+    const reconciliation = this.resolveExternalReconciliationNode(context.sapPayload)
+
+    return {
+      event,
+      timestamp: new Date().toISOString(),
       actorId: context.actorId,
       companyErpConfigId: context.companyErpConfigId,
       companyErpConfigName: context.companyErpConfigName,
+      reconciliationId: context.reconciliationId,
       endpoint: context.endpoint,
       endpointPath: context.endpointPath,
-      sapStatusCode: errorPayload.statusCode,
-      sapErrorMessage: errorPayload.message,
-      sapResponsePayload: errorPayload.responsePayload,
       requestSummary: {
+        accountCode: context.sapPayload.AccountCode ?? null,
+        amount: context.sapPayload.Amount ?? null,
+        currencyType: context.sapPayload.CurrencyType ?? null,
         reconciliationAccountType: reconciliation.ReconciliationAccountType,
         bankStatementLines:
           reconciliation.ReconciliationBankStatementLines?.length ?? 0,
@@ -1409,10 +1488,26 @@ export class SapErpService {
           reconciliation.ReconciliationJournalEntryLines?.length ?? 0
       },
       sapRequestPayload: context.sapPayload,
-      stack: "stack" in errorPayload ? errorPayload.stack : null
+      ...extra
     }
+  }
 
-    this.logger.error(this.stringifyLogPayload(logPayload))
+  private async persistSapExternalReconciliationLog(
+    payload: Record<string, unknown>
+  ): Promise<void> {
+    const logsDir = join(process.cwd(), "logs")
+    const logFile = join(logsDir, "sap-external-reconciliations.log")
+
+    try {
+      await mkdir(logsDir, { recursive: true })
+      await appendFile(logFile, `${JSON.stringify(payload)}\n`, "utf8")
+    } catch (error) {
+      this.logger.warn(
+        `No se pudo guardar el log de conciliacion SAP en ${logFile}: ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      )
+    }
   }
 
   private stringifyLogPayload(payload: Record<string, unknown>): string {
@@ -1424,6 +1519,20 @@ export class SapErpService {
     }
 
     return `${text.slice(0, maxLength)}\n... log truncado (${text.length} caracteres totales)`
+  }
+
+  private resolveExternalReconciliationNode(
+    payload: SapExternalReconciliationPayload | Record<string, unknown>
+  ): {
+    ReconciliationAccountType?: unknown
+    ReconciliationBankStatementLines?: unknown[]
+    ReconciliationJournalEntryLines?: unknown[]
+  } {
+    return (this.asRecord(payload.ExternalReconciliation) ?? payload) as {
+      ReconciliationAccountType?: unknown
+      ReconciliationBankStatementLines?: unknown[]
+      ReconciliationJournalEntryLines?: unknown[]
+    }
   }
 
   private mapExternalError(error: unknown): {

@@ -21,6 +21,7 @@ const emptyToUndefined = ({ value }: { value: unknown }) => {
 }
 
 export const sapExternalReconciliationAccountTypes = [
+  "rat_Account",
   "rat_GLAccount",
   "rat_BusinessPartner"
 ] as const

@@ -53,6 +53,7 @@ export interface PublicSapB1QueryPreviewResult {
 }
 
 export type SapExternalReconciliationAccountType =
+  | "rat_Account"
   | "rat_GLAccount"
   | "rat_BusinessPartner"
 
@@ -69,9 +70,7 @@ export interface SapExternalReconciliationJournalEntryLinePayload
 }
 
 export interface SapExternalReconciliationPayload extends Record<string, unknown> {
-  ExternalReconciliation: {
-    ReconciliationAccountType: SapExternalReconciliationAccountType
-    ReconciliationBankStatementLines: SapExternalReconciliationBankStatementLinePayload[]
-    ReconciliationJournalEntryLines: SapExternalReconciliationJournalEntryLinePayload[]
-  }
+  ReconciliationAccountType: SapExternalReconciliationAccountType
+  ReconciliationBankStatementLines: SapExternalReconciliationBankStatementLinePayload[]
+  ReconciliationJournalEntryLines: SapExternalReconciliationJournalEntryLinePayload[]
 }
