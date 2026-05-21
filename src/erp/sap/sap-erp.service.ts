@@ -782,7 +782,9 @@ export class SapErpService {
       )
     }
 
-    return normalizedExternal as SapExternalReconciliationPayload
+    return {
+      ExternalReconciliation: normalizedExternal
+    } as SapExternalReconciliationPayload
   }
 
   private async buildSapExternalReconciliationPayload(
@@ -835,14 +837,24 @@ export class SapErpService {
       allowRowNumberAsSequence
     )
     const journalEntryLines = this.buildJournalEntryLines(payload.journalEntryLines, payload.matches)
+    const resolvedAccountCode = fallbackAccountCode ?? bankStatementLines[0]?.BankStatementAccountCode
+
+    if (!resolvedAccountCode) {
+      throw new BadRequestException(
+        "No se pudo resolver AccountCode para la conciliacion externa SAP."
+      )
+    }
 
     return {
-      ReconciliationAccountType: this.resolveExternalReconciliationAccountType(
-        payload.reconciliationAccountType,
-        config
-      ),
-      ReconciliationBankStatementLines: bankStatementLines,
-      ReconciliationJournalEntryLines: journalEntryLines
+      ExternalReconciliation: {
+        ReconciliationAccountType: this.resolveExternalReconciliationAccountType(
+          payload.reconciliationAccountType,
+          config
+        ),
+        AccountCode: resolvedAccountCode,
+        ReconciliationBankStatementLines: bankStatementLines,
+        ReconciliationJournalEntryLines: journalEntryLines
+      }
     }
   }
 
@@ -1478,9 +1490,9 @@ export class SapErpService {
       endpoint: context.endpoint,
       endpointPath: context.endpointPath,
       requestSummary: {
-        accountCode: context.sapPayload.AccountCode ?? null,
-        amount: context.sapPayload.Amount ?? null,
-        currencyType: context.sapPayload.CurrencyType ?? null,
+        accountCode: reconciliation.AccountCode ?? context.sapPayload.AccountCode ?? null,
+        amount: reconciliation.Amount ?? context.sapPayload.Amount ?? null,
+        currencyType: reconciliation.CurrencyType ?? context.sapPayload.CurrencyType ?? null,
         reconciliationAccountType: reconciliation.ReconciliationAccountType,
         bankStatementLines:
           reconciliation.ReconciliationBankStatementLines?.length ?? 0,
@@ -1525,11 +1537,17 @@ export class SapErpService {
     payload: SapExternalReconciliationPayload | Record<string, unknown>
   ): {
     ReconciliationAccountType?: unknown
+    AccountCode?: unknown
+    Amount?: unknown
+    CurrencyType?: unknown
     ReconciliationBankStatementLines?: unknown[]
     ReconciliationJournalEntryLines?: unknown[]
   } {
     return (this.asRecord(payload.ExternalReconciliation) ?? payload) as {
       ReconciliationAccountType?: unknown
+      AccountCode?: unknown
+      Amount?: unknown
+      CurrencyType?: unknown
       ReconciliationBankStatementLines?: unknown[]
       ReconciliationJournalEntryLines?: unknown[]
     }

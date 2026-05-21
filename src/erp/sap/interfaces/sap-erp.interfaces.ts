@@ -69,8 +69,13 @@ export interface SapExternalReconciliationJournalEntryLinePayload
   TransactionNumber: number
 }
 
-export interface SapExternalReconciliationPayload extends Record<string, unknown> {
+export interface SapExternalReconciliationDocument extends Record<string, unknown> {
   ReconciliationAccountType: SapExternalReconciliationAccountType
+  AccountCode?: string
   ReconciliationBankStatementLines: SapExternalReconciliationBankStatementLinePayload[]
   ReconciliationJournalEntryLines: SapExternalReconciliationJournalEntryLinePayload[]
+}
+
+export interface SapExternalReconciliationPayload extends Record<string, unknown> {
+  ExternalReconciliation: SapExternalReconciliationDocument
 }
