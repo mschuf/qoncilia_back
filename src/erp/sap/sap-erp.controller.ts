@@ -8,6 +8,7 @@ import { JwtAuthGuard } from "../../common/guards/jwt-auth.guard"
 import { ModuleAccessGuard } from "../../common/guards/module-access.guard"
 import { RolesGuard } from "../../common/guards/roles.guard"
 import { AuthUser } from "../../common/interfaces/auth-user.interface"
+import { CompareSapB1QueryPreviewDto } from "./dto/compare-sap-b1-query-preview.dto"
 import { SapLoginDto } from "./dto/sap-login.dto"
 import { SapLogoutDto } from "./dto/sap-logout.dto"
 import { RunSapB1QueryPreviewDto } from "./dto/run-sap-b1-query-preview.dto"
@@ -46,6 +47,15 @@ export class SapErpController {
     @CurrentUser() actor: AuthUser
   ) {
     return this.sapErpService.runSapB1QueryPreview(actor, body)
+  }
+
+  @Post("query-preview/compare")
+  @Roles(Role.GESTOR_COBRANZA, Role.GESTOR_PAGOS, Role.ADMIN, Role.IS_SUPER_ADMIN)
+  compareQueryPreview(
+    @Body() body: CompareSapB1QueryPreviewDto,
+    @CurrentUser() actor: AuthUser
+  ) {
+    return this.sapErpService.compareSapB1QueryPreview(actor, body)
   }
 
   @Post("external-reconciliations")

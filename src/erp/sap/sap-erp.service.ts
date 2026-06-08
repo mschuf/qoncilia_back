@@ -21,7 +21,9 @@ import { BankStatement } from "../../conciliation/entities/bank-statement.entity
 import { BankStatementRow } from "../../conciliation/entities/bank-statement-row.entity"
 import { CompanyBankAccount } from "../../conciliation/entities/company-bank-account.entity"
 import { Reconciliation } from "../../conciliation/entities/reconciliation.entity"
+import type { ConciliationPreviewRow } from "../../conciliation/interfaces/conciliation.interfaces"
 import { User } from "../../users/entities/user.entity"
+import { CompareSapB1QueryPreviewDto } from "./dto/compare-sap-b1-query-preview.dto"
 import { RunSapB1QueryPreviewDto } from "./dto/run-sap-b1-query-preview.dto"
 import { SapLoginDto } from "./dto/sap-login.dto"
 import {
@@ -33,8 +35,10 @@ import {
 import { UserErpSession } from "./entities/user-erp-session.entity"
 import {
   PublicSapErpSession,
+  PublicSapB1QueryComparisonResult,
   PublicSapB1QueryPreviewResult,
   PublicSapB1QueryTable,
+  PublicSapB1SmartMatch,
   PublicSapExternalReconciliationResult,
   PublicSapSessionStatus,
   SapExternalReconciliationAccountType,
@@ -88,6 +92,15 @@ type SapExternalReconciliationTraceContext = {
   reconciliationId: number | null
   sapPayload: SapExternalReconciliationPayload
 }
+
+type SapB1ComparableValue = string | number | null
+
+type SapB1DateMatchResult = {
+  matched: boolean
+  differenceDays: number | null
+}
+
+const SAP_B1_DATE_TOLERANCE_DAYS = 7
 
 @Injectable()
 export class SapErpService {
@@ -320,6 +333,50 @@ export class SapErpService {
     }
   }
 
+  async compareSapB1QueryPreview(
+    actor: AuthUser,
+    payload: CompareSapB1QueryPreviewDto
+  ): Promise<PublicSapB1QueryComparisonResult> {
+    const config = await this.requireConfigForActor(actor, payload.companyErpConfigId)
+
+    ensureSapErpType(config.erpType)
+    this.ensureActiveConfig(config)
+
+    const columns = this.resolveSapB1ComparisonColumns(payload)
+    if (columns.length === 0) {
+      throw new BadRequestException("No hay columnas disponibles para comparar.")
+    }
+
+    const excludedBankRowIds = new Set(payload.excludedBankRowIds ?? [])
+    const excludedSystemRowIds = new Set(payload.excludedSystemRowIds ?? [])
+    const bankRows = this.convertSapB1TableToPreviewRows(payload.bank)
+      .filter((row) => !excludedBankRowIds.has(row.rowId))
+    const systemRows = this.convertSapB1TableToPreviewRows(payload.system)
+      .filter((row) => !excludedSystemRowIds.has(row.rowId))
+    const matches = this.calculateSapB1SmartMatches(systemRows, bankRows, columns)
+    const matchedBankRowIds = new Set(matches.map((match) => match.bankRow.rowId))
+    const matchedSystemRowIds = new Set(matches.map((match) => match.systemRow.rowId))
+    const unmatchedBankRows = bankRows.filter((row) => !matchedBankRowIds.has(row.rowId))
+    const unmatchedSystemRows = systemRows.filter((row) => !matchedSystemRowIds.has(row.rowId))
+    const totalRows = systemRows.length + bankRows.length
+
+    return {
+      columns,
+      matches,
+      unmatchedSystemRows,
+      unmatchedBankRows,
+      metrics: {
+        totalSystemRows: systemRows.length,
+        totalBankRows: bankRows.length,
+        matches: matches.length,
+        unmatchedSystem: unmatchedSystemRows.length,
+        unmatchedBank: unmatchedBankRows.length,
+        matchPercentage:
+          totalRows > 0 ? Math.round(((matches.length * 2) / totalRows) * 10000) / 100 : 0
+      }
+    }
+  }
+
   async reconcileExternal(
     actor: AuthUser,
     payload: SendSapExternalReconciliationDto
@@ -434,6 +491,326 @@ export class SapErpService {
       const mapped = this.mapExternalError(error)
       throw mapped.exception
     }
+  }
+
+  private resolveSapB1ComparisonColumns(payload: CompareSapB1QueryPreviewDto): string[] {
+    const systemColumnsByKey = new Map(
+      payload.system.columns.map((column) => [this.normalizeLookupKey(column), column])
+    )
+    const bankColumnsByKey = new Map(
+      payload.bank.columns.map((column) => [this.normalizeLookupKey(column), column])
+    )
+    const resolveColumn = (column: string) => {
+      const key = this.normalizeLookupKey(column)
+      return bankColumnsByKey.get(key) ?? systemColumnsByKey.get(key) ?? null
+    }
+    const uniqueColumns: string[] = []
+    const seenKeys = new Set<string>()
+
+    for (const requestedColumn of payload.columns ?? []) {
+      const column = resolveColumn(requestedColumn)
+      if (!column) continue
+
+      const key = this.normalizeLookupKey(column)
+      if (seenKeys.has(key)) continue
+      seenKeys.add(key)
+      uniqueColumns.push(column)
+    }
+
+    if (uniqueColumns.length > 0) {
+      return uniqueColumns.slice(0, 3)
+    }
+
+    const preferredColumns = ["referencia", "fecha", "monto"]
+      .map((key) => bankColumnsByKey.get(key) ?? systemColumnsByKey.get(key) ?? null)
+      .filter((column): column is string => Boolean(column))
+
+    if (preferredColumns.length === 3) {
+      return preferredColumns
+    }
+
+    const commonColumns = payload.bank.columns.filter((column) =>
+      systemColumnsByKey.has(this.normalizeLookupKey(column))
+    )
+
+    return (commonColumns.length > 0 ? commonColumns : payload.bank.columns).slice(0, 3)
+  }
+
+  private convertSapB1TableToPreviewRows(
+    table: PublicSapB1QueryTable
+  ): ConciliationPreviewRow[] {
+    return table.rows.map((row, index) => {
+      const values: Record<string, string | null> = {}
+      const normalized: Record<string, string | number | null> = {}
+
+      for (const column of table.columns) {
+        const raw = row[column]
+        const text = raw === undefined || raw === null ? null : String(raw)
+        values[column] = text
+        normalized[column] = text === null ? null : this.normalizeSapB1ComparableText(text)
+      }
+
+      return {
+        rowId: `sap-b1-${index}`,
+        rowNumber: index + 1,
+        values,
+        normalized
+      }
+    })
+  }
+
+  private calculateSapB1SmartMatches(
+    systemRows: ConciliationPreviewRow[],
+    bankRows: ConciliationPreviewRow[],
+    fieldKeys: string[]
+  ): PublicSapB1SmartMatch[] {
+    const keys = fieldKeys.slice(0, 3)
+    if (keys.length === 0) return []
+
+    const column1 = keys[0]
+    const column2 = keys[1]
+    const column3 = keys[2]
+    const matches: PublicSapB1SmartMatch[] = []
+    const usedBankRows = new Set<string>()
+
+    for (const systemRow of systemRows) {
+      const candidates = bankRows
+        .filter((bankRow) => !usedBankRows.has(bankRow.rowId))
+        .map((bankRow) => {
+          const referenceMatched = this.sapB1ExactMatch(
+            this.readSapB1PreviewRowValue(systemRow, column1),
+            this.readSapB1PreviewRowValue(bankRow, column1)
+          )
+          const dateResult = column2
+            ? this.sapB1DateMatchWithinDays(
+                this.readSapB1PreviewRowRawValue(systemRow, column2),
+                this.readSapB1PreviewRowRawValue(bankRow, column2),
+                SAP_B1_DATE_TOLERANCE_DAYS
+              )
+            : { matched: false, differenceDays: null }
+          const amountMatched = column3
+            ? this.sapB1AmountMatch(
+                this.readSapB1PreviewRowRawValue(systemRow, column3),
+                this.readSapB1PreviewRowRawValue(bankRow, column3)
+              )
+            : false
+          const matchReason: PublicSapB1SmartMatch["matchReason"] | null = referenceMatched
+            ? "reference"
+            : dateResult.matched && amountMatched
+              ? "date_amount"
+              : null
+
+          if (!matchReason) return null
+
+          return {
+            bankRow,
+            score: matchReason === "reference" ? 1 : 0.95,
+            column1Match: referenceMatched,
+            column2Match: dateResult.matched,
+            column3Match: amountMatched,
+            matchReason,
+            dateDifferenceDays: dateResult.differenceDays
+          }
+        })
+        .filter((item): item is NonNullable<typeof item> => item !== null)
+        .sort((left, right) => {
+          if (left.matchReason !== right.matchReason) {
+            return left.matchReason === "reference" ? -1 : 1
+          }
+          if (left.score !== right.score) return right.score - left.score
+
+          const leftDateDiff = left.dateDifferenceDays ?? Number.MAX_SAFE_INTEGER
+          const rightDateDiff = right.dateDifferenceDays ?? Number.MAX_SAFE_INTEGER
+          return leftDateDiff - rightDateDiff
+        })
+
+      const chosen = candidates[0]
+      if (!chosen) continue
+
+      usedBankRows.add(chosen.bankRow.rowId)
+      matches.push({
+        systemRow,
+        bankRow: chosen.bankRow,
+        score: chosen.score,
+        column1Match: chosen.column1Match,
+        column2Match: chosen.column2Match,
+        column3Match: chosen.column3Match,
+        matchReason: chosen.matchReason,
+        dateDifferenceDays: chosen.dateDifferenceDays
+      })
+    }
+
+    return matches
+  }
+
+  private readSapB1PreviewRowValue(
+    row: ConciliationPreviewRow,
+    fieldKey: string | undefined
+  ): SapB1ComparableValue {
+    if (!fieldKey) return null
+    return row.normalized[fieldKey] ?? row.values[fieldKey] ?? null
+  }
+
+  private readSapB1PreviewRowRawValue(
+    row: ConciliationPreviewRow,
+    fieldKey: string | undefined
+  ): SapB1ComparableValue {
+    if (!fieldKey) return null
+    return row.values[fieldKey] ?? row.normalized[fieldKey] ?? null
+  }
+
+  private normalizeSapB1ComparableText(value: SapB1ComparableValue): string | null {
+    if (value == null) return null
+
+    const text = String(value)
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toLowerCase()
+      .trim()
+
+    return text || null
+  }
+
+  private sapB1ExactMatch(
+    left: SapB1ComparableValue,
+    right: SapB1ComparableValue
+  ): boolean {
+    const normalizedLeft = this.normalizeSapB1ComparableText(left)
+    const normalizedRight = this.normalizeSapB1ComparableText(right)
+    if (!normalizedLeft || !normalizedRight) return false
+    return normalizedLeft === normalizedRight
+  }
+
+  private sapB1AmountMatch(
+    left: SapB1ComparableValue,
+    right: SapB1ComparableValue
+  ): boolean {
+    const leftAmount = this.parseSapB1AmountValue(left)
+    const rightAmount = this.parseSapB1AmountValue(right)
+    if (leftAmount === null || rightAmount === null) {
+      return this.sapB1ExactMatch(left, right)
+    }
+
+    return Math.abs(leftAmount - rightAmount) < 0.0001
+  }
+
+  private parseSapB1AmountValue(value: SapB1ComparableValue): number | null {
+    if (typeof value === "number" && Number.isFinite(value)) return value
+    if (value == null) return null
+
+    const text = String(value).trim()
+    if (!text || text === "-") return null
+
+    const cleaned = text
+      .replace(/[A-Za-z$%]/g, "")
+      .replace(/\s+/g, "")
+      .replace(/[^\d,.\-+]/g, "")
+    const normalized = this.normalizeSapB1NumericText(cleaned)
+    if (!normalized || !/^[-+]?\d+(\.\d+)?$/.test(normalized)) return null
+
+    const parsed = Number(normalized)
+    return Number.isFinite(parsed) ? parsed : null
+  }
+
+  private normalizeSapB1NumericText(value: string): string | null {
+    if (!value) return null
+
+    const sign = value.startsWith("-") ? "-" : value.startsWith("+") ? "+" : ""
+    const unsigned = value.replace(/^[-+]/, "")
+    const lastDot = unsigned.lastIndexOf(".")
+    const lastComma = unsigned.lastIndexOf(",")
+
+    if (lastDot >= 0 && lastComma >= 0) {
+      const decimalSeparator = lastDot > lastComma ? "." : ","
+      const thousandsSeparator = decimalSeparator === "." ? "," : "."
+      return `${sign}${unsigned
+        .replace(new RegExp(`\\${thousandsSeparator}`, "g"), "")
+        .replace(decimalSeparator, ".")}`
+    }
+
+    if (lastComma >= 0) {
+      const groups = unsigned.split(",")
+      const isThousandsOnly =
+        groups.length > 1 && groups.slice(1).every((group) => group.length === 3)
+      return `${sign}${isThousandsOnly ? groups.join("") : unsigned.replace(",", ".")}`
+    }
+
+    if (lastDot >= 0) {
+      const groups = unsigned.split(".")
+      const isThousandsOnly =
+        groups.length > 1 && groups.slice(1).every((group) => group.length === 3)
+      return `${sign}${isThousandsOnly ? groups.join("") : unsigned}`
+    }
+
+    return `${sign}${unsigned}`
+  }
+
+  private sapB1DateMatchWithinDays(
+    left: SapB1ComparableValue,
+    right: SapB1ComparableValue,
+    toleranceDays: number
+  ): SapB1DateMatchResult {
+    const leftDay = this.parseSapB1DateDayNumber(left)
+    const rightDay = this.parseSapB1DateDayNumber(right)
+    if (leftDay === null || rightDay === null) {
+      return {
+        matched: this.sapB1ExactMatch(left, right),
+        differenceDays: null
+      }
+    }
+
+    const differenceDays = Math.abs(leftDay - rightDay)
+    return {
+      matched: differenceDays <= toleranceDays,
+      differenceDays
+    }
+  }
+
+  private parseSapB1DateDayNumber(value: SapB1ComparableValue): number | null {
+    if (value == null) return null
+
+    const raw = String(value).trim()
+    if (!raw) return null
+
+    const isoMatch = raw.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/)
+    if (isoMatch) {
+      return this.buildSapB1UtcDayNumber(
+        Number(isoMatch[1]),
+        Number(isoMatch[2]),
+        Number(isoMatch[3])
+      )
+    }
+
+    const slashMatch = raw.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2}|\d{4})$/)
+    if (slashMatch) {
+      let year = Number(slashMatch[3])
+      if (year < 100) year += year >= 70 ? 1900 : 2000
+      return this.buildSapB1UtcDayNumber(year, Number(slashMatch[2]), Number(slashMatch[1]))
+    }
+
+    const parsed = Date.parse(raw)
+    return Number.isNaN(parsed) ? null : Math.floor(parsed / 86400000)
+  }
+
+  private buildSapB1UtcDayNumber(
+    year: number,
+    month: number,
+    day: number
+  ): number | null {
+    if (!Number.isInteger(year) || !Number.isInteger(month) || !Number.isInteger(day)) {
+      return null
+    }
+
+    const date = new Date(Date.UTC(year, month - 1, day))
+    if (
+      date.getUTCFullYear() !== year ||
+      date.getUTCMonth() !== month - 1 ||
+      date.getUTCDate() !== day
+    ) {
+      return null
+    }
+
+    return Math.floor(date.getTime() / 86400000)
   }
 
   private async requireConfigForActor(
