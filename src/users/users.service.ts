@@ -7,7 +7,7 @@ import {
 } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { InjectRepository } from "@nestjs/typeorm";
-import { hash } from "bcryptjs";
+import { compare, hash } from "bcryptjs";
 import { QueryFailedError, Raw, Repository } from "typeorm";
 import { AppModuleEntity } from "../access-control/entities/app-module.entity";
 import { CompanyRoleModule } from "../access-control/entities/company-role-module.entity";
@@ -18,8 +18,10 @@ import { Role } from "../common/enums/role.enum";
 import { AuthUser } from "../common/interfaces/auth-user.interface";
 import { ensureStrongPassword, generateTemporaryPasswordFromOneToSix } from "../common/utils/password.util";
 import { isGestorRole, isSuperAdminRole } from "../common/utils/role.util";
+import { ChangePasswordDto } from "./dto/change-password.dto";
 import { CreateUserDto } from "./dto/create-user.dto";
 import { RegisterDto } from "./dto/register.dto";
+import { UpdateProfileDto } from "./dto/update-profile.dto";
 import { UpdateUserDto } from "./dto/update-user.dto";
 import { User } from "./entities/user.entity";
 import { PublicUser } from "./interfaces/public-user.interface";
@@ -196,6 +198,8 @@ export class UsersService {
     user.company = desiredCompany;
     user.role = desiredRole;
 
+    await this.ensureUniqueUserData(user);
+
     try {
       await this.userRepository.save(user);
       const updated = await this.requireUser(user.id);
@@ -203,6 +207,44 @@ export class UsersService {
     } catch (error) {
       this.handleDatabaseError(error);
     }
+  }
+
+  async updateOwnProfile(actor: AuthUser, payload: UpdateProfileDto): Promise<PublicUser> {
+    const user = await this.requireUser(actor.id);
+
+    if (payload.usrNombre !== undefined) user.usrNombre = this.normalizeOptional(payload.usrNombre);
+    if (payload.usrApellido !== undefined) user.usrApellido = this.normalizeOptional(payload.usrApellido);
+    if (payload.usrEmail !== undefined) user.usrEmail = this.normalizeOptional(payload.usrEmail);
+    if (payload.usrCelular !== undefined) user.usrCelular = this.normalizeOptional(payload.usrCelular);
+    if (payload.usrLogin !== undefined) {
+      user.usrLogin = this.normalizeRequired(payload.usrLogin, "usrLogin");
+    }
+    if (payload.usrFoto !== undefined) user.usrFoto = payload.usrFoto;
+
+    await this.ensureUniqueUserData(user);
+
+    try {
+      await this.userRepository.save(user);
+      const updated = await this.requireUser(user.id);
+      return this.toPublicUser(updated);
+    } catch (error) {
+      this.handleDatabaseError(error);
+    }
+  }
+
+  async changeOwnPassword(actor: AuthUser, payload: ChangePasswordDto): Promise<{ success: true }> {
+    ensureStrongPassword(payload.newPassword);
+
+    const user = await this.requireUser(actor.id);
+    const currentMatches = await compare(payload.currentPassword, user.passwordHash);
+    if (!currentMatches) {
+      throw new ForbiddenException("La contrasena actual es incorrecta.");
+    }
+
+    user.passwordHash = await hash(payload.newPassword, this.bcryptRounds);
+    await this.userRepository.save(user);
+
+    return { success: true };
   }
 
   async resetPassword(id: number, actor: AuthUser): Promise<{ temporaryPassword: string }> {
@@ -402,6 +444,38 @@ export class UsersService {
     }
 
     throw new ForbiddenException("No tenes permisos para asignar ese rol.");
+  }
+
+  private async ensureUniqueUserData(user: User): Promise<void> {
+    const checks: Array<{ field: keyof User; value: string | null; message: string }> = [
+      {
+        field: "usrLogin",
+        value: user.usrLogin,
+        message: `El login "${user.usrLogin}" ya esta en uso por otro usuario.`
+      },
+      {
+        field: "usrEmail",
+        value: user.usrEmail,
+        message: `El email "${user.usrEmail}" ya esta en uso por otro usuario.`
+      },
+      {
+        field: "usrCelular",
+        value: user.usrCelular,
+        message: `El celular "${user.usrCelular}" ya esta en uso por otro usuario.`
+      }
+    ];
+
+    for (const check of checks) {
+      if (!check.value) continue;
+
+      const existing = await this.userRepository.findOne({
+        where: { [check.field]: check.value }
+      });
+
+      if (existing && existing.id !== user.id) {
+        throw new ConflictException(check.message);
+      }
+    }
   }
 
   private enforceActorCanManageTarget(actor: AuthUser, target: User) {

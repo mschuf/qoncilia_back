@@ -8,7 +8,9 @@ import { JwtAuthGuard } from "../common/guards/jwt-auth.guard";
 import { ModuleAccessGuard } from "../common/guards/module-access.guard";
 import { RolesGuard } from "../common/guards/roles.guard";
 import { AuthUser } from "../common/interfaces/auth-user.interface";
+import { ChangePasswordDto } from "./dto/change-password.dto";
 import { CreateUserDto } from "./dto/create-user.dto";
+import { UpdateProfileDto } from "./dto/update-profile.dto";
 import { UpdateUserDto } from "./dto/update-user.dto";
 import { UsersService } from "./users.service";
 
@@ -27,6 +29,20 @@ export class UsersController {
   @Post("create")
   createUser(@Body() body: CreateUserDto, @CurrentUser() actor: AuthUser) {
     return this.usersService.createFromAbm(body, actor);
+  }
+
+  @Patch("me")
+  @Roles(Role.ADMIN, Role.IS_SUPER_ADMIN, Role.GESTOR_COBRANZA, Role.GESTOR_PAGOS)
+  @RequiredModule(AppModuleCode.PROFILE)
+  updateOwnProfile(@Body() body: UpdateProfileDto, @CurrentUser() actor: AuthUser) {
+    return this.usersService.updateOwnProfile(actor, body);
+  }
+
+  @Post("me/change-password")
+  @Roles(Role.ADMIN, Role.IS_SUPER_ADMIN, Role.GESTOR_COBRANZA, Role.GESTOR_PAGOS)
+  @RequiredModule(AppModuleCode.PROFILE)
+  changeOwnPassword(@Body() body: ChangePasswordDto, @CurrentUser() actor: AuthUser) {
+    return this.usersService.changeOwnPassword(actor, body);
   }
 
   @Patch("update/:id")
