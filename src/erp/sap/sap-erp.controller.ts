@@ -18,7 +18,7 @@ import { SapErpService } from "./sap-erp.service"
 
 @Controller("erp/sap")
 @UseGuards(JwtAuthGuard, RolesGuard, ModuleAccessGuard)
-@RequiredModule(AppModuleCode.ERP_MANAGEMENT)
+@RequiredModule(AppModuleCode.ERP_MANAGEMENT, AppModuleCode.CONCILIATION)
 export class SapErpController {
   constructor(private readonly sapErpService: SapErpService) {}
 
