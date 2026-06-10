@@ -10,6 +10,8 @@ export interface PublicBank {
   branch: string | null;
   active: boolean;
   accountCount: number;
+  activeLayoutId: number | null;
+  activeLayoutName: string | null;
 }
 
 export interface PublicCompanyBankAccount {

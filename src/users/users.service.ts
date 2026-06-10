@@ -146,6 +146,8 @@ export class UsersService {
       creatorUser
     });
 
+    await this.ensureUniqueUserData(user);
+
     try {
       const created = await this.userRepository.save(user);
       const hydrated = await this.requireUser(created.id);

@@ -6,7 +6,7 @@ import {
   NotFoundException
 } from "@nestjs/common";
 import { InjectRepository } from "@nestjs/typeorm";
-import { Brackets, QueryFailedError, Repository } from "typeorm";
+import { Brackets, In, QueryFailedError, Repository } from "typeorm";
 import { Company } from "../access-control/entities/company.entity";
 import { PublicCompany } from "../access-control/interfaces/access-control.interfaces";
 import { Role } from "../common/enums/role.enum";
@@ -21,6 +21,7 @@ import { UpdateCompanyBankAccountDto } from "./dto/update-company-bank-account.d
 import { BankEntity } from "./entities/bank.entity";
 import { CompanyBankAccount } from "./entities/company-bank-account.entity";
 import { Currency } from "./entities/currency.entity";
+import { ReconciliationLayout } from "./entities/reconciliation-layout.entity";
 import {
   CompanyBankingReferenceResponse,
   PaginatedResponse,
@@ -41,7 +42,9 @@ export class BankingService {
     @InjectRepository(CompanyBankAccount)
     private readonly companyBankAccountRepository: Repository<CompanyBankAccount>,
     @InjectRepository(Currency)
-    private readonly currencyRepository: Repository<Currency>
+    private readonly currencyRepository: Repository<Currency>,
+    @InjectRepository(ReconciliationLayout)
+    private readonly layoutRepository: Repository<ReconciliationLayout>
   ) {}
 
   private currenciesCache: { data: Currency[]; expiresAt: number } | null = null;
@@ -132,8 +135,10 @@ export class BankingService {
       .take(limit)
       .getManyAndCount();
 
+    const activeLayoutByBank = await this.findActiveLayoutsByBank(banks.map((item) => item.id));
+
     return this.toPaginatedResponse(
-      banks.map((item) => this.toPublicBank(item)),
+      banks.map((item) => this.toPublicBank(item, activeLayoutByBank.get(item.id) ?? null)),
       total,
       page,
       limit
@@ -242,7 +247,8 @@ export class BankingService {
     try {
       const created = await this.bankRepository.save(bank);
       const hydrated = await this.requireBank(created.id);
-      return this.toPublicBank(hydrated);
+      const activeLayoutByBank = await this.findActiveLayoutsByBank([hydrated.id]);
+      return this.toPublicBank(hydrated, activeLayoutByBank.get(hydrated.id) ?? null);
     } catch (error) {
       this.handleDatabaseError(error);
     }
@@ -281,7 +287,8 @@ export class BankingService {
     try {
       const updated = await this.bankRepository.save(bank);
       const hydrated = await this.requireBank(updated.id);
-      return this.toPublicBank(hydrated);
+      const activeLayoutByBank = await this.findActiveLayoutsByBank([hydrated.id]);
+      return this.toPublicBank(hydrated, activeLayoutByBank.get(hydrated.id) ?? null);
     } catch (error) {
       this.handleDatabaseError(error);
     }
@@ -677,7 +684,27 @@ export class BankingService {
     };
   }
 
-  private toPublicBank(bank: BankEntity): PublicBank {
+  private async findActiveLayoutsByBank(
+    bankIds: number[]
+  ): Promise<Map<number, ReconciliationLayout>> {
+    if (bankIds.length === 0) {
+      return new Map();
+    }
+
+    const layouts = await this.layoutRepository.find({
+      where: { active: true, userBank: { id: In(bankIds) } },
+      relations: { userBank: true }
+    });
+
+    const byBank = new Map<number, ReconciliationLayout>();
+    for (const layout of layouts) {
+      byBank.set(layout.userBank.id, layout);
+    }
+
+    return byBank;
+  }
+
+  private toPublicBank(bank: BankEntity, activeLayout: ReconciliationLayout | null = null): PublicBank {
     return {
       id: bank.id,
       companyId: bank.company.id,
@@ -687,7 +714,9 @@ export class BankingService {
       description: bank.description,
       branch: bank.branch,
       active: bank.active,
-      accountCount: bank.accountCount ?? 0
+      accountCount: bank.accountCount ?? 0,
+      activeLayoutId: activeLayout?.id ?? null,
+      activeLayoutName: activeLayout?.name ?? null
     };
   }
 
