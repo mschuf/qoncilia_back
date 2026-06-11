@@ -59,7 +59,7 @@ export class SapErpController {
   }
 
   @Post("external-reconciliations")
-  @Roles(Role.ADMIN, Role.IS_SUPER_ADMIN)
+  @Roles(Role.GESTOR_COBRANZA, Role.ADMIN, Role.IS_SUPER_ADMIN)
   reconcileExternal(
     @Body() body: SendSapExternalReconciliationDto,
     @CurrentUser() actor: AuthUser

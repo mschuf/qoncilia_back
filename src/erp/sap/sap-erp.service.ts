@@ -1061,12 +1061,16 @@ export class SapErpService {
   }
 
   private ensureCanRunExternalReconciliation(actor: AuthUser) {
-    if (isSuperAdminRole(actor.roleCode) || actor.roleCode === Role.ADMIN) {
+    if (
+      isSuperAdminRole(actor.roleCode) ||
+      actor.roleCode === Role.ADMIN ||
+      actor.roleCode === Role.GESTOR_COBRANZA
+    ) {
       return
     }
 
     throw new ForbiddenException(
-      "Solo usuarios admin o superadmin pueden enviar conciliaciones externas al ERP."
+      "Solo usuarios admin, superadmin o gestor de cobranzas pueden enviar conciliaciones externas al ERP."
     )
   }
 
@@ -1105,6 +1109,13 @@ export class SapErpService {
     }
 
     if (actor.roleCode === Role.ADMIN && reconciliation.user.company.id === actor.companyId) {
+      return
+    }
+
+    if (
+      actor.roleCode === Role.GESTOR_COBRANZA &&
+      reconciliation.user.company.id === actor.companyId
+    ) {
       return
     }
 
