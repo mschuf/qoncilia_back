@@ -42,8 +42,8 @@ export class CompanyBankAccount {
   @Column({ name: "cuenta_bancaria_numero", type: "varchar", length: 80 })
   accountNumber!: string;
 
-  @Column({ name: "cuenta_bancaria_id_banco_erp", type: "varchar", length: 80 })
-  bankErpId!: string;
+  @Column({ name: "cuenta_bancaria_id_banco_erp", type: "varchar", length: 80, nullable: true })
+  bankErpId!: string | null;
 
   @Column({ name: "cuenta_bancaria_numero_mayor", type: "varchar", length: 80 })
   majorAccountNumber!: string;

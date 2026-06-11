@@ -335,7 +335,7 @@ export class BankingService {
       name: this.normalizeRequired(payload.name, "name"),
       currency: currency.code,
       accountNumber: this.normalizeRequired(payload.accountNumber, "accountNumber"),
-      bankErpId: this.normalizeRequired(payload.bankErpId, "bankErpId"),
+      bankErpId: this.normalizeOptional(payload.bankErpId),
       majorAccountNumber: this.normalizeRequired(payload.majorAccountNumber, "majorAccountNumber"),
       paymentAccountNumber: this.normalizeOptional(payload.paymentAccountNumber),
       active: payload.active ?? true
@@ -383,7 +383,7 @@ export class BankingService {
       account.accountNumber = this.normalizeRequired(payload.accountNumber, "accountNumber");
     }
     if (payload.bankErpId !== undefined) {
-      account.bankErpId = this.normalizeRequired(payload.bankErpId, "bankErpId");
+      account.bankErpId = this.normalizeOptional(payload.bankErpId);
     }
     if (payload.majorAccountNumber !== undefined) {
       account.majorAccountNumber = this.normalizeRequired(
@@ -731,7 +731,7 @@ export class BankingService {
       name: account.name,
       currency: account.currency,
       accountNumber: account.accountNumber,
-      bankErpId: account.bankErpId,
+      bankErpId: account.bankErpId ?? "",
       majorAccountNumber: account.majorAccountNumber,
       paymentAccountNumber: account.paymentAccountNumber,
       active: account.active

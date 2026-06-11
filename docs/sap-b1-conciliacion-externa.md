@@ -61,7 +61,7 @@ Para la conciliacion externa actual, Qoncilia arma `BankStatementAccountCode` co
 1. `accountCode` enviado manualmente en el request.
 2. `sapBankStatementAccountCode` o `sapExternalReconciliationAccountCode` en `epc_settings`.
 3. `cuenta_bancaria_numero_mayor`.
-4. `cuenta_bancaria_id_banco_erp`.
+4. `cuenta_bancaria_id_banco_erp`, solo si existe como dato legacy.
 5. `cuenta_bancaria_numero`.
 
 La opcion esperada es la 3: cargar `cuenta_bancaria_numero_mayor` con el codigo SAP, por ejemplo
@@ -99,7 +99,6 @@ numero de fila equivale al `Sequence` de SAP, puede habilitarlo con:
 UPDATE public.cuentas_bancarias
 SET
   cuenta_bancaria_numero_mayor = '1.01.02.001.002',
-  cuenta_bancaria_id_banco_erp = 'BNF_GS_01',
   cuenta_bancaria_actualizado_en = NOW()
 WHERE cuenta_bancaria_id = 10;
 ```

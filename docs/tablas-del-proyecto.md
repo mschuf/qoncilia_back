@@ -142,7 +142,7 @@ Cuentas bancarias por banco. Cada extracto bancario guardado debe apuntar a una 
 | `cuenta_bancaria_nombre` | Nombre interno o alias de la cuenta. |
 | `moneda_codigo` | Moneda de la cuenta. |
 | `cuenta_bancaria_numero` | Numero bancario visible de la cuenta. |
-| `cuenta_bancaria_id_banco_erp` | Identificador del banco/cuenta en el ERP. |
+| `cuenta_bancaria_id_banco_erp` | Identificador opcional legacy del banco/cuenta en el ERP. |
 | `cuenta_bancaria_numero_mayor` | Cuenta contable mayor asociada. |
 | `cuenta_bancaria_numero_pago` | Cuenta de pago opcional asociada. |
 | `cuenta_bancaria_activa` | Habilita la cuenta para cargar extractos. |

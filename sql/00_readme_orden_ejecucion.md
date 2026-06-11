@@ -29,6 +29,9 @@ Estos scripts estan pensados para un `DROP`/recreacion limpia. Los scripts princ
 23. `24_optimize_bank_statements_pagination.sql` (indices para paginado de extractos)
 24. `25_remove_systems_and_update_erp_config.sql` (migracion manual para bases ya existentes)
 25. `26_create_erp_config_templates.sql` (plantillas ERP globales y relacion con copias por empresa)
+26. `27_drop_cmp_name_columns.sql` (quita columnas legacy de compania SAP)
+27. `28_add_erp_queries_and_server_node_length.sql` (agrega queries ERP y amplia server node)
+28. `29_make_bank_erp_id_optional.sql` (hace opcional el identificador ERP legacy de cuentas bancarias)
 
 ## Notas
 
@@ -48,3 +51,4 @@ Estos scripts estan pensados para un `DROP`/recreacion limpia. Los scripts princ
 - `23` es incremental e idempotente: agrega `pg_trgm` e indices para busquedas paginadas de bancos y cuentas bancarias.
 - `25` es incremental e idempotente: elimina `sistemas`, quita `sistema_id` de plantillas y ajusta `empresas_erp_configuraciones` al contrato nuevo.
 - `26` es incremental e idempotente: crea plantillas ERP sin empresa y agrega `ept_id` nullable a las copias por empresa.
+- `29` es incremental e idempotente: permite `cuenta_bancaria_id_banco_erp` nulo y elimina el check legacy de no vacio.

@@ -125,7 +125,7 @@ export function toPublicUserBankDeletionAccount(
     name: entity.name,
     currency: entity.currency,
     accountNumber: entity.accountNumber,
-    bankErpId: entity.bankErpId,
+    bankErpId: entity.bankErpId ?? "",
     majorAccountNumber: entity.majorAccountNumber,
     paymentAccountNumber: entity.paymentAccountNumber,
     active: entity.active

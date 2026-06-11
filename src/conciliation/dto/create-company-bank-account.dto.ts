@@ -47,10 +47,10 @@ export class CreateCompanyBankAccountDto {
   accountNumber!: string;
 
   @Transform(emptyToUndefined)
+  @IsOptional()
   @IsString()
-  @IsNotEmpty()
   @MaxLength(80)
-  bankErpId!: string;
+  bankErpId?: string;
 
   @Transform(emptyToUndefined)
   @IsString()
