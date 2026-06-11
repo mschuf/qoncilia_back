@@ -13,6 +13,19 @@ import {
 type WorkbookSide = "system" | "bank";
 type SupportedNormalizedValue = string | number | null;
 
+type ResolvedCellValue = {
+  displayValue: string | null;
+  rawValue: unknown;
+};
+
+type ResolveColumnOptions = {
+  amountNet?: boolean;
+};
+
+// Cambiar a true si las columnas de banco tipo monto con formato E|F
+// deben interpretarse como neto: Haber - Debe.
+const USE_NET_AMOUNT_FOR_BANK_DEBIT_CREDIT_COLUMNS = false;
+
 type MatchEvaluation = {
   score: number;
   requiredPassed: boolean;
@@ -75,9 +88,11 @@ export function extractRowsFromWorkbook(
         normalized: {}
       };
 
-      const cell = resolveCellFromColumns(worksheet, column, rowNumber, dataType);
-      targetRow.values[mapping.fieldKey] = stringifyCellValue(cell);
-      targetRow.normalized[mapping.fieldKey] = normalizeByDataType(cell?.v ?? cell?.w ?? null, dataType);
+      const resolved = resolveValueFromColumns(worksheet, column, rowNumber, dataType, {
+        amountNet: side === "bank" && USE_NET_AMOUNT_FOR_BANK_DEBIT_CREDIT_COLUMNS
+      });
+      targetRow.values[mapping.fieldKey] = resolved.displayValue;
+      targetRow.normalized[mapping.fieldKey] = normalizeByDataType(resolved.rawValue, dataType);
       rows.set(rowId, targetRow);
     }
   }
@@ -330,13 +345,31 @@ function stringifyCellValue(cell?: XLSX.CellObject): string | null {
   return stringValue.length > 0 ? stringValue : null;
 }
 
-function resolveCellFromColumns(
+function resolveValueFromColumns(
   worksheet: XLSX.WorkSheet,
   columnExpression: string,
   rowNumber: number,
+  dataType: string,
+  options: ResolveColumnOptions = {}
+): ResolvedCellValue {
+  const columns = columnExpression.split("|").map((item) => item.trim()).filter(Boolean);
+  if (dataType === "amount" && columns.length === 2 && options.amountNet) {
+    return resolveDebitCreditAmountFromColumns(worksheet, columns, rowNumber);
+  }
+
+  const cell = resolveSingleCellFromColumns(worksheet, columns, rowNumber, dataType);
+  return {
+    displayValue: stringifyCellValue(cell),
+    rawValue: cell?.v ?? cell?.w ?? null
+  };
+}
+
+function resolveSingleCellFromColumns(
+  worksheet: XLSX.WorkSheet,
+  columns: string[],
+  rowNumber: number,
   dataType: string
 ): XLSX.CellObject | undefined {
-  const columns = columnExpression.split("|").map((item) => item.trim()).filter(Boolean);
   let fallbackCell: XLSX.CellObject | undefined;
   let zeroAmountCell: XLSX.CellObject | undefined;
 
@@ -363,6 +396,56 @@ function resolveCellFromColumns(
   }
 
   return zeroAmountCell ?? fallbackCell;
+}
+
+function resolveDebitCreditAmountFromColumns(
+  worksheet: XLSX.WorkSheet,
+  columns: string[],
+  rowNumber: number
+): ResolvedCellValue {
+  const [debitColumn, creditColumn] = columns;
+  const debit = readAmountCell(worksheet, debitColumn, rowNumber);
+  const credit = readAmountCell(worksheet, creditColumn, rowNumber);
+
+  if (debit.amount === null && credit.amount === null) {
+    const fallbackDisplay = debit.displayValue ?? credit.displayValue;
+    return {
+      displayValue: fallbackDisplay,
+      rawValue: fallbackDisplay
+    };
+  }
+
+  const debitAmount = debit.amount === null ? 0 : Math.abs(debit.amount);
+  const creditAmount = credit.amount === null ? 0 : Math.abs(credit.amount);
+  const netAmount = creditAmount - debitAmount;
+
+  return {
+    displayValue: stringifyNumberValue(netAmount),
+    rawValue: netAmount
+  };
+}
+
+function readAmountCell(
+  worksheet: XLSX.WorkSheet,
+  column: string,
+  rowNumber: number
+): { amount: number | null; displayValue: string | null } {
+  const cell = worksheet[`${column}${rowNumber}`];
+  const displayValue = stringifyCellValue(cell);
+  const amount = displayValue === null ? null : toNumber(cell?.v ?? cell?.w ?? displayValue);
+
+  return {
+    amount,
+    displayValue
+  };
+}
+
+function stringifyNumberValue(value: number): string {
+  if (Number.isInteger(value)) {
+    return String(value);
+  }
+
+  return String(Math.round(value * 1000000) / 1000000);
 }
 
 function normalizeByDataType(value: unknown, dataType: string): SupportedNormalizedValue {

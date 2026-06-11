@@ -196,7 +196,17 @@ export class ConciliationService {
 
     this.applyUserScopeToQuery(banksQuery, scope, "user", "bankCompany");
     const banks = await banksQuery
-      .select(["userBank.id", "userBank.name", "userBank.description", "userBank.branch", "userBank.active", "user.id", "user.usrLogin"])
+      .select([
+        "userBank.id",
+        "userBank.name",
+        "userBank.description",
+        "userBank.branch",
+        "userBank.active",
+        "user.id",
+        "user.usrLogin",
+        "bankCompany.id",
+        "bankCompany.name"
+      ])
       .orderBy("user.usrLogin", "ASC")
       .addOrderBy("userBank.name", "ASC")
       .addOrderBy("userBank.id", "ASC")
@@ -205,7 +215,9 @@ export class ConciliationService {
     if (banks.length === 0) return [];
 
     const bankIds = banks.map((b) => b.id);
-    const userIds = Array.from(new Set(banks.map((b) => b.user.id)));
+    const companyIds = Array.from(
+      new Set(banks.map((b) => b.company?.id).filter((id): id is number => Boolean(id)))
+    );
 
     // 2) Cuentas de esos bancos (query separada)
     const accounts = await this.companyBankAccountRepository
@@ -242,8 +254,8 @@ export class ConciliationService {
       .addOrderBy("mapping.sortOrder", "ASC")
       .getMany();
 
-    // 4) Disponibilidades de templates por usuario
-    const availabilityByUser = await this.loadAvailabilityByUser(userIds);
+    // 4) Disponibilidades de templates por empresa
+    const availabilityByCompany = await this.loadAvailabilityIdsByCompany(companyIds);
 
     // Ensamblar estructura
     const accountsByBank = new Map<number, CompanyBankAccount[]>();
@@ -264,33 +276,77 @@ export class ConciliationService {
     return banks.map((bank) => {
       bank.accounts = accountsByBank.get(bank.id) ?? [];
       bank.layouts = layoutsByBank.get(bank.id) ?? [];
-      return toPublicUserBankWithLayouts(bank, availabilityByUser.get(bank.user.id) ?? []);
+      return toPublicUserBankWithLayouts(
+        bank,
+        availabilityByCompany.get(bank.company?.id ?? 0) ?? []
+      );
     });
   }
 
-  private async loadAvailabilityByUser(userIds: number[]): Promise<Map<number, number[]>> {
+  private async loadAvailabilityIdsByCompany(
+    companyIds: number[]
+  ): Promise<Map<number, number[]>> {
     const result = new Map<number, number[]>();
-    const uniqueUserIds = Array.from(new Set(userIds.filter((id) => id > 0)));
-    if (uniqueUserIds.length === 0) return result;
+    const uniqueCompanyIds = Array.from(new Set(companyIds.filter((id) => id > 0)));
+    if (uniqueCompanyIds.length === 0) return result;
 
     const rows = await this.userTemplateAvailabilityRepository
       .createQueryBuilder("availability")
       .leftJoin("availability.user", "user")
+      .leftJoin("user.company", "company")
       .leftJoin("availability.templateLayout", "templateLayout")
-      .where("user.id IN (:...userIds)", { userIds: uniqueUserIds })
-      .select(["availability.id", "user.id", "templateLayout.id"])
-      .getMany();
+      .where("company.id IN (:...companyIds)", { companyIds: uniqueCompanyIds })
+      .select("company.id", "companyId")
+      .addSelect("templateLayout.id", "templateId")
+      .getRawMany<{ companyId: string | number; templateId: string | number }>();
 
     for (const row of rows) {
-      const userId = row.user?.id;
-      const templateId = row.templateLayout?.id;
-      if (!userId || !templateId) continue;
-      const list = result.get(userId) ?? [];
-      list.push(templateId);
-      result.set(userId, list);
+      const companyId = Number(row.companyId);
+      const templateId = Number(row.templateId);
+      if (!companyId || !templateId) continue;
+
+      const list = result.get(companyId) ?? [];
+      if (!list.includes(templateId)) {
+        list.push(templateId);
+      }
+      result.set(companyId, list);
     }
 
     return result;
+  }
+
+  private async loadAvailabilityTemplatesByCompany(
+    companyIds: number[]
+  ): Promise<Map<number, TemplateLayout[]>> {
+    const result = new Map<number, Map<number, TemplateLayout>>();
+    const uniqueCompanyIds = Array.from(new Set(companyIds.filter((id) => id > 0)));
+    if (uniqueCompanyIds.length === 0) return new Map();
+
+    const rows = await this.userTemplateAvailabilityRepository
+      .createQueryBuilder("availability")
+      .leftJoinAndSelect("availability.user", "user")
+      .leftJoinAndSelect("user.company", "company")
+      .leftJoinAndSelect("availability.templateLayout", "templateLayout")
+      .leftJoinAndSelect("templateLayout.mappings", "templateMapping")
+      .where("company.id IN (:...companyIds)", { companyIds: uniqueCompanyIds })
+      .getMany();
+
+    for (const row of rows) {
+      const companyId = row.user?.company?.id;
+      const template = row.templateLayout;
+      if (!companyId || !template) continue;
+
+      const templateById = result.get(companyId) ?? new Map<number, TemplateLayout>();
+      templateById.set(template.id, template);
+      result.set(companyId, templateById);
+    }
+
+    return new Map(
+      [...result.entries()].map(([companyId, templateById]) => [
+        companyId,
+        [...templateById.values()].sort((left, right) => left.name.localeCompare(right.name))
+      ])
+    );
   }
 
   async listTemplateLayouts(actor: AuthUser): Promise<PublicTemplateLayout[]> {
@@ -815,23 +871,39 @@ export class ConciliationService {
       }
     }
 
+    const companyUsers = await this.userRepository.find({
+      where: {
+        company: {
+          id: user.company.id
+        }
+      },
+      relations: {
+        company: true
+      }
+    });
+    const companyUserIds = Array.from(new Set(companyUsers.map((item) => item.id)));
+
     await this.userTemplateAvailabilityRepository.manager.transaction(async (manager) => {
       const repo = manager.getRepository(UserTemplateAvailability);
 
-      await repo
-        .createQueryBuilder()
-        .delete()
-        .from(UserTemplateAvailability)
-        .where("usuario_id = :userId", { userId: user.id })
-        .execute();
+      if (companyUserIds.length > 0) {
+        await repo
+          .createQueryBuilder()
+          .delete()
+          .from(UserTemplateAvailability)
+          .where("usuario_id IN (:...companyUserIds)", { companyUserIds })
+          .execute();
+      }
 
-      if (ids.length > 0) {
+      if (ids.length > 0 && companyUsers.length > 0) {
         await repo.save(
-          ids.map((templateId) =>
-            repo.create({
-              user,
-              templateLayout: { id: templateId } as TemplateLayout
-            })
+          companyUsers.flatMap((companyUser) =>
+            ids.map((templateId) =>
+              repo.create({
+                user: companyUser,
+                templateLayout: { id: templateId } as TemplateLayout
+              })
+            )
           )
         );
       }
@@ -859,6 +931,7 @@ export class ConciliationService {
       .createQueryBuilder("userBank")
       .leftJoinAndSelect("userBank.user", "user")
       .leftJoinAndSelect("user.company", "company")
+      .leftJoinAndSelect("userBank.company", "bankCompany")
       .leftJoinAndSelect("userBank.layouts", "layout")
       .leftJoinAndSelect("layout.mappings", "mapping")
       .leftJoinAndSelect("layout.templateLayout", "layoutTemplate");
@@ -866,34 +939,22 @@ export class ConciliationService {
     queryBuilder.andWhere("userBank.banco_origen_id IS NULL");
 
     if (actor.role === Role.ADMIN) {
-      queryBuilder.andWhere("user.id = :userId", { userId: actor.id });
+      queryBuilder.andWhere("bankCompany.id = :companyId", { companyId: actor.companyId });
     }
 
     const banks = await queryBuilder.getMany();
 
     if (banks.length === 0) return [];
 
-    const userIds = Array.from(new Set(banks.map((bank) => bank.user.id)));
-    const availabilityRows = await this.userTemplateAvailabilityRepository
-      .createQueryBuilder("availability")
-      .leftJoinAndSelect("availability.user", "availabilityUser")
-      .leftJoinAndSelect("availability.templateLayout", "templateLayout")
-      .leftJoinAndSelect("templateLayout.mappings", "templateMapping")
-      .where("availabilityUser.id IN (:...userIds)", { userIds })
-      .getMany();
-
-    const availabilityByUser = new Map<number, TemplateLayout[]>();
-    for (const row of availabilityRows) {
-      if (!row.user?.id || !row.templateLayout) continue;
-      const list = availabilityByUser.get(row.user.id) ?? [];
-      list.push(row.templateLayout);
-      availabilityByUser.set(row.user.id, list);
-    }
+    const companyIds = Array.from(
+      new Set(banks.map((bank) => bank.company?.id).filter((id): id is number => Boolean(id)))
+    );
+    const availabilityByCompany = await this.loadAvailabilityTemplatesByCompany(companyIds);
 
     return banks
       .sort((left, right) => {
-        const byCompany = (left.user.company?.name ?? "").localeCompare(
-          right.user.company?.name ?? ""
+        const byCompany = (left.company?.name ?? left.user.company?.name ?? "").localeCompare(
+          right.company?.name ?? right.user.company?.name ?? ""
         );
         if (byCompany !== 0) return byCompany;
         const byUser = left.user.usrLogin.localeCompare(right.user.usrLogin);
@@ -903,11 +964,11 @@ export class ConciliationService {
         return left.id - right.id;
       })
       .map((bank) => {
-        const templates = availabilityByUser.get(bank.user.id) ?? [];
+        const templates = availabilityByCompany.get(bank.company?.id ?? 0) ?? [];
         return {
           ...toPublicUserBank(bank),
-          companyId: bank.user.company?.id ?? 0,
-          companyName: bank.user.company?.name ?? "",
+          companyId: bank.company?.id ?? bank.user.company?.id ?? 0,
+          companyName: bank.company?.name ?? bank.user.company?.name ?? "",
           layouts: sortLayouts(bank.layouts ?? []).map((layout) =>
             toPublicLayout(layout, bank.id)
           ),
@@ -929,6 +990,7 @@ export class ConciliationService {
     const bank = await this.userBankRepository.findOne({
       where: { id: bankId },
       relations: {
+        company: true,
         user: {
           company: true
         }
@@ -941,23 +1003,19 @@ export class ConciliationService {
 
     if (
       actor.role === Role.ADMIN &&
-      bank.user.id !== actor.id
+      bank.company.id !== actor.companyId
     ) {
       throw new ForbiddenException(
-        "No podes aplicar plantillas a bancos de otro usuario."
+        "No podes aplicar plantillas a bancos de otra empresa."
       );
     }
 
-    const availability = await this.userTemplateAvailabilityRepository.findOne({
-      where: {
-        user: { id: bank.user.id },
-        templateLayout: { id: templateLayoutId }
-      }
-    });
+    const availabilityByCompany = await this.loadAvailabilityIdsByCompany([bank.company.id]);
+    const availableTemplateIds = availabilityByCompany.get(bank.company.id) ?? [];
 
-    if (!availability) {
+    if (!availableTemplateIds.includes(templateLayoutId)) {
       throw new ForbiddenException(
-        "La plantilla base no esta habilitada para tu usuario. Pedile al super admin que la habilite."
+        "La plantilla base no esta habilitada para esta empresa. Pedile al super admin que la habilite."
       );
     }
 
@@ -1087,6 +1145,7 @@ export class ConciliationService {
     const bank = await this.userBankRepository.findOne({
       where: { id: bankId },
       relations: {
+        company: true,
         user: { company: true },
         layouts: true
       }
@@ -1098,10 +1157,10 @@ export class ConciliationService {
 
     if (
       actor.role === Role.ADMIN &&
-      bank.user.id !== actor.id
+      bank.company.id !== actor.companyId
     ) {
       throw new ForbiddenException(
-        "No podes activar plantillas en bancos de otro usuario."
+        "No podes activar plantillas en bancos de otra empresa."
       );
     }
 
@@ -2971,6 +3030,7 @@ export class ConciliationService {
         }
       },
       relations: {
+        company: true,
         user: {
           company: true
         },
@@ -2996,8 +3056,8 @@ export class ConciliationService {
     bankId: number
   ): Promise<PublicUserBankWithLayouts> {
     const bank = await this.requireUserBank(userId, bankId);
-    const availability = await this.loadAvailabilityByUser([bank.user.id]);
-    return toPublicUserBankWithLayouts(bank, availability.get(bank.user.id) ?? []);
+    const availability = await this.loadAvailabilityIdsByCompany([bank.company.id]);
+    return toPublicUserBankWithLayouts(bank, availability.get(bank.company.id) ?? []);
   }
 
 }
