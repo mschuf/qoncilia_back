@@ -43,6 +43,10 @@ BEGIN
     RAISE EXCEPTION 'No existe ningun usuario en public.usuarios para aplicar el seed.';
   END IF;
 
+  -- Modo de importe por plantilla (idempotente; tambien lo crea 30_*.sql).
+  ALTER TABLE public.plantillas_conciliacion
+    ADD COLUMN IF NOT EXISTS plantilla_monto_modo VARCHAR(24) NULL;
+
   INSERT INTO public.bancos (
     empresa_id,
     usuario_id,
@@ -174,18 +178,37 @@ BEGIN
     banco_tipo_dato
   )
   VALUES
-    (plantilla_familiar_id, 'fecha', 'Fecha', 1, TRUE, TRUE, 'date_equals', 2, NULL, 'SAP', 'B', 2, 5000, 'date', 'Familiar', 'A', 2, 5000, 'date'),
-    (plantilla_familiar_id, 'descripcion', 'Descripcion', 2, TRUE, FALSE, 'contains', 1, NULL, 'SAP', 'H', 2, 5000, 'text', 'Familiar', 'D', 2, 5000, 'text'),
-    (plantilla_familiar_id, 'monto', 'Monto', 3, TRUE, TRUE, 'numeric_equals', 4, 0, 'SAP', 'G', 2, 5000, 'amount', 'Familiar', 'E|F', 2, 5000, 'amount'),
-    (plantilla_familiar_id, 'referencia', 'Referencia', 4, TRUE, FALSE, 'contains', 2, NULL, 'SAP', 'F', 2, 5000, 'text', 'Familiar', 'C', 2, 5000, 'text'),
-    (plantilla_sudameris_id, 'fecha', 'Fecha', 1, TRUE, TRUE, 'date_equals', 2, NULL, 'SAP', 'B', 2, 5000, 'date', 'Sudameris', 'A', 2, 5000, 'date'),
-    (plantilla_sudameris_id, 'descripcion', 'Descripcion', 2, TRUE, FALSE, 'contains', 1, NULL, 'SAP', 'H', 2, 5000, 'text', 'Sudameris', 'D', 2, 5000, 'text'),
-    (plantilla_sudameris_id, 'monto', 'Monto', 3, TRUE, TRUE, 'numeric_equals', 4, 0, 'SAP', 'G', 2, 5000, 'amount', 'Sudameris', 'E|F', 2, 5000, 'amount'),
-    (plantilla_sudameris_id, 'referencia', 'Referencia', 4, TRUE, FALSE, 'contains', 2, NULL, 'SAP', 'F', 2, 5000, 'text', 'Sudameris', 'C', 2, 5000, 'text'),
+    -- Familiar: Debito=E, Credito=F (verificado en el Excel). Datos desde fila 13 (encabezado fila 12).
+    (plantilla_familiar_id, 'fecha', 'Fecha', 1, TRUE, TRUE, 'date_equals', 2, NULL, 'SAP', 'B', 2, 5000, 'date', 'Familiar', 'A', 13, 5000, 'date'),
+    (plantilla_familiar_id, 'descripcion', 'Descripcion', 2, TRUE, FALSE, 'contains', 1, NULL, 'SAP', 'H', 2, 5000, 'text', 'Familiar', 'D', 13, 5000, 'text'),
+    (plantilla_familiar_id, 'monto', 'Monto', 3, TRUE, TRUE, 'numeric_equals', 4, 0, 'SAP', 'G', 2, 5000, 'amount', 'Familiar', 'E|F', 13, 5000, 'amount'),
+    (plantilla_familiar_id, 'referencia', 'Referencia', 4, TRUE, FALSE, 'contains', 2, NULL, 'SAP', 'F', 2, 5000, 'text', 'Familiar', 'C', 13, 5000, 'text'),
+    -- Sudameris: importe UNICO con signo en col E (negativo=debito, positivo=credito); F=Saldo (NO es credito).
+    -- Datos desde fila 14 (encabezado fila 13). Descripcion=C, Referencia=D. Modo de importe = signed (abajo).
+    (plantilla_sudameris_id, 'fecha', 'Fecha', 1, TRUE, TRUE, 'date_equals', 2, NULL, 'SAP', 'B', 2, 5000, 'date', 'Sudameris', 'A', 14, 5000, 'date'),
+    (plantilla_sudameris_id, 'descripcion', 'Descripcion', 2, TRUE, FALSE, 'contains', 1, NULL, 'SAP', 'H', 2, 5000, 'text', 'Sudameris', 'C', 14, 5000, 'text'),
+    (plantilla_sudameris_id, 'monto', 'Monto', 3, TRUE, TRUE, 'numeric_equals', 4, 0, 'SAP', 'G', 2, 5000, 'amount', 'Sudameris', 'E', 14, 5000, 'amount'),
+    (plantilla_sudameris_id, 'referencia', 'Referencia', 4, TRUE, FALSE, 'contains', 2, NULL, 'SAP', 'F', 2, 5000, 'text', 'Sudameris', 'D', 14, 5000, 'text'),
     (plantilla_continental_id, 'fecha', 'Fecha', 1, TRUE, TRUE, 'date_equals', 2, NULL, 'SAP', 'B', 2, 5000, 'date', 'Continental', 'A', 2, 5000, 'date'),
     (plantilla_continental_id, 'descripcion', 'Descripcion', 2, TRUE, FALSE, 'contains', 1, NULL, 'SAP', 'H', 2, 5000, 'text', 'Continental', 'D', 2, 5000, 'text'),
     (plantilla_continental_id, 'monto', 'Monto', 3, TRUE, TRUE, 'numeric_equals', 4, 0, 'SAP', 'G', 2, 5000, 'amount', 'Continental', 'E|F', 2, 5000, 'amount'),
-    (plantilla_continental_id, 'referencia', 'Referencia', 4, TRUE, FALSE, 'contains', 2, NULL, 'SAP', 'F', 2, 5000, 'text', 'Continental', 'C', 2, 5000, 'text');
+    (plantilla_continental_id, 'referencia', 'Referencia', 4, TRUE, FALSE, 'contains', 2, NULL, 'SAP', 'F', 2, 5000, 'text', 'Continental', 'C', 2, 5000, 'text'),
+    -- Debito/Credito separados (para "Visualizar" del extracto y BankPages).
+    -- Conti: DEBE=E/HABER=F (fila 2+). Familiar: Debito=E/Credito=F (fila 13+), ambos verificados.
+    -- Sudameris NO va aca: usa importe UNICO con signo (modo signed, ver arriba), no debito/credito.
+    (plantilla_familiar_id,    'debito',  'Debito',  91, TRUE, FALSE, 'numeric_equals', 1, 0, NULL, NULL, NULL, NULL, 'amount', 'Familiar',    'E', 13, 5000, 'amount'),
+    (plantilla_familiar_id,    'credito', 'Credito', 92, TRUE, FALSE, 'numeric_equals', 1, 0, NULL, NULL, NULL, NULL, 'amount', 'Familiar',    'F', 13, 5000, 'amount'),
+    (plantilla_continental_id, 'debito',  'Debito',  91, TRUE, FALSE, 'numeric_equals', 1, 0, NULL, NULL, NULL, NULL, 'amount', 'Continental', 'E', 2, 5000, 'amount'),
+    (plantilla_continental_id, 'credito', 'Credito', 92, TRUE, FALSE, 'numeric_equals', 1, 0, NULL, NULL, NULL, NULL, 'amount', 'Continental', 'F', 2, 5000, 'amount');
+
+  UPDATE public.plantillas_conciliacion
+  SET plantilla_monto_modo = 'debit_credit'
+  WHERE plantilla_id IN (plantilla_familiar_id, plantilla_continental_id);
+
+  -- Sudameris: importe unico con signo (col E) => modo signed (no debit_credit).
+  UPDATE public.plantillas_conciliacion
+  SET plantilla_monto_modo = 'signed'
+  WHERE plantilla_id = plantilla_sudameris_id;
 
   RAISE NOTICE 'Seed Paraguay aplicado sobre usr_id=% usr_login=%', target_user_id, target_user_login;
 END;

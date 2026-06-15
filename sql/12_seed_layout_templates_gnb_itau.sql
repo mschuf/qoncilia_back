@@ -44,6 +44,10 @@ BEGIN
     RAISE EXCEPTION 'No existe ningun usuario en public.usuarios para aplicar el seed.';
   END IF;
 
+  -- Modo de importe por plantilla (idempotente; tambien lo crea 30_*.sql).
+  ALTER TABLE public.plantillas_conciliacion
+    ADD COLUMN IF NOT EXISTS plantilla_monto_modo VARCHAR(24) NULL;
+
   INSERT INTO public.bancos (
     empresa_id,
     usuario_id,
@@ -195,7 +199,21 @@ BEGIN
     (plantilla_itau_id, 'fecha', 'Fecha', 1, TRUE, TRUE, 'date_equals', 2, NULL, 'SAP', 'B', 2, 5000, 'date', 'Itau CC', 'A', 10, 5000, 'date'),
     (plantilla_itau_id, 'descripcion', 'Descripcion', 2, TRUE, FALSE, 'contains', 2, NULL, 'SAP', 'H', 2, 5000, 'text', 'Itau CC', 'B', 10, 5000, 'text'),
     (plantilla_itau_id, 'monto', 'Monto', 3, TRUE, TRUE, 'numeric_equals', 4, 0, 'SAP', 'G', 2, 5000, 'amount', 'Itau CC', 'E|F', 10, 5000, 'amount'),
-    (plantilla_itau_id, 'referencia', 'Referencia', 4, TRUE, FALSE, 'contains', 2, NULL, 'SAP', 'F', 2, 5000, 'text', 'Itau CC', 'C', 10, 5000, 'text');
+    (plantilla_itau_id, 'referencia', 'Referencia', 4, TRUE, FALSE, 'contains', 2, NULL, 'SAP', 'F', 2, 5000, 'text', 'Itau CC', 'C', 10, 5000, 'text'),
+    -- Debito/Credito separados (para "Visualizar" del extracto y BankPages).
+    -- GNB: Imp.Debito=H, Imp.Credito=I (datos desde fila 15). Itau: Debitos=D, Creditos=E (fila 10).
+    (plantilla_gnb_id,     'debito',  'Debito',  91, TRUE, FALSE, 'numeric_equals', 1, 0, NULL, NULL, NULL, NULL, 'amount', 'GNB',     'H', 15, 5000, 'amount'),
+    (plantilla_gnb_id,     'credito', 'Credito', 92, TRUE, FALSE, 'numeric_equals', 1, 0, NULL, NULL, NULL, NULL, 'amount', 'GNB',     'I', 15, 5000, 'amount'),
+    (plantilla_gnb_443_id, 'debito',  'Debito',  91, TRUE, FALSE, 'numeric_equals', 1, 0, NULL, NULL, NULL, NULL, 'amount', 'GNB-443', 'H', 15, 5000, 'amount'),
+    (plantilla_gnb_443_id, 'credito', 'Credito', 92, TRUE, FALSE, 'numeric_equals', 1, 0, NULL, NULL, NULL, NULL, 'amount', 'GNB-443', 'I', 15, 5000, 'amount'),
+    (plantilla_gnb3_id,    'debito',  'Debito',  91, TRUE, FALSE, 'numeric_equals', 1, 0, NULL, NULL, NULL, NULL, 'amount', 'GNB3',    'H', 15, 5000, 'amount'),
+    (plantilla_gnb3_id,    'credito', 'Credito', 92, TRUE, FALSE, 'numeric_equals', 1, 0, NULL, NULL, NULL, NULL, 'amount', 'GNB3',    'I', 15, 5000, 'amount'),
+    (plantilla_itau_id,    'debito',  'Debito',  91, TRUE, FALSE, 'numeric_equals', 1, 0, NULL, NULL, NULL, NULL, 'amount', 'Itau CC', 'D', 10, 5000, 'amount'),
+    (plantilla_itau_id,    'credito', 'Credito', 92, TRUE, FALSE, 'numeric_equals', 1, 0, NULL, NULL, NULL, NULL, 'amount', 'Itau CC', 'E', 10, 5000, 'amount');
+
+  UPDATE public.plantillas_conciliacion
+  SET plantilla_monto_modo = 'debit_credit'
+  WHERE plantilla_id IN (plantilla_gnb_id, plantilla_gnb_443_id, plantilla_gnb3_id, plantilla_itau_id);
 
   RAISE NOTICE 'Seed GNB/Itau aplicado sobre usr_id=% usr_login=%', target_user_id, target_user_login;
 END;

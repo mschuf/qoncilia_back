@@ -2,6 +2,7 @@ import { Type } from "class-transformer";
 import {
   IsArray,
   IsBoolean,
+  IsIn,
   IsNotEmpty,
   IsNumber,
   IsOptional,
@@ -12,6 +13,7 @@ import {
 } from "class-validator";
 import { Transform } from "class-transformer";
 import { LayoutMappingDto } from "./layout-mapping.dto";
+import { AmountMode, amountModes } from "../interfaces/conciliation.interfaces";
 
 const emptyToUndefined = ({ value }: { value: unknown }) => {
   if (typeof value === "string" && value.trim() === "") {
@@ -68,6 +70,11 @@ export class CreateLayoutDto {
   @IsOptional()
   @IsBoolean()
   active?: boolean;
+
+  @Transform(emptyToUndefined)
+  @IsOptional()
+  @IsIn(amountModes)
+  amountMode?: AmountMode | null;
 
   @IsArray()
   @ValidateNested({ each: true })

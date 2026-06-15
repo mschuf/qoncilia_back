@@ -32,6 +32,9 @@ export class TemplateLayout {
   @Column({ name: "plantilla_base_umbral_auto_match", type: "double precision", default: 1 })
   autoMatchThreshold!: number;
 
+  @Column({ name: "plantilla_base_monto_modo", type: "varchar", length: 24, nullable: true })
+  amountMode!: string | null;
+
   @Column({ name: "plantilla_base_activa", type: "boolean", default: true })
   active!: boolean;
 

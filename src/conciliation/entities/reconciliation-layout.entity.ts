@@ -45,6 +45,9 @@ export class ReconciliationLayout {
   @Column({ name: "plantilla_umbral_auto_match", type: "double precision", default: 1 })
   autoMatchThreshold!: number;
 
+  @Column({ name: "plantilla_monto_modo", type: "varchar", length: 24, nullable: true })
+  amountMode!: string | null;
+
   @Column({ name: "plantilla_activa", type: "boolean", default: false })
   active!: boolean;
 

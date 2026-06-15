@@ -8,6 +8,17 @@ export type CompareOperator =
 
 export type LayoutDataType = "text" | "number" | "amount" | "date";
 
+// Modo de interpretacion del importe del extracto bancario al generar BankPages.
+// null = autodeteccion (columnas separadas si existen, si no signo del monto).
+export const amountModes = [
+  "debit_credit",
+  "signed",
+  "single_credit",
+  "single_debit"
+] as const;
+
+export type AmountMode = (typeof amountModes)[number];
+
 export interface PublicCompanyBankAccountSummary {
   id: number;
   bankId: number;
@@ -64,6 +75,7 @@ export interface PublicLayout {
   bankLabel: string;
   autoMatchThreshold: number;
   active: boolean;
+  amountMode: AmountMode | null;
   mappings: PublicLayoutMapping[];
 }
 
@@ -77,6 +89,7 @@ export interface PublicTemplateLayout {
   bankLabel: string;
   autoMatchThreshold: number;
   active: boolean;
+  amountMode: AmountMode | null;
   mappings: PublicLayoutMapping[];
 }
 

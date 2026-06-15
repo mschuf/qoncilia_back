@@ -8,6 +8,8 @@ import { ReconciliationLayout } from "../entities/reconciliation-layout.entity";
 import { TemplateLayoutMapping } from "../entities/template-layout-mapping.entity";
 import { TemplateLayout } from "../entities/template-layout.entity";
 import {
+  AmountMode,
+  amountModes,
   CompareOperator,
   ConciliationPreviewRow,
   PublicBankStatementDetail,
@@ -83,6 +85,7 @@ export function toPublicLayout(
     bankLabel: entity.bankLabel,
     autoMatchThreshold: entity.autoMatchThreshold,
     active: entity.active,
+    amountMode: normalizeAmountMode(entity.amountMode),
     mappings: sortMappings(entity.mappings ?? []).map((mapping) =>
       toPublicLayoutMapping(mapping)
     )
@@ -100,6 +103,7 @@ export function toPublicTemplateLayout(entity: TemplateLayout): PublicTemplateLa
     bankLabel: entity.bankLabel,
     autoMatchThreshold: entity.autoMatchThreshold,
     active: entity.active,
+    amountMode: normalizeAmountMode(entity.amountMode),
     mappings: sortTemplateMappings(entity.mappings ?? []).map((mapping) =>
       toPublicLayoutMapping(mapping)
     )
@@ -130,6 +134,12 @@ export function toPublicUserBankDeletionAccount(
     paymentAccountNumber: entity.paymentAccountNumber,
     active: entity.active
   };
+}
+
+export function normalizeAmountMode(value: string | null | undefined): AmountMode | null {
+  return value && (amountModes as readonly string[]).includes(value)
+    ? (value as AmountMode)
+    : null;
 }
 
 export function toPublicLayoutMapping(

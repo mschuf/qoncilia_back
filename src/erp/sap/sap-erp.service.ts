@@ -100,6 +100,16 @@ type SapB1DateMatchResult = {
   differenceDays: number | null
 }
 
+// Roles de columna para el matching. amount = columna unica con signo (compat);
+// debit/credit = columnas separadas (preferido).
+type SapB1MatchColumns = {
+  reference: string | null
+  date: string | null
+  amount: string | null
+  debit: string | null
+  credit: string | null
+}
+
 const SAP_B1_DATE_TOLERANCE_DAYS = 7
 
 @Injectable()
@@ -353,7 +363,11 @@ export class SapErpService {
       .filter((row) => !excludedBankRowIds.has(row.rowId))
     const systemRows = this.convertSapB1TableToPreviewRows(payload.system)
       .filter((row) => !excludedSystemRowIds.has(row.rowId))
-    const matches = this.calculateSapB1SmartMatches(systemRows, bankRows, columns)
+    const matchColumns = this.classifySapB1MatchColumns(columns, [
+      ...payload.bank.columns,
+      ...payload.system.columns
+    ])
+    const matches = this.calculateSapB1SmartMatches(systemRows, bankRows, matchColumns)
     const matchedBankRowIds = new Set(matches.map((match) => match.bankRow.rowId))
     const matchedSystemRowIds = new Set(matches.map((match) => match.systemRow.rowId))
     const unmatchedBankRows = bankRows.filter((row) => !matchedBankRowIds.has(row.rowId))
@@ -518,22 +532,39 @@ export class SapErpService {
     }
 
     if (uniqueColumns.length > 0) {
-      return uniqueColumns.slice(0, 3)
+      return uniqueColumns.slice(0, 4)
     }
 
-    const preferredColumns = ["referencia", "fecha", "monto"]
-      .map((key) => bankColumnsByKey.get(key) ?? systemColumnsByKey.get(key) ?? null)
-      .filter((column): column is string => Boolean(column))
+    const lookup = (...keys: string[]): string | null => {
+      for (const key of keys) {
+        const found = bankColumnsByKey.get(key) ?? systemColumnsByKey.get(key)
+        if (found) return found
+      }
+      return null
+    }
+    const reference = lookup("referencia", "reference", "ref")
+    const fecha = lookup("fecha", "date")
+    const debito = lookup("debito", "debitos", "debe", "debit", "importedebito")
+    const credito = lookup("credito", "creditos", "haber", "credit", "importecredito")
+    const monto = lookup("monto", "importe", "amount")
 
-    if (preferredColumns.length === 3) {
-      return preferredColumns
+    const preferredColumns: Array<string | null> = [reference, fecha]
+    if (debito || credito) {
+      preferredColumns.push(debito, credito)
+    } else if (monto) {
+      preferredColumns.push(monto)
+    }
+    const cleanedPreferred = preferredColumns.filter((column): column is string => Boolean(column))
+
+    if (cleanedPreferred.length >= 3) {
+      return cleanedPreferred
     }
 
     const commonColumns = payload.bank.columns.filter((column) =>
       systemColumnsByKey.has(this.normalizeLookupKey(column))
     )
 
-    return (commonColumns.length > 0 ? commonColumns : payload.bank.columns).slice(0, 3)
+    return (commonColumns.length > 0 ? commonColumns : payload.bank.columns).slice(0, 4)
   }
 
   private convertSapB1TableToPreviewRows(
@@ -562,38 +593,56 @@ export class SapErpService {
   private calculateSapB1SmartMatches(
     systemRows: ConciliationPreviewRow[],
     bankRows: ConciliationPreviewRow[],
-    fieldKeys: string[]
+    columns: SapB1MatchColumns
   ): PublicSapB1SmartMatch[] {
-    const keys = fieldKeys.slice(0, 3)
-    if (keys.length === 0) return []
+    const hasAmount = Boolean(columns.amount || columns.debit || columns.credit)
+    if (!columns.reference && !columns.date && !hasAmount) return []
 
-    const column1 = keys[0]
-    const column2 = keys[1]
-    const column3 = keys[2]
     const matches: PublicSapB1SmartMatch[] = []
     const usedBankRows = new Set<string>()
 
     for (const systemRow of systemRows) {
+      const systemNet = this.sapB1RowNet(systemRow, columns, "system")
       const candidates = bankRows
         .filter((bankRow) => !usedBankRows.has(bankRow.rowId))
         .map((bankRow) => {
-          const referenceMatched = this.sapB1ExactMatch(
-            this.readSapB1PreviewRowValue(systemRow, column1),
-            this.readSapB1PreviewRowValue(bankRow, column1)
-          )
-          const dateResult = column2
+          const referenceMatched = columns.reference
+            ? this.sapB1ExactMatch(
+                this.readSapB1PreviewRowValue(systemRow, columns.reference),
+                this.readSapB1PreviewRowValue(bankRow, columns.reference)
+              )
+            : false
+          const dateResult = columns.date
             ? this.sapB1DateMatchWithinDays(
-                this.readSapB1PreviewRowRawValue(systemRow, column2),
-                this.readSapB1PreviewRowRawValue(bankRow, column2),
+                this.readSapB1PreviewRowRawValue(systemRow, columns.date),
+                this.readSapB1PreviewRowRawValue(bankRow, columns.date),
                 SAP_B1_DATE_TOLERANCE_DAYS
               )
             : { matched: false, differenceDays: null }
-          const amountMatched = column3
-            ? this.sapB1AmountMatch(
-                this.readSapB1PreviewRowRawValue(systemRow, column3),
-                this.readSapB1PreviewRowRawValue(bankRow, column3)
-              )
-            : false
+          const bankNet = this.sapB1RowNet(bankRow, columns, "bank")
+          const amountMatched =
+            systemNet !== null &&
+            bankNet !== null &&
+            Math.abs(systemNet) > 0.0001 &&
+            Math.abs(systemNet - bankNet) < 0.0001
+
+          // Referencia coincide pero netos de signo opuesto y no cero =>
+          // movimientos contrarios (ingreso vs egreso): no es match.
+          // Solo aplica con la convencion de signo (ambas columnas Debito y
+          // Credito); con columna unica no asumimos el signo.
+          if (
+            columns.debit &&
+            columns.credit &&
+            referenceMatched &&
+            systemNet !== null &&
+            bankNet !== null &&
+            Math.abs(systemNet) > 0.0001 &&
+            Math.abs(bankNet) > 0.0001 &&
+            Math.sign(systemNet) !== Math.sign(bankNet)
+          ) {
+            return null
+          }
+
           const matchReason: PublicSapB1SmartMatch["matchReason"] | null = referenceMatched
             ? "reference"
             : dateResult.matched && amountMatched
@@ -643,6 +692,86 @@ export class SapErpService {
     return matches
   }
 
+  // Clasifica las columnas de comparacion en roles (referencia/fecha/importe).
+  // `availableColumns` (todas las columnas disponibles) permite completar el par
+  // Debito/Credito si la lista de comparacion truncada dejo solo uno.
+  private classifySapB1MatchColumns(
+    columns: string[],
+    availableColumns: string[] = columns
+  ): SapB1MatchColumns {
+    const DEBIT_KEYS = ["debito", "debitos", "debe", "debit", "importedebito"]
+    const CREDIT_KEYS = ["credito", "creditos", "haber", "credit", "importecredito"]
+    const makeFinder = (cols: string[]) => {
+      const byKey = new Map(cols.map((column) => [this.normalizeLookupKey(column), column]))
+      return (...keys: string[]): string | null => {
+        for (const key of keys) {
+          const found = byKey.get(key)
+          if (found) return found
+        }
+        return null
+      }
+    }
+    const find = makeFinder(columns)
+    const findAvailable = makeFinder(availableColumns)
+
+    const reference = find("referencia", "reference", "ref")
+    const date = find("fecha", "date")
+    let debit = find(...DEBIT_KEYS)
+    let credit = find(...CREDIT_KEYS)
+    let amount = find("monto", "importe", "amount")
+
+    // Si solo sobrevivio uno del par Debito/Credito, completar con el otro desde
+    // el set completo de columnas (la convencion de signo necesita ambos).
+    if (debit && !credit) credit = findAvailable(...CREDIT_KEYS)
+    if (credit && !debit) debit = findAvailable(...DEBIT_KEYS)
+
+    // Compat: si no hay columna de importe reconocida, usar la primera columna
+    // de comparacion que no sea referencia ni fecha.
+    if (!amount && !debit && !credit) {
+      const used = new Set(
+        [reference, date]
+          .filter((column): column is string => Boolean(column))
+          .map((column) => this.normalizeLookupKey(column))
+      )
+      amount = columns.find((column) => !used.has(this.normalizeLookupKey(column))) ?? null
+    }
+
+    return { reference, date, amount, debit, credit }
+  }
+
+  // Importe neto con signo de una fila. La convencion de signo (que invierte por
+  // lado para que ingreso y egreso coincidan entre banco y sistema) SOLO aplica
+  // cuando estan AMBAS columnas Debito y Credito:
+  //   banco:   ingreso = Credito (+), egreso = Debito (-)
+  //   sistema: ingreso = Debito  (+), egreso = Credito (-)
+  private sapB1RowNet(
+    row: ConciliationPreviewRow,
+    columns: SapB1MatchColumns,
+    side: "bank" | "system"
+  ): number | null {
+    if (columns.debit && columns.credit) {
+      const debit = this.parseSapB1AmountValue(
+        this.readSapB1PreviewRowRawValue(row, columns.debit)
+      )
+      const credit = this.parseSapB1AmountValue(
+        this.readSapB1PreviewRowRawValue(row, columns.credit)
+      )
+      if (debit === null && credit === null) return null
+      const debitValue = Math.abs(debit ?? 0)
+      const creditValue = Math.abs(credit ?? 0)
+      return side === "bank" ? creditValue - debitValue : debitValue - creditValue
+    }
+
+    // Columna unica (importe con signo, o solo debito, o solo credito): se toma
+    // tal cual, sin invertir por lado (no asumimos convencion de signo).
+    const singleColumn = columns.amount ?? columns.debit ?? columns.credit
+    if (singleColumn) {
+      return this.parseSapB1AmountValue(this.readSapB1PreviewRowRawValue(row, singleColumn))
+    }
+
+    return null
+  }
+
   private readSapB1PreviewRowValue(
     row: ConciliationPreviewRow,
     fieldKey: string | undefined
@@ -679,19 +808,6 @@ export class SapErpService {
     const normalizedRight = this.normalizeSapB1ComparableText(right)
     if (!normalizedLeft || !normalizedRight) return false
     return normalizedLeft === normalizedRight
-  }
-
-  private sapB1AmountMatch(
-    left: SapB1ComparableValue,
-    right: SapB1ComparableValue
-  ): boolean {
-    const leftAmount = this.parseSapB1AmountValue(left)
-    const rightAmount = this.parseSapB1AmountValue(right)
-    if (leftAmount === null || rightAmount === null) {
-      return this.sapB1ExactMatch(left, right)
-    }
-
-    return Math.abs(leftAmount - rightAmount) < 0.0001
   }
 
   private parseSapB1AmountValue(value: SapB1ComparableValue): number | null {
@@ -1789,10 +1905,17 @@ export class SapErpService {
       context
     )
 
-    console.log("[SAP_B1][ExternalReconciliation][REQUEST]", {
-      endpoint: context.endpoint,
-      payload: context.sapPayload
-    })
+    console.log(
+      "[SAP_B1][ExternalReconciliation][REQUEST]",
+      JSON.stringify(
+        {
+          endpoint: context.endpoint,
+          payload: context.sapPayload
+        },
+        null,
+        2
+      )
+    )
     this.logger.log(this.stringifyLogPayload(logPayload))
     await this.persistSapExternalReconciliationLog(logPayload)
   }
@@ -1850,13 +1973,20 @@ export class SapErpService {
       }
     )
 
-    console.log("[SAP_B1][ExternalReconciliation][ERROR]", {
-      endpoint: context.endpoint,
-      statusCode: errorPayload.statusCode,
-      message: errorPayload.message,
-      responsePayload: errorPayload.responsePayload,
-      requestPayload: context.sapPayload
-    })
+    console.log(
+      "[SAP_B1][ExternalReconciliation][ERROR]",
+      JSON.stringify(
+        {
+          endpoint: context.endpoint,
+          statusCode: errorPayload.statusCode,
+          message: errorPayload.message,
+          responsePayload: errorPayload.responsePayload,
+          requestPayload: context.sapPayload
+        },
+        null,
+        2
+      )
+    )
     this.logger.error(this.stringifyLogPayload(logPayload))
     await this.persistSapExternalReconciliationLog(logPayload)
   }

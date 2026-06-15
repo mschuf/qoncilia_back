@@ -1,12 +1,14 @@
 import { Transform } from "class-transformer";
 import {
   IsBoolean,
+  IsIn,
   IsNumber,
   IsOptional,
   IsString,
   MaxLength,
   Min
 } from "class-validator";
+import { AmountMode, amountModes } from "../interfaces/conciliation.interfaces";
 
 const emptyToUndefined = ({ value }: { value: unknown }) => {
   if (typeof value === "string" && value.trim() === "") {
@@ -64,4 +66,9 @@ export class ApplyTemplateLayoutDto {
   @IsOptional()
   @IsBoolean()
   active?: boolean;
+
+  @Transform(emptyToUndefined)
+  @IsOptional()
+  @IsIn(amountModes)
+  amountMode?: AmountMode | null;
 }

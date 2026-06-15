@@ -479,6 +479,7 @@ export class ConciliationService {
           systemLabel: normalizeRequired(payload.systemLabel ?? "Sistema", "systemLabel"),
           bankLabel: normalizeRequired(payload.bankLabel ?? "Banco", "bankLabel"),
           autoMatchThreshold: normalizeThreshold(payload.autoMatchThreshold),
+          amountMode: payload.amountMode ?? null,
           active: payload.active ?? true
         })
       );
@@ -562,6 +563,7 @@ export class ConciliationService {
       if (payload.autoMatchThreshold !== undefined) {
         template.autoMatchThreshold = normalizeThreshold(payload.autoMatchThreshold);
       }
+      if (payload.amountMode !== undefined) template.amountMode = payload.amountMode;
       if (payload.active !== undefined) template.active = payload.active;
 
       await templateRepository.save(template);
@@ -681,6 +683,7 @@ export class ConciliationService {
           systemLabel: normalizeRequired(payload.systemLabel ?? "Sistema", "systemLabel"),
           bankLabel: normalizeRequired(payload.bankLabel ?? userBank.bankName, "bankLabel"),
           autoMatchThreshold: normalizeThreshold(payload.autoMatchThreshold),
+          amountMode: payload.amountMode ?? null,
           active: shouldActivate
         })
       );
@@ -791,6 +794,7 @@ export class ConciliationService {
           autoMatchThreshold: normalizeThreshold(
             payload.autoMatchThreshold ?? template.autoMatchThreshold
           ),
+          amountMode: payload.amountMode ?? template.amountMode ?? null,
           active: shouldActivate
         })
       );
@@ -1088,6 +1092,7 @@ export class ConciliationService {
           autoMatchThreshold: normalizeThreshold(
             payload.autoMatchThreshold ?? template.autoMatchThreshold
           ),
+          amountMode: payload.amountMode ?? template.amountMode ?? null,
           active: shouldActivate
         })
       );
@@ -1227,6 +1232,7 @@ export class ConciliationService {
       if (payload.autoMatchThreshold !== undefined) {
         layout.autoMatchThreshold = normalizeThreshold(payload.autoMatchThreshold);
       }
+      if (payload.amountMode !== undefined) layout.amountMode = payload.amountMode;
       if (payload.active !== undefined) layout.active = payload.active;
 
       if (payload.active) {
@@ -1514,7 +1520,11 @@ export class ConciliationService {
       "bank"
     );
     const filteredRows = this.excludeBankStatementRows(rows, payload.excludedRowIds);
-    const preparedRows = this.buildSapBankPageRows(filteredRows, accountCode);
+    const preparedRows = this.buildSapBankPageRows(
+      filteredRows,
+      accountCode,
+      layout.amountMode ?? null
+    );
     const endpointPath = this.getConfigString(config, [
       "sapBankPagesEndpoint",
       "bankPagesEndpoint"
@@ -1522,6 +1532,26 @@ export class ConciliationService {
     const endpoint = this.sapB1Service.joinUrl(config.serviceLayerUrl, endpointPath);
     const credentials = this.resolveSapSystemCredentials(config);
     const sapResults: SapBankPageRowResult[] = [];
+
+    // [DEBUG] Payload completo que se envia a SAP (BankPages / Service Layer).
+    // Una linea por fila con AccountCode/DueDate/DebitAmount/CreditAmount, etc.
+    console.log(
+      "[SAP_B1][BankPages][REQUEST]",
+      JSON.stringify(
+        {
+          endpoint,
+          accountCode,
+          amountMode: layout.amountMode ?? null,
+          rowCount: preparedRows.length,
+          payloads: preparedRows.map((preparedRow) => ({
+            rowNumber: preparedRow.source.rowNumber,
+            payload: preparedRow.payload
+          }))
+        },
+        null,
+        2
+      )
+    );
 
     try {
       const login = await this.sapB1Service.login(config, credentials);
@@ -1534,6 +1564,11 @@ export class ConciliationService {
             preparedRow.payload,
             endpointPath
           );
+          console.log("[SAP_B1][BankPages][RESPONSE]", {
+            rowNumber: preparedRow.source.rowNumber,
+            statusCode: sapResponse.statusCode,
+            sequence: this.extractSapSequence(sapResponse.bodyJson)
+          });
           sapResults.push({
             rowId: preparedRow.source.rowId,
             rowNumber: preparedRow.source.rowNumber,
@@ -2348,7 +2383,8 @@ export class ConciliationService {
 
   private buildSapBankPageRows(
     rows: ConciliationPreviewRow[],
-    accountCode: string
+    accountCode: string,
+    amountMode: string | null
   ): PreparedSapBankPageRow[] {
     if (rows.length === 0) {
       throw new BadRequestException("El Excel no tiene filas bancarias para procesar.");
@@ -2393,55 +2429,11 @@ export class ConciliationService {
           "numeroMovimiento",
           "nroMovimiento"
         ]) ?? String(rowLabel);
-      const explicitCredit = this.readPreviewRowAmount(row, [
-        "CreditAmount",
-        "creditAmount",
-        "creditos",
-        "credito",
-        "haber",
-        "acreditacion",
-        "montoCredito"
-      ]);
-      const fallbackAmount =
-        explicitCredit ?? this.readPreviewRowAmount(row, ["monto", "importe", "amount"]);
-      const explicitDebit = this.readPreviewRowAmount(row, [
-        "DebitAmount",
-        "debitAmount",
-        "debitos",
-        "debito",
-        "debe",
-        "montoDebito"
-      ]);
-      let creditAmount = explicitCredit ?? fallbackAmount;
-      let debitAmount = explicitDebit ?? 0;
-
-      if (creditAmount === null && explicitDebit !== null) {
-        creditAmount = 0;
-      }
-
-      if (creditAmount === null) {
-        throw new BadRequestException(
-          `No se encontro Creditos o Importe para la fila ${rowLabel}.`
-        );
-      }
-
-      if (creditAmount < 0) {
-        debitAmount = debitAmount > 0 ? debitAmount : Math.abs(creditAmount);
-        creditAmount = 0;
-      }
-
-      if (debitAmount < 0) {
-        debitAmount = Math.abs(debitAmount);
-      }
-
-      creditAmount = this.roundSapAmount(creditAmount);
-      debitAmount = this.roundSapAmount(debitAmount);
-
-      if (creditAmount === 0 && debitAmount === 0) {
-        throw new BadRequestException(
-          `La fila ${rowLabel} no tiene importe de credito o debito para enviar a SAP.`
-        );
-      }
+      const { debitAmount, creditAmount } = this.resolveBankPageAmounts(
+        row,
+        rowLabel,
+        amountMode
+      );
 
       const payload = {
         AccountCode: accountCode,
@@ -2471,6 +2463,131 @@ export class ConciliationService {
         payload
       };
     });
+  }
+
+  // Resuelve DebitAmount/CreditAmount de una fila del extracto segun el modo de
+  // importe de la plantilla. amountMode null => autodeteccion (compat).
+  private resolveBankPageAmounts(
+    row: ConciliationPreviewRow,
+    rowLabel: number,
+    amountMode: string | null
+  ): { debitAmount: number; creditAmount: number } {
+    const creditKeys = [
+      "CreditAmount",
+      "creditAmount",
+      "creditos",
+      "credito",
+      "haber",
+      "acreditacion",
+      "montoCredito"
+    ];
+    const debitKeys = [
+      "DebitAmount",
+      "debitAmount",
+      "debitos",
+      "debito",
+      "debe",
+      "montoDebito"
+    ];
+    const singleKeys = ["monto", "importe", "amount"];
+
+    const explicitCredit = this.readPreviewRowAmount(row, creditKeys);
+    const explicitDebit = this.readPreviewRowAmount(row, debitKeys);
+    const singleAmount = this.readPreviewRowAmount(row, singleKeys);
+
+    let creditAmount = 0;
+    let debitAmount = 0;
+
+    switch (amountMode) {
+      case "debit_credit": {
+        if (explicitCredit === null && explicitDebit === null) {
+          throw new BadRequestException(
+            `La fila ${rowLabel} no tiene Debito ni Credito mapeados.`
+          );
+        }
+        creditAmount = explicitCredit ?? 0;
+        debitAmount = explicitDebit ?? 0;
+        break;
+      }
+      case "signed": {
+        // Importe unico con signo (+ credito / - debito). Si no hay columna
+        // unica pero si DEBE/HABER, derivar el neto = credito - debito.
+        const amount =
+          singleAmount ??
+          (explicitCredit !== null || explicitDebit !== null
+            ? (explicitCredit ?? 0) - (explicitDebit ?? 0)
+            : null);
+        if (amount === null) {
+          throw new BadRequestException(
+            `No se encontro Importe para la fila ${rowLabel}.`
+          );
+        }
+        if (amount >= 0) {
+          creditAmount = amount;
+        } else {
+          debitAmount = Math.abs(amount);
+        }
+        break;
+      }
+      case "single_credit": {
+        const amount = singleAmount ?? explicitCredit ?? explicitDebit;
+        if (amount === null) {
+          throw new BadRequestException(
+            `No se encontro Importe (Credito) para la fila ${rowLabel}.`
+          );
+        }
+        creditAmount = Math.abs(amount);
+        break;
+      }
+      case "single_debit": {
+        const amount = singleAmount ?? explicitDebit ?? explicitCredit;
+        if (amount === null) {
+          throw new BadRequestException(
+            `No se encontro Importe (Debito) para la fila ${rowLabel}.`
+          );
+        }
+        debitAmount = Math.abs(amount);
+        break;
+      }
+      default: {
+        // Autodeteccion: columnas separadas si existen, si no signo del monto.
+        if (explicitCredit !== null || explicitDebit !== null) {
+          creditAmount = explicitCredit ?? 0;
+          debitAmount = explicitDebit ?? 0;
+        } else if (singleAmount !== null) {
+          if (singleAmount >= 0) {
+            creditAmount = singleAmount;
+          } else {
+            debitAmount = Math.abs(singleAmount);
+          }
+        } else {
+          throw new BadRequestException(
+            `No se encontro Creditos, Debitos o Importe para la fila ${rowLabel}.`
+          );
+        }
+      }
+    }
+
+    // Un credito negativo es en realidad un debito (y viceversa).
+    if (creditAmount < 0) {
+      debitAmount = debitAmount > 0 ? debitAmount : Math.abs(creditAmount);
+      creditAmount = 0;
+    }
+    if (debitAmount < 0) {
+      creditAmount = creditAmount > 0 ? creditAmount : Math.abs(debitAmount);
+      debitAmount = 0;
+    }
+
+    creditAmount = this.roundSapAmount(creditAmount);
+    debitAmount = this.roundSapAmount(debitAmount);
+
+    if (creditAmount === 0 && debitAmount === 0) {
+      throw new BadRequestException(
+        `La fila ${rowLabel} no tiene importe de credito o debito para enviar a SAP.`
+      );
+    }
+
+    return { debitAmount, creditAmount };
   }
 
   private excludeBankStatementRows(
