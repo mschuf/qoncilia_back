@@ -209,7 +209,13 @@ BEGIN
     (plantilla_gnb3_id,    'debito',  'Debito',  91, TRUE, FALSE, 'numeric_equals', 1, 0, NULL, NULL, NULL, NULL, 'amount', 'GNB3',    'H', 15, 5000, 'amount'),
     (plantilla_gnb3_id,    'credito', 'Credito', 92, TRUE, FALSE, 'numeric_equals', 1, 0, NULL, NULL, NULL, NULL, 'amount', 'GNB3',    'I', 15, 5000, 'amount'),
     (plantilla_itau_id,    'debito',  'Debito',  91, TRUE, FALSE, 'numeric_equals', 1, 0, NULL, NULL, NULL, NULL, 'amount', 'Itau CC', 'D', 10, 5000, 'amount'),
-    (plantilla_itau_id,    'credito', 'Credito', 92, TRUE, FALSE, 'numeric_equals', 1, 0, NULL, NULL, NULL, NULL, 'amount', 'Itau CC', 'E', 10, 5000, 'amount');
+    (plantilla_itau_id,    'credito', 'Credito', 92, TRUE, FALSE, 'numeric_equals', 1, 0, NULL, NULL, NULL, NULL, 'amount', 'Itau CC', 'E', 10, 5000, 'amount'),
+    -- Saldo: columna SOLO-VISUAL (solo-banco, sin columna de sistema) para el preview; no se usa al procesar.
+    -- GNB Saldo=J (fila 15+); Itau Saldo=F (fila 10+).
+    (plantilla_gnb_id,     'saldo', 'Saldo', 95, TRUE, FALSE, 'numeric_equals', 0, 0, NULL, NULL, NULL, NULL, 'amount', 'GNB',     'J', 15, 5000, 'amount'),
+    (plantilla_gnb_443_id, 'saldo', 'Saldo', 95, TRUE, FALSE, 'numeric_equals', 0, 0, NULL, NULL, NULL, NULL, 'amount', 'GNB-443', 'J', 15, 5000, 'amount'),
+    (plantilla_gnb3_id,    'saldo', 'Saldo', 95, TRUE, FALSE, 'numeric_equals', 0, 0, NULL, NULL, NULL, NULL, 'amount', 'GNB3',    'J', 15, 5000, 'amount'),
+    (plantilla_itau_id,    'saldo', 'Saldo', 95, TRUE, FALSE, 'numeric_equals', 0, 0, NULL, NULL, NULL, NULL, 'amount', 'Itau CC', 'F', 10, 5000, 'amount');
 
   UPDATE public.plantillas_conciliacion
   SET plantilla_monto_modo = 'debit_credit'

@@ -199,7 +199,11 @@ BEGIN
     (plantilla_familiar_id,    'debito',  'Debito',  91, TRUE, FALSE, 'numeric_equals', 1, 0, NULL, NULL, NULL, NULL, 'amount', 'Familiar',    'E', 13, 5000, 'amount'),
     (plantilla_familiar_id,    'credito', 'Credito', 92, TRUE, FALSE, 'numeric_equals', 1, 0, NULL, NULL, NULL, NULL, 'amount', 'Familiar',    'F', 13, 5000, 'amount'),
     (plantilla_continental_id, 'debito',  'Debito',  91, TRUE, FALSE, 'numeric_equals', 1, 0, NULL, NULL, NULL, NULL, 'amount', 'Continental', 'E', 2, 5000, 'amount'),
-    (plantilla_continental_id, 'credito', 'Credito', 92, TRUE, FALSE, 'numeric_equals', 1, 0, NULL, NULL, NULL, NULL, 'amount', 'Continental', 'F', 2, 5000, 'amount');
+    (plantilla_continental_id, 'credito', 'Credito', 92, TRUE, FALSE, 'numeric_equals', 1, 0, NULL, NULL, NULL, NULL, 'amount', 'Continental', 'F', 2, 5000, 'amount'),
+    -- Saldo: columna SOLO-VISUAL (solo-banco, sin columna de sistema) para el preview; no se usa al procesar.
+    (plantilla_familiar_id,    'saldo', 'Saldo', 95, TRUE, FALSE, 'numeric_equals', 0, 0, NULL, NULL, NULL, NULL, 'amount', 'Familiar',    'G', 13, 5000, 'amount'),
+    (plantilla_sudameris_id,   'saldo', 'Saldo', 95, TRUE, FALSE, 'numeric_equals', 0, 0, NULL, NULL, NULL, NULL, 'amount', 'Sudameris',   'F', 14, 5000, 'amount'),
+    (plantilla_continental_id, 'saldo', 'Saldo', 95, TRUE, FALSE, 'numeric_equals', 0, 0, NULL, NULL, NULL, NULL, 'amount', 'Continental', 'G', 2, 5000, 'amount');
 
   UPDATE public.plantillas_conciliacion
   SET plantilla_monto_modo = 'debit_credit'

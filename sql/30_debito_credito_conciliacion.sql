@@ -324,3 +324,55 @@ SET plantilla_monto_modo = 'signed'
 WHERE p.plantilla_nombre ILIKE '%sudameris%';
 
 COMMIT;
+
+-- ----------------------------------------------------------------------------
+-- 6) (OPCIONAL) Columna SOLO-VISUAL "Saldo" en el "Visualizar" del extracto.
+--    Patron CONFIGURABLE: cualquier mapeo ACTIVO solo-banco (con columna de banco
+--    y SIN columna de sistema) se MUESTRA en el preview pero NO participa del
+--    matching (el back exige columna de sistema Y de banco para matchear) ni del
+--    armado de BankPages (resolveBankPageAmounts solo lee debito/credito/monto).
+--    Sirve para que el usuario "vea el saldo" y se sienta seguro antes de procesar;
+--    despues no se usa para nada. Tampoco lo toca la seccion 4 (esa solo oculta
+--    columnas de importe CON sistema; el saldo es bank-only).
+--
+--    Columnas de Saldo verificadas en los Excel del proyecto:
+--      Conti/Continental = G | Familiar = G | Sudameris = F | GNB = J | Itau = F
+--    Copia hoja/filas del primer mapeo de banco existente. Idempotente (NOT EXISTS).
+--    Para agregar OTRA columna informativa, repetir el patron con otra clave/columna.
+-- ----------------------------------------------------------------------------
+BEGIN;
+
+WITH saldo_fix(name_like, saldo_col) AS (
+  VALUES
+    ('%conti%',     'G'),
+    ('%familiar%',  'G'),
+    ('%sudameris%', 'F'),
+    ('%gnb%',       'J'),
+    ('%itau%',      'F')
+)
+INSERT INTO public.plantillas_conciliacion_mapeos (
+  plantilla_id, mapeo_clave_campo, mapeo_etiqueta, mapeo_orden, mapeo_activo,
+  mapeo_requerido, mapeo_operador_comparacion, mapeo_peso, mapeo_tolerancia,
+  sistema_hoja, sistema_columna, sistema_fila_inicio, sistema_fila_fin, sistema_tipo_dato,
+  banco_hoja, banco_columna, banco_fila_inicio, banco_fila_fin, banco_tipo_dato
+)
+SELECT
+  p.plantilla_id, 'saldo', 'Saldo', 95, TRUE,
+  FALSE, 'numeric_equals', 0, 0,
+  NULL, NULL, NULL, NULL, 'amount',
+  src.banco_hoja, f.saldo_col, src.banco_fila_inicio, src.banco_fila_fin, 'amount'
+FROM public.plantillas_conciliacion p
+JOIN saldo_fix f ON p.plantilla_nombre ILIKE f.name_like
+LEFT JOIN LATERAL (
+  SELECT banco_hoja, banco_fila_inicio, banco_fila_fin
+  FROM public.plantillas_conciliacion_mapeos
+  WHERE plantilla_id = p.plantilla_id AND banco_columna IS NOT NULL
+  ORDER BY mapeo_orden
+  LIMIT 1
+) src ON TRUE
+WHERE NOT EXISTS (
+  SELECT 1 FROM public.plantillas_conciliacion_mapeos d
+  WHERE d.plantilla_id = p.plantilla_id AND d.mapeo_clave_campo = 'saldo'
+);
+
+COMMIT;
