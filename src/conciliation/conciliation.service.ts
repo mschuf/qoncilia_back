@@ -2414,9 +2414,16 @@ export class ConciliationService {
           "Memo",
           "memo",
           "descripcion",
+          "descrip",
           "description",
           "concepto",
-          "detalle"
+          "concept",
+          "detalle",
+          "detalleMovimiento",
+          "glosa",
+          "observacion",
+          "infoDetallada",
+          "info"
         ]) ?? "";
       const reference =
         this.readPreviewRowString(row, [
