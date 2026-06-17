@@ -3,9 +3,11 @@ import {
   BadRequestException,
   ForbiddenException,
   GatewayTimeoutException,
+  HttpException,
   Injectable,
   Logger,
-  NotFoundException
+  NotFoundException,
+  UnprocessableEntityException
 } from "@nestjs/common"
 import { ConfigService } from "@nestjs/config"
 import { InjectRepository } from "@nestjs/typeorm"
@@ -2075,23 +2077,40 @@ export class SapErpService {
     message: string
     statusCode?: number
     responsePayload: Record<string, unknown> | null
-    exception: BadGatewayException | GatewayTimeoutException
+    exception: HttpException
   } {
     if (error instanceof ExternalRequestError) {
       const responsePayload = error.responsePayload ?? null
       const message = error.message || "No se pudo completar el envio al ERP."
+      const statusCode = error.statusCode
+
+      // Timeout / sin respuesta del Service Layer -> 504.
       if (message.toLowerCase().includes("tiempo de espera")) {
         return {
           message,
-          statusCode: error.statusCode,
+          statusCode,
           responsePayload,
           exception: new GatewayTimeoutException(message)
         }
       }
 
+      // Rechazo de negocio de SAP (4xx, p.ej. -2028 "No matching records"):
+      // los datos enviados no se pudieron procesar. Devolvemos 422 con el
+      // mensaje real para que el frontend lo muestre, en vez de un 502 opaco
+      // que ademas IIS intercepta y deja sin cabeceras CORS.
+      if (typeof statusCode === "number" && statusCode >= 400 && statusCode < 500) {
+        return {
+          message,
+          statusCode,
+          responsePayload,
+          exception: new UnprocessableEntityException(`SAP rechazo la operacion: ${message}`)
+        }
+      }
+
+      // Error real del Service Layer (5xx) o sin codigo de estado -> 502.
       return {
         message,
-        statusCode: error.statusCode,
+        statusCode,
         responsePayload,
         exception: new BadGatewayException(message)
       }

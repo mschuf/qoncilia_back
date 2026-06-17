@@ -329,12 +329,29 @@ export class SapB1Service {
       return null
     }
 
-    const errorMessageNode = (errorNode as Record<string, unknown>).message
-    if (!errorMessageNode || typeof errorMessageNode !== "object") {
-      return null
+    const error = errorNode as Record<string, unknown>
+    const errorMessageNode = error.message
+
+    // Service Layer v2: error.message es un string plano.
+    // Service Layer v1: error.message es un objeto { lang, value }.
+    let text: string | null = null
+    if (typeof errorMessageNode === "string" && errorMessageNode.trim()) {
+      text = errorMessageNode.trim()
+    } else if (errorMessageNode && typeof errorMessageNode === "object") {
+      const valueNode = (errorMessageNode as Record<string, unknown>).value
+      text = typeof valueNode === "string" && valueNode.trim() ? valueNode.trim() : null
     }
 
-    const valueNode = (errorMessageNode as Record<string, unknown>).value
-    return typeof valueNode === "string" && valueNode.trim() ? valueNode.trim() : null
+    if (!text) return null
+
+    const code = error.code
+    const codeText =
+      typeof code === "string" && code.trim()
+        ? code.trim()
+        : typeof code === "number" && Number.isFinite(code)
+          ? String(code)
+          : null
+
+    return codeText && !text.includes(codeText) ? `${text} (SAP ${codeText})` : text
   }
 }
