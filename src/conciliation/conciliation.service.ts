@@ -6,7 +6,8 @@ import {
   GatewayTimeoutException,
   Injectable,
   Logger,
-  NotFoundException
+  NotFoundException,
+  UnprocessableEntityException
 } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { InjectRepository } from "@nestjs/typeorm";
@@ -147,6 +148,8 @@ type PreparedSapBankPageRow = {
   source: ConciliationPreviewRow;
   payload: SapBankPagePayload;
 };
+
+const SAP_BANK_PAGE_REFERENCE_MAX_LENGTH = 10;
 
 @Injectable()
 export class ConciliationService {
@@ -1582,7 +1585,11 @@ export class ConciliationService {
         }
       }
     } catch (error) {
-      if (error instanceof BadGatewayException || error instanceof GatewayTimeoutException) {
+      if (
+        error instanceof BadGatewayException ||
+        error instanceof GatewayTimeoutException ||
+        error instanceof UnprocessableEntityException
+      ) {
         throw error;
       }
 
@@ -2425,7 +2432,7 @@ export class ConciliationService {
           "infoDetallada",
           "info"
         ]) ?? "";
-      const reference =
+      const reference = this.truncateSapBankPageReference(
         this.readPreviewRowString(row, [
           "Reference",
           "reference",
@@ -2435,7 +2442,8 @@ export class ConciliationService {
           "ref",
           "numeroMovimiento",
           "nroMovimiento"
-        ]) ?? String(rowLabel);
+        ]) ?? String(rowLabel)
+      );
       const { debitAmount, creditAmount } = this.resolveBankPageAmounts(
         row,
         rowLabel,
@@ -2474,6 +2482,12 @@ export class ConciliationService {
         payload
       };
     });
+  }
+
+  private truncateSapBankPageReference(reference: string): string {
+    return reference.length > SAP_BANK_PAGE_REFERENCE_MAX_LENGTH
+      ? reference.slice(0, SAP_BANK_PAGE_REFERENCE_MAX_LENGTH)
+      : reference;
   }
 
   // Resuelve DebitAmount/CreditAmount de una fila del extracto segun el modo de
@@ -2904,7 +2918,7 @@ export class ConciliationService {
     error: unknown,
     rowNumber: number,
     processedRows: number
-  ): BadGatewayException | GatewayTimeoutException {
+  ): BadGatewayException | GatewayTimeoutException | UnprocessableEntityException {
     const mapped = this.buildSapErrorMessage(error);
     const message = [
       `SAP rechazo la fila ${rowNumber} del extracto.`,
@@ -2923,14 +2937,20 @@ export class ConciliationService {
       })
     );
 
-    return mapped.timeout ? new GatewayTimeoutException(message) : new BadGatewayException(message);
+    if (mapped.timeout) {
+      return new GatewayTimeoutException(message);
+    }
+
+    return this.isSapBusinessRejection(mapped.statusCode)
+      ? new UnprocessableEntityException(message)
+      : new BadGatewayException(message);
   }
 
   private mapSapBankPageDeleteError(
     error: unknown,
     rowNumber: number,
     sequence: number
-  ): BadGatewayException | GatewayTimeoutException {
+  ): BadGatewayException | GatewayTimeoutException | UnprocessableEntityException {
     const mapped = this.buildSapErrorMessage(error);
     const message = `No se pudo eliminar en SAP_B1 la fila ${rowNumber} del extracto (Sequence ${sequence}). ${mapped.message}`;
 
@@ -2943,10 +2963,18 @@ export class ConciliationService {
       })
     );
 
-    return mapped.timeout ? new GatewayTimeoutException(message) : new BadGatewayException(message);
+    if (mapped.timeout) {
+      return new GatewayTimeoutException(message);
+    }
+
+    return this.isSapBusinessRejection(mapped.statusCode)
+      ? new UnprocessableEntityException(message)
+      : new BadGatewayException(message);
   }
 
-  private mapSapConnectionError(error: unknown): BadGatewayException | GatewayTimeoutException {
+  private mapSapConnectionError(
+    error: unknown
+  ): BadGatewayException | GatewayTimeoutException | UnprocessableEntityException {
     const mapped = this.buildSapErrorMessage(error);
     const message = `No se pudo procesar el extracto en SAP_B1. ${mapped.message}`;
 
@@ -2957,12 +2985,19 @@ export class ConciliationService {
       })
     );
 
-    return mapped.timeout ? new GatewayTimeoutException(message) : new BadGatewayException(message);
+    if (mapped.timeout) {
+      return new GatewayTimeoutException(message);
+    }
+
+    return this.isSapBusinessRejection(mapped.statusCode)
+      ? new UnprocessableEntityException(message)
+      : new BadGatewayException(message);
   }
 
   private buildSapErrorMessage(error: unknown): {
     message: string;
     timeout: boolean;
+    statusCode?: number;
     logPayload: Record<string, unknown>;
   } {
     if (error instanceof ExternalRequestError) {
@@ -2973,6 +3008,7 @@ export class ConciliationService {
       return {
         message,
         timeout: message.toLowerCase().includes("tiempo de espera"),
+        statusCode: error.statusCode,
         logPayload: {
           message: error.message,
           statusCode: error.statusCode ?? null,
@@ -2990,6 +3026,10 @@ export class ConciliationService {
         stack: error instanceof Error ? error.stack : null
       }
     };
+  }
+
+  private isSapBusinessRejection(statusCode?: number): boolean {
+    return typeof statusCode === "number" && statusCode >= 400 && statusCode < 500;
   }
 
   private compactJson(payload: Record<string, unknown>): string {
