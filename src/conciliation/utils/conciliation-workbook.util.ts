@@ -29,6 +29,9 @@ const USE_NET_AMOUNT_FOR_BANK_DEBIT_CREDIT_COLUMNS = false;
 type MatchEvaluation = {
   score: number;
   requiredPassed: boolean;
+  // El monto debe coincidir si o si: false si alguna columna de importe tiene
+  // valor en ambos lados pero no cuadra (ver evaluateMatch / buildAutoMatches).
+  amountMatched: boolean;
   ruleResults: ConciliationRuleResult[];
   passedRules: number;
 };
@@ -120,6 +123,8 @@ export function buildAutoMatches(
     for (const bankRow of bankRows) {
       const evaluation = evaluateMatch(mappings, systemRow, bankRow);
       if (!evaluation.requiredPassed) continue;
+      // El monto debe coincidir si o si, aunque el puntaje supere el umbral.
+      if (!evaluation.amountMatched) continue;
       if (evaluation.score < threshold) continue;
 
       candidates.push({
@@ -204,6 +209,7 @@ function evaluateMatch(
   let totalWeight = 0;
   let matchedWeight = 0;
   let requiredPassed = true;
+  let amountMatched = true;
   let passedRules = 0;
 
   const ruleResults = mappings.map((mapping) => {
@@ -227,6 +233,14 @@ function evaluateMatch(
       requiredPassed = false;
     }
 
+    // El monto debe coincidir si o si: si una columna de importe tiene valor en
+    // ambos lados y no cuadra (dentro de su tolerancia), la pareja no es match,
+    // sin importar el peso ni el umbral.
+    const isAmountColumn = isAmountDataType(mapping.systemDataType) || isAmountDataType(mapping.bankDataType);
+    if (isAmountColumn && systemValue !== null && bankValue !== null && !passed) {
+      amountMatched = false;
+    }
+
     return {
       fieldKey: mapping.fieldKey,
       label: mapping.label,
@@ -240,6 +254,7 @@ function evaluateMatch(
   return {
     score: totalWeight > 0 ? matchedWeight / totalWeight : 0,
     requiredPassed,
+    amountMatched,
     ruleResults,
     passedRules
   };
@@ -446,6 +461,10 @@ function stringifyNumberValue(value: number): string {
   }
 
   return String(Math.round(value * 1000000) / 1000000);
+}
+
+function isAmountDataType(dataType: string | null | undefined): boolean {
+  return dataType === "amount" || dataType === "number";
 }
 
 function normalizeByDataType(value: unknown, dataType: string): SupportedNormalizedValue {

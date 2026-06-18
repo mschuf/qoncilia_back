@@ -628,19 +628,15 @@ export class SapErpService {
             Math.abs(systemNet) > 0.0001 &&
             Math.abs(systemNet - bankNet) < 0.0001
 
-          // Referencia coincide pero netos de signo opuesto y no cero =>
-          // movimientos contrarios (ingreso vs egreso): no es match.
-          // Solo aplica con la convencion de signo (ambas columnas Debito y
-          // Credito); con columna unica no asumimos el signo.
+          // El monto debe coincidir SIEMPRE: si hay columna(s) de importe y
+          // ambos netos estan presentes pero no cuadran, no es match aunque la
+          // referencia coincida. Esto cubre tambien los netos de signo opuesto
+          // con la convencion Debito/Credito (movimientos contrarios).
           if (
-            columns.debit &&
-            columns.credit &&
-            referenceMatched &&
+            hasAmount &&
             systemNet !== null &&
             bankNet !== null &&
-            Math.abs(systemNet) > 0.0001 &&
-            Math.abs(bankNet) > 0.0001 &&
-            Math.sign(systemNet) !== Math.sign(bankNet)
+            Math.abs(systemNet - bankNet) >= 0.0001
           ) {
             return null
           }

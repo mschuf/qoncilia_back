@@ -2459,8 +2459,12 @@ export class ConciliationService {
       ].join("|");
 
       if (seen.has(duplicateKey)) {
-        throw new BadRequestException(
-          `El Excel tiene una fila duplicada para AccountCode + Fecha + Referencia + Importe en la fila ${rowLabel}.`
+        // Las filas duplicadas (mismo AccountCode + Fecha + Referencia + Importe)
+        // ya no bloquean el procesamiento: pueden ser movimientos identicos
+        // legitimos (p. ej. dos cobros iguales el mismo dia). Se avisa por log
+        // pero igual se procesa y se envia a SAP.
+        console.warn(
+          `[SAP_B1][BankPages] Fila duplicada (AccountCode + Fecha + Referencia + Importe) en la fila ${rowLabel}. Se procesa igual.`
         );
       }
       seen.add(duplicateKey);
