@@ -1,6 +1,7 @@
 import { Type } from "class-transformer"
 import {
   IsArray,
+  IsIn,
   IsInt,
   IsObject,
   IsOptional,
@@ -47,4 +48,11 @@ export class CompareSapB1QueryPreviewDto {
   @IsArray()
   @IsString({ each: true })
   excludedSystemRowIds?: string[]
+
+  // Modo de match de la columna de referencia. "exact" (default) mantiene el
+  // comportamiento SAP_B1; "like" (SAP_TARJETAS) hace match por contencion para
+  // tolerar padding (p.ej. Cod. autorizacion "000000000159514" vs VoucherNum "159514").
+  @IsOptional()
+  @IsIn(["exact", "like"])
+  referenceMatchMode?: "exact" | "like"
 }

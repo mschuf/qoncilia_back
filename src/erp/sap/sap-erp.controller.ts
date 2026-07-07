@@ -1,4 +1,14 @@
-import { Body, Controller, Get, Post, Query, UseGuards } from "@nestjs/common"
+import {
+  Body,
+  Controller,
+  Get,
+  Post,
+  Query,
+  UploadedFile,
+  UseGuards,
+  UseInterceptors
+} from "@nestjs/common"
+import { FileInterceptor } from "@nestjs/platform-express"
 import { CurrentUser } from "../../common/decorators/current-user.decorator"
 import { RequiredModule } from "../../common/decorators/required-module.decorator"
 import { Roles } from "../../common/decorators/roles.decorator"
@@ -9,12 +19,19 @@ import { ModuleAccessGuard } from "../../common/guards/module-access.guard"
 import { RolesGuard } from "../../common/guards/roles.guard"
 import { AuthUser } from "../../common/interfaces/auth-user.interface"
 import { CompareSapB1QueryPreviewDto } from "./dto/compare-sap-b1-query-preview.dto"
+import { ParseSapTarjetasCsvDto } from "./dto/parse-sap-tarjetas-csv.dto"
 import { SapLoginDto } from "./dto/sap-login.dto"
 import { SapLogoutDto } from "./dto/sap-logout.dto"
 import { RunSapB1QueryPreviewDto } from "./dto/run-sap-b1-query-preview.dto"
+import { RunSapTarjetasQueryDto } from "./dto/run-sap-tarjetas-query.dto"
 import { SapSessionStatusQueryDto } from "./dto/sap-session-status-query.dto"
 import { SendSapExternalReconciliationDto } from "./dto/send-sap-external-reconciliation.dto"
 import { SapErpService } from "./sap-erp.service"
+
+type UploadedMemoryFile = {
+  buffer: Buffer
+  originalname: string
+}
 
 @Controller("erp/sap")
 @UseGuards(JwtAuthGuard, RolesGuard, ModuleAccessGuard)
@@ -65,5 +82,34 @@ export class SapErpController {
     @CurrentUser() actor: AuthUser
   ) {
     return this.sapErpService.reconcileExternal(actor, body)
+  }
+
+  // === SAP_TARJETAS ========================================================
+  // Solo el query del sistema (OCRH). El lado banco lo aporta el CSV (parse-csv)
+  // y la comparacion reutiliza query-preview/compare. No toca el flujo SAP_B1.
+  @Post("credit-cards/system-query")
+  @Roles(Role.GESTOR_COBRANZA, Role.GESTOR_PAGOS, Role.ADMIN, Role.IS_SUPER_ADMIN)
+  runCreditCardsSystemQuery(
+    @Body() body: RunSapTarjetasQueryDto,
+    @CurrentUser() actor: AuthUser
+  ) {
+    return this.sapErpService.runSapTarjetasSystemQuery(actor, body)
+  }
+
+  @Post("credit-cards/parse-csv")
+  @Roles(Role.GESTOR_COBRANZA, Role.GESTOR_PAGOS, Role.ADMIN, Role.IS_SUPER_ADMIN)
+  @UseInterceptors(
+    FileInterceptor("file", {
+      limits: {
+        fileSize: 10 * 1024 * 1024
+      }
+    })
+  )
+  parseCreditCardsCsv(
+    @Body() body: ParseSapTarjetasCsvDto,
+    @UploadedFile() file: UploadedMemoryFile,
+    @CurrentUser() actor: AuthUser
+  ) {
+    return this.sapErpService.parseSapTarjetasCsv(actor, body.companyErpConfigId, file)
   }
 }

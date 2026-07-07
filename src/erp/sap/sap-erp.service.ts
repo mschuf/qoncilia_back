@@ -27,6 +27,7 @@ import type { ConciliationPreviewRow } from "../../conciliation/interfaces/conci
 import { User } from "../../users/entities/user.entity"
 import { CompareSapB1QueryPreviewDto } from "./dto/compare-sap-b1-query-preview.dto"
 import { RunSapB1QueryPreviewDto } from "./dto/run-sap-b1-query-preview.dto"
+import { RunSapTarjetasQueryDto } from "./dto/run-sap-tarjetas-query.dto"
 import { SapLoginDto } from "./dto/sap-login.dto"
 import {
   SapExternalReconciliationBankStatementLineDto,
@@ -43,13 +44,26 @@ import {
   PublicSapB1SmartMatch,
   PublicSapExternalReconciliationResult,
   PublicSapSessionStatus,
+  PublicSapTarjetasCsvParseResult,
+  PublicSapTarjetasSystemQueryResult,
   SapExternalReconciliationAccountType,
   SapExternalReconciliationBankStatementLinePayload,
   SapExternalReconciliationJournalEntryLinePayload,
   SapExternalReconciliationPayload
 } from "./interfaces/sap-erp.interfaces"
 import { ExternalRequestError, SapB1Service } from "./sap-b1.service"
-import { ensureSapErpType, validateSapConfig } from "./sap-config.validator"
+import {
+  ensureSapErpType,
+  ensureSapTarjetasConfig,
+  validateSapConfig
+} from "./sap-config.validator"
+import { parseSapTarjetasCsv } from "./sap-tarjetas-csv.util"
+import { aliasSapTarjetasSystemTable } from "./sap-tarjetas-system.util"
+
+type SapTarjetasUploadFile = {
+  buffer: Buffer
+  originalname?: string
+}
 
 type SapReadableRow = {
   rowId?: string
@@ -369,7 +383,13 @@ export class SapErpService {
       ...payload.bank.columns,
       ...payload.system.columns
     ])
-    const matches = this.calculateSapB1SmartMatches(systemRows, bankRows, matchColumns)
+    const referenceMatchMode = payload.referenceMatchMode ?? "exact"
+    const matches = this.calculateSapB1SmartMatches(
+      systemRows,
+      bankRows,
+      matchColumns,
+      referenceMatchMode
+    )
     const matchedBankRowIds = new Set(matches.map((match) => match.bankRow.rowId))
     const matchedSystemRowIds = new Set(matches.map((match) => match.systemRow.rowId))
     const unmatchedBankRows = bankRows.filter((row) => !matchedBankRowIds.has(row.rowId))
@@ -390,6 +410,111 @@ export class SapErpService {
         matchPercentage:
           totalRows > 0 ? Math.round(((matches.length * 2) / totalRows) * 10000) / 100 : 0
       }
+    }
+  }
+
+  // === SAP_TARJETAS (conciliacion de tarjetas de credito) ==================
+  // Modo paralelo a SAP_B1: el lado "sistema" sale del query OCRH (querySistema)
+  // y el lado "banco" es un CSV de la procesadora subido aparte (parseSapTarjetasCsv).
+  // La comparacion reutiliza compareSapB1QueryPreview (motor de matching generico).
+  // No se modifica ninguna ruta SAP_B1 existente.
+
+  async runSapTarjetasSystemQuery(
+    actor: AuthUser,
+    payload: RunSapTarjetasQueryDto
+  ): Promise<PublicSapTarjetasSystemQueryResult> {
+    const config = await this.requireConfigForActor(actor, payload.companyErpConfigId)
+
+    ensureSapErpType(config.erpType)
+    ensureSapTarjetasConfig(config)
+    this.ensureActiveConfig(config)
+
+    const companyDb = this.normalizeRequired(config.dbName, "CompanyDB")
+    const dateFrom = this.normalizeRequired(payload.dateFrom, "Fecha Desde")
+    const dateTo = this.normalizeRequired(payload.dateTo, "Fecha Hasta")
+
+    if (new Date(dateFrom).getTime() > new Date(dateTo).getTime()) {
+      throw new BadRequestException("Fecha Desde no puede ser mayor a Fecha Hasta.")
+    }
+
+    let accountCode: string | null = null
+    if (payload.companyBankAccountId) {
+      const account = await this.requireCompanyBankAccountForConfig(
+        actor,
+        config,
+        payload.companyBankAccountId
+      )
+      accountCode = this.normalizeRequired(account.majorAccountNumber, "Cuenta Mayor")
+    }
+
+    const systemQuery = this.prepareSapB1PreviewQuery(
+      config.querySistema,
+      companyDb,
+      "query_sistema",
+      { accountCode: accountCode ?? "", dateFrom, dateTo }
+    )
+    const connection = await this.connectSapHana(config, companyDb)
+
+    try {
+      // El query OCRH devuelve columnas crudas de SAP (VoucherNum/PayDate/CreditSum);
+      // las aliasamos a Referencia/Fecha/Importe para que el motor de matching las
+      // alinee con el CSV de la procesadora (compara por nombre identico). El gate
+      // duro del match es el Importe (CreditSum): si no coincide, no hay match.
+      const system = aliasSapTarjetasSystemTable(
+        await this.executeSapB1PreviewQuery(connection, systemQuery, "query_sistema")
+      )
+
+      return {
+        companyErpConfigId: config.id,
+        companyErpConfigName: config.name,
+        companyDb,
+        accountCode,
+        dateFrom,
+        dateTo,
+        system
+      }
+    } catch (error) {
+      this.logger.error(
+        this.stringifyLogPayload({
+          event: "sap_tarjetas_system_query_failed",
+          actorId: actor.id,
+          companyErpConfigId: config.id,
+          error: error instanceof Error ? error.message : String(error)
+        })
+      )
+
+      throw new BadGatewayException(
+        error instanceof Error
+          ? `No se pudo ejecutar la consulta del sistema. ${error.message}`
+          : "No se pudo ejecutar la consulta del sistema."
+      )
+    } finally {
+      await this.disconnectSapHana(connection).catch(() => undefined)
+    }
+  }
+
+  async parseSapTarjetasCsv(
+    actor: AuthUser,
+    companyErpConfigId: number,
+    file: SapTarjetasUploadFile | undefined
+  ): Promise<PublicSapTarjetasCsvParseResult> {
+    const config = await this.requireConfigForActor(actor, companyErpConfigId)
+
+    ensureSapErpType(config.erpType)
+    ensureSapTarjetasConfig(config)
+    this.ensureActiveConfig(config)
+
+    if (!file?.buffer || file.buffer.length === 0) {
+      throw new BadRequestException("No se recibio el archivo CSV de tarjetas.")
+    }
+
+    const parsed = parseSapTarjetasCsv(file.buffer)
+
+    return {
+      fileName: file.originalname ?? "tarjetas.csv",
+      totalRows: parsed.totalRows,
+      includedRows: parsed.rows.length,
+      bank: { columns: parsed.columns, rows: parsed.rows }
     }
   }
 
@@ -595,7 +720,8 @@ export class SapErpService {
   private calculateSapB1SmartMatches(
     systemRows: ConciliationPreviewRow[],
     bankRows: ConciliationPreviewRow[],
-    columns: SapB1MatchColumns
+    columns: SapB1MatchColumns,
+    referenceMatchMode: "exact" | "like" = "exact"
   ): PublicSapB1SmartMatch[] {
     const hasAmount = Boolean(columns.amount || columns.debit || columns.credit)
     if (!columns.reference && !columns.date && !hasAmount) return []
@@ -609,9 +735,10 @@ export class SapErpService {
         .filter((bankRow) => !usedBankRows.has(bankRow.rowId))
         .map((bankRow) => {
           const referenceMatched = columns.reference
-            ? this.sapB1ExactMatch(
+            ? this.sapB1ReferenceMatch(
                 this.readSapB1PreviewRowValue(systemRow, columns.reference),
-                this.readSapB1PreviewRowValue(bankRow, columns.reference)
+                this.readSapB1PreviewRowValue(bankRow, columns.reference),
+                referenceMatchMode
               )
             : false
           const dateResult = columns.date
@@ -806,6 +933,28 @@ export class SapErpService {
     const normalizedRight = this.normalizeSapB1ComparableText(right)
     if (!normalizedLeft || !normalizedRight) return false
     return normalizedLeft === normalizedRight
+  }
+
+  // Match de la columna de referencia. "exact" = igualdad normalizada (default,
+  // comportamiento SAP_B1 intacto). "like" (modo SAP_TARJETAS) = una contiene a la
+  // otra tras normalizar, para tolerar diferencias de padding entre el Codigo de
+  // autorizacion del CSV (p.ej. "000000000159514") y el VoucherNum del sistema
+  // ("159514"). El importe sigue siendo gate duro, asi que el "like" no afloja la
+  // exactitud del monto: solo evita perder matches por ceros/relleno en la referencia.
+  private sapB1ReferenceMatch(
+    left: SapB1ComparableValue,
+    right: SapB1ComparableValue,
+    mode: "exact" | "like"
+  ): boolean {
+    if (mode !== "like") return this.sapB1ExactMatch(left, right)
+    const normalizedLeft = this.normalizeSapB1ComparableText(left)
+    const normalizedRight = this.normalizeSapB1ComparableText(right)
+    if (!normalizedLeft || !normalizedRight) return false
+    return (
+      normalizedLeft === normalizedRight ||
+      normalizedLeft.includes(normalizedRight) ||
+      normalizedRight.includes(normalizedLeft)
+    )
   }
 
   private parseSapB1AmountValue(value: SapB1ComparableValue): number | null {

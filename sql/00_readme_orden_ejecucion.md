@@ -52,3 +52,10 @@ Estos scripts estan pensados para un `DROP`/recreacion limpia. Los scripts princ
 - `25` es incremental e idempotente: elimina `sistemas`, quita `sistema_id` de plantillas y ajusta `empresas_erp_configuraciones` al contrato nuevo.
 - `26` es incremental e idempotente: crea plantillas ERP sin empresa y agrega `ept_id` nullable a las copias por empresa.
 - `29` es incremental e idempotente: permite `cuenta_bancaria_id_banco_erp` nulo y elimina el check legacy de no vacio.
+
+### Conciliacion de tarjetas (SAP_TARJETAS)
+
+- `36_add_template_erp_queries.sql` (incremental/idempotente): agrega `query_banco`/`query_sistema` a las plantillas ERP para que una plantilla pueda llevar el query y propagarlo al copiarse a una empresa. Ejecutar ANTES de `37`.
+- `37_seed_sap_tarjetas_template.sql` (idempotente): crea la PLANTILLA ERP global `SAP_TARJETAS` con el query OCRH (borrador, ajustar tabla/columna). Desde ERP Management se completa (credenciales HANA) y se copia a las empresas elegidas.
+- `34_seed_sap_tarjetas_config.sql` / `35_seed_sap_tarjetas_config_empresa4.sql`: alternativas que crean la config `SAP_TARJETAS` directamente por empresa (sin pasar por plantilla). `35` esta acotado a `emp_id = 4`.
+- El modo tarjetas se activa cuando la config ERP seleccionada tiene `code = 'SAP_TARJETAS'`; el query del sistema debe exponer alias `Referencia`/`Fecha`/`Importe` y usar `${CompanyDB}` + `$2`/`$3`.

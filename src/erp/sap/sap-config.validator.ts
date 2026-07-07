@@ -20,6 +20,20 @@ export function ensureSapErpType(erpType: ErpType) {
   }
 }
 
+// Codigo que activa el modo de conciliacion de tarjetas de credito (debe coincidir
+// con el discriminador del frontend: code === "SAP_TARJETAS").
+export const SAP_TARJETAS_CONFIG_CODE = "SAP_TARJETAS"
+
+// Verifica que la configuracion seleccionada sea efectivamente de tarjetas. Evita
+// que el flujo OCRH/CSV corra contra una configuracion SAP_B1 por error.
+export function ensureSapTarjetasConfig(config: { code: string | null }) {
+  if ((config.code ?? "").trim().toUpperCase() !== SAP_TARJETAS_CONFIG_CODE) {
+    throw new BadRequestException(
+      "Esta operacion requiere una configuracion ERP con codigo SAP_TARJETAS."
+    )
+  }
+}
+
 export function validateSapConfig(config: SapConfigValidationTarget, requirePassword: boolean) {
   const requiredFields: Array<[string | null, string]> = [
     [config.dbName, "dbName"],

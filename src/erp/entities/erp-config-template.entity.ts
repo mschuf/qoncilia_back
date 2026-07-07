@@ -40,6 +40,12 @@ export class ErpConfigTemplate {
   @Column({ name: "ept_server_node", type: "varchar", length: 100, nullable: true })
   serverNode!: string | null
 
+  @Column({ name: "query_banco", type: "text", nullable: true })
+  queryBanco!: string | null
+
+  @Column({ name: "query_sistema", type: "text", nullable: true })
+  querySistema!: string | null
+
   @Column({ name: "ept_db_user", type: "varchar", length: 160, nullable: true })
   dbUser!: string | null
 

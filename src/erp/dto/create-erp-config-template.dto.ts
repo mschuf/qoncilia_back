@@ -60,6 +60,16 @@ export class CreateErpConfigTemplateDto {
 
   @IsOptional()
   @IsString()
+  @MaxLength(20000)
+  queryBanco?: string
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(20000)
+  querySistema?: string
+
+  @IsOptional()
+  @IsString()
   @MaxLength(160)
   dbUser?: string
 

@@ -281,6 +281,8 @@ export class ErpService {
       userPassEncrypted: this.encryptOptionalCredential(payload.userPass),
       dbName: this.normalizeOptional(payload.dbName),
       serverNode: this.normalizeOptional(payload.serverNode),
+      queryBanco: this.normalizeOptional(payload.queryBanco),
+      querySistema: this.normalizeOptional(payload.querySistema),
       dbUser: this.normalizeOptional(payload.dbUser),
       dbPasswordEncrypted: this.encryptOptionalCredential(payload.password),
       serviceLayerUrl: this.normalizeUrl(payload.serviceLayerUrl),
@@ -311,6 +313,12 @@ export class ErpService {
     if (payload.dbName !== undefined) template.dbName = this.normalizeOptional(payload.dbName)
     if (payload.serverNode !== undefined) {
       template.serverNode = this.normalizeOptional(payload.serverNode)
+    }
+    if (payload.queryBanco !== undefined) {
+      template.queryBanco = this.normalizeOptional(payload.queryBanco)
+    }
+    if (payload.querySistema !== undefined) {
+      template.querySistema = this.normalizeOptional(payload.querySistema)
     }
     if (payload.dbUser !== undefined) template.dbUser = this.normalizeOptional(payload.dbUser)
     if (payload.serviceLayerUrl !== undefined) {
@@ -356,6 +364,8 @@ export class ErpService {
       userPassEncrypted: template.userPassEncrypted,
       dbName: template.dbName,
       serverNode: template.serverNode,
+      queryBanco: template.queryBanco,
+      querySistema: template.querySistema,
       dbUser: template.dbUser,
       dbPasswordEncrypted: template.dbPasswordEncrypted,
       serviceLayerUrl: template.serviceLayerUrl,
@@ -922,6 +932,8 @@ export class ErpService {
       userSystem: template.userSystem,
       dbName: template.dbName,
       serverNode: template.serverNode,
+      queryBanco: template.queryBanco,
+      querySistema: template.querySistema,
       dbUser: template.dbUser,
       serviceLayerUrl: template.serviceLayerUrl,
       tlsVersion: template.tlsVersion,
