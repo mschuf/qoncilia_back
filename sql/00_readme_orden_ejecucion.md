@@ -56,6 +56,6 @@ Estos scripts estan pensados para un `DROP`/recreacion limpia. Los scripts princ
 ### Conciliacion de tarjetas (SAP_TARJETAS)
 
 - `36_add_template_erp_queries.sql` (incremental/idempotente): agrega `query_banco`/`query_sistema` a las plantillas ERP para que una plantilla pueda llevar el query y propagarlo al copiarse a una empresa. Ejecutar ANTES de `37`.
-- `37_seed_sap_tarjetas_template.sql` (idempotente): crea la PLANTILLA ERP global `SAP_TARJETAS` con el query OCRH (borrador, ajustar tabla/columna). Desde ERP Management se completa (credenciales HANA) y se copia a las empresas elegidas.
+- `37_seed_sap_tarjetas_template.sql` (idempotente): crea la PLANTILLA ERP global `SAP_TARJETAS` con el query OCRH final (`Canceled='N'` + `PayDate BETWEEN $2 AND $3`). Desde ERP Management se completa (credenciales HANA) y se copia a las empresas elegidas.
 - `34_seed_sap_tarjetas_config.sql` / `35_seed_sap_tarjetas_config_empresa4.sql`: alternativas que crean la config `SAP_TARJETAS` directamente por empresa (sin pasar por plantilla). `35` esta acotado a `emp_id = 4`.
-- El modo tarjetas se activa cuando la config ERP seleccionada tiene `code = 'SAP_TARJETAS'`; el query del sistema debe exponer alias `Referencia`/`Fecha`/`Importe` y usar `${CompanyDB}` + `$2`/`$3`.
+- El modo tarjetas se activa cuando la config ERP seleccionada tiene `code = 'SAP_TARJETAS'`; el query del sistema trae OCRH crudo (`AbsId`, `VoucherNum`, `PayDate`, `CreditSum`, `CreditCurr`) y el backend lo aliasa en memoria para el matching. Si una config ya asignada quedo con el query viejo SIN `$2/$3`, re-correr el seed que corresponda o editar el query por la UI (el rango de fechas de la pantalla solo filtra si el query usa `$2/$3`).

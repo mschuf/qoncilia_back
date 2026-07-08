@@ -66,9 +66,8 @@ export interface PublicSapTarjetasSystemQueryResult {
   system: PublicSapB1QueryTable
 }
 
-// Resultado de parsear el CSV de la procesadora. El archivo no se guarda: se
-// devuelven TODAS las filas (debito/credito/otros) ya normalizadas para comparar
-// contra el sistema. includedRows = filas incluidas (hoy == totalRows, sin filtro).
+// Resultado de parsear el archivo de la procesadora. El archivo no se guarda:
+// includedRows = filas Debito incluidas para comparar contra el sistema.
 export interface PublicSapTarjetasCsvParseResult {
   fileName: string
   totalRows: number
@@ -128,4 +127,15 @@ export interface SapExternalReconciliationDocument extends Record<string, unknow
 
 export interface SapExternalReconciliationPayload extends Record<string, unknown> {
   ExternalReconciliation: SapExternalReconciliationDocument
+}
+
+export interface SapTarjetasDepositCreditLinePayload extends Record<string, unknown> {
+  AbsId: number
+}
+
+export interface SapTarjetasDepositPayload extends Record<string, unknown> {
+  CreditLines: SapTarjetasDepositCreditLinePayload[]
+  DepositAccount: string
+  DepositType: "dtCredit"
+  VoucherAccount: string
 }

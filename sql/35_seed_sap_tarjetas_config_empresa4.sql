@@ -44,28 +44,22 @@ SELECT
   sc.epc_db_user, sc.epc_db_password_enc, sc.epc_service_layer_url, sc.epc_tls_version,
   sc.epc_allow_self_signed, sc.epc_settings,
   -- ---------------------------------------------------------------------------
-  -- BORRADOR del query OCRH. AJUSTAR tabla/columna a tu SAP real. Obligatorio:
+  -- Query OCRH (pagos/vouchers de tarjeta). Obligatorio:
   --   * un solo SELECT (sin ;)  * "${CompanyDB}" como esquema  * $2 = Fecha Desde, $3 = Fecha Hasta
-  --   * alias EXACTOS "Referencia" / "Fecha" / "Importe" (los usa el matching)
+  --   * incluir "AbsId" (el deposito del Service Layer usa CreditLines[].AbsId)
+  -- Alias del matching: los renombra el backend (VoucherNum->Referencia,
+  -- PayDate->Fecha, CreditSum->Importe en sap-tarjetas-system.util.ts).
   -- ---------------------------------------------------------------------------
   $SIS$
 SELECT
-  T0."VoucherNum"                          AS "Referencia",
-  TO_VARCHAR(T0."PayDate", 'YYYY-MM-DD')   AS "Fecha",
-  TO_VARCHAR(TO_BIGINT(T0."CreditSum"))    AS "Importe",
-  T0."ConfNum"                             AS "Confirmacion",
-  T0."CrdCardNum"                          AS "NroTarjeta",
-  T0."CardName"                            AS "Titular",
-  T0."CardCode"                            AS "Cliente",
-  T0."NumOfPmnts"                          AS "Cuotas",
-  T0."CreditCurr"                          AS "Moneda",
-  T0."Deposited"                           AS "Depositado",
-  T0."DepNum"                              AS "NroDeposito"
-FROM "${CompanyDB}".OCRH T0
-WHERE CAST(T0."PayDate" AS DATE) BETWEEN $2 AND $3
-  AND T0."Canceled" = 'N'
-  AND T0."Storno" = 'N'
-ORDER BY T0."PayDate" DESC, T0."VoucherNum"
+  T0."AbsId",
+  T0."VoucherNum",
+  T0."PayDate",
+  T0."CreditSum",
+  T0."CreditCurr"
+FROM "${CompanyDB}"."OCRH" T0
+WHERE T0."Canceled" = 'N'
+  AND T0."PayDate" BETWEEN $2 AND $3
 $SIS$
 FROM source_config sc
 ON CONFLICT (emp_id, LOWER(epc_codigo)) DO UPDATE

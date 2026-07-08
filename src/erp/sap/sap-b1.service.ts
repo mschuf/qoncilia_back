@@ -144,6 +144,24 @@ export class SapB1Service {
     })
   }
 
+  async createDeposit(
+    config: CompanyErpConfig,
+    cookieHeader: string,
+    payload: Record<string, unknown>,
+    endpointPath = "Deposits"
+  ): Promise<JsonRequestResponse> {
+    return this.performJsonRequest(this.joinUrl(config.serviceLayerUrl, endpointPath), {
+      method: "POST",
+      body: payload,
+      headers: {
+        Accept: "application/json",
+        Cookie: cookieHeader
+      },
+      tlsVersion: config.tlsVersion,
+      allowSelfSigned: config.allowSelfSigned
+    })
+  }
+
   joinUrl(baseUrl: string | null, path: string): string {
     if (!baseUrl) {
       throw new BadRequestException("La configuracion ERP no tiene serviceLayerUrl.")

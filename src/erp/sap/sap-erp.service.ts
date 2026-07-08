@@ -35,6 +35,7 @@ import {
   SendSapExternalReconciliationDto,
   sapExternalReconciliationAccountTypes
 } from "./dto/send-sap-external-reconciliation.dto"
+import { SendSapTarjetasDepositDto } from "./dto/send-sap-tarjetas-deposit.dto"
 import { UserErpSession } from "./entities/user-erp-session.entity"
 import {
   PublicSapErpSession,
@@ -49,7 +50,8 @@ import {
   SapExternalReconciliationAccountType,
   SapExternalReconciliationBankStatementLinePayload,
   SapExternalReconciliationJournalEntryLinePayload,
-  SapExternalReconciliationPayload
+  SapExternalReconciliationPayload,
+  SapTarjetasDepositPayload
 } from "./interfaces/sap-erp.interfaces"
 import { ExternalRequestError, SapB1Service } from "./sap-b1.service"
 import {
@@ -515,6 +517,106 @@ export class SapErpService {
       totalRows: parsed.totalRows,
       includedRows: parsed.rows.length,
       bank: { columns: parsed.columns, rows: parsed.rows }
+    }
+  }
+
+  async createSapTarjetasDeposit(
+    actor: AuthUser,
+    payload: SendSapTarjetasDepositDto
+  ): Promise<PublicSapExternalReconciliationResult> {
+    this.ensureCanRunExternalReconciliation(actor)
+
+    const config = await this.requireConfigForActor(actor, payload.companyErpConfigId)
+
+    ensureSapErpType(config.erpType)
+    ensureSapTarjetasConfig(config)
+    validateSapConfig(config, false)
+    this.ensureActiveConfig(config)
+
+    const session = await this.requireActiveSapSession(actor, config)
+    const endpointPath =
+      this.getSettingsString(config, [
+        "sapTarjetasDepositEndpoint",
+        "tarjetasDepositEndpoint",
+        "sapDepositEndpoint"
+      ]) ?? "Deposits"
+    const endpoint = this.sapB1Service.joinUrl(config.serviceLayerUrl, endpointPath)
+    const sapPayload = this.buildSapTarjetasDepositPayload(payload)
+
+    try {
+      this.logger.log(
+        this.stringifyLogPayload({
+          event: "sap_tarjetas_deposit_request",
+          actorId: actor.id,
+          companyErpConfigId: config.id,
+          endpoint,
+          payload: sapPayload
+        })
+      )
+
+      const cookieHeader = this.decryptSessionCookie(session.sessionCookieEncrypted)
+      const sapResponse = await this.sapB1Service.createDeposit(
+        config,
+        cookieHeader,
+        sapPayload,
+        endpointPath
+      )
+      const now = new Date()
+      session.lastValidatedAt = now
+      await this.userErpSessionRepository.save(session)
+
+      this.logger.log(
+        this.stringifyLogPayload({
+          event: "sap_tarjetas_deposit_success",
+          actorId: actor.id,
+          companyErpConfigId: config.id,
+          endpoint,
+          httpStatus: sapResponse.statusCode,
+          responsePayload: sapResponse.bodyJson
+        })
+      )
+
+      return {
+        id: 0,
+        reconciliationId: null,
+        companyErpConfigId: config.id,
+        companyErpConfigName: config.name,
+        documentType: "sap_tarjetas_deposit",
+        status: "success",
+        endpoint,
+        httpStatus: sapResponse.statusCode,
+        responsePayload: sapResponse.bodyJson,
+        errorMessage: null,
+        externalReconciliationNo: null,
+        externalReference: this.extractExternalReference(sapResponse.bodyJson, [
+          "DepositNumber",
+          "DeposNum",
+          "AbsEntry",
+          "AbsoluteEntry",
+          "DocEntry",
+          "Number"
+        ]),
+        createdAt: now,
+        updatedAt: now
+      }
+    } catch (error) {
+      if (error instanceof ExternalRequestError && [401, 403].includes(error.statusCode ?? 0)) {
+        session.invalidatedAt = new Date()
+        await this.userErpSessionRepository.save(session)
+      }
+
+      this.logger.error(
+        this.stringifyLogPayload({
+          event: "sap_tarjetas_deposit_failed",
+          actorId: actor.id,
+          companyErpConfigId: config.id,
+          endpoint,
+          error: error instanceof Error ? error.message : String(error),
+          requestPayload: sapPayload
+        })
+      )
+      const mapped = this.mapExternalError(error)
+      throw mapped.exception
     }
   }
 
@@ -1436,6 +1538,33 @@ export class SapErpService {
     return {
       ExternalReconciliation: normalizedExternal
     } as SapExternalReconciliationPayload
+  }
+
+  private buildSapTarjetasDepositPayload(
+    payload: SendSapTarjetasDepositDto
+  ): SapTarjetasDepositPayload {
+    const depositAccount = this.normalizeRequired(payload.depositAccount, "DepositAccount")
+    const voucherAccount = this.normalizeRequired(payload.voucherAccount, "VoucherAccount")
+    const seenAbsIds = new Set<number>()
+    const creditLines = payload.creditLines
+      .map((line) => this.toPositiveInteger(line.absId))
+      .filter((absId): absId is number => {
+        if (!absId || seenAbsIds.has(absId)) return false
+        seenAbsIds.add(absId)
+        return true
+      })
+      .map((absId) => ({ AbsId: absId }))
+
+    if (creditLines.length === 0) {
+      throw new BadRequestException("Debes enviar al menos un AbsId valido para depositar.")
+    }
+
+    return {
+      CreditLines: creditLines,
+      DepositAccount: depositAccount,
+      DepositType: "dtCredit",
+      VoucherAccount: voucherAccount
+    }
   }
 
   private async buildSapExternalReconciliationPayload(

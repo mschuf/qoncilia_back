@@ -26,6 +26,7 @@ import { RunSapB1QueryPreviewDto } from "./dto/run-sap-b1-query-preview.dto"
 import { RunSapTarjetasQueryDto } from "./dto/run-sap-tarjetas-query.dto"
 import { SapSessionStatusQueryDto } from "./dto/sap-session-status-query.dto"
 import { SendSapExternalReconciliationDto } from "./dto/send-sap-external-reconciliation.dto"
+import { SendSapTarjetasDepositDto } from "./dto/send-sap-tarjetas-deposit.dto"
 import { SapErpService } from "./sap-erp.service"
 
 type UploadedMemoryFile = {
@@ -111,5 +112,14 @@ export class SapErpController {
     @CurrentUser() actor: AuthUser
   ) {
     return this.sapErpService.parseSapTarjetasCsv(actor, body.companyErpConfigId, file)
+  }
+
+  @Post("credit-cards/deposits")
+  @Roles(Role.GESTOR_COBRANZA, Role.ADMIN, Role.IS_SUPER_ADMIN)
+  createCreditCardsDeposit(
+    @Body() body: SendSapTarjetasDepositDto,
+    @CurrentUser() actor: AuthUser
+  ) {
+    return this.sapErpService.createSapTarjetasDeposit(actor, body)
   }
 }

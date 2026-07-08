@@ -67,37 +67,27 @@ SELECT
   sc.epc_allow_self_signed,
   sc.epc_settings,
   -- =========================================================================
-  -- BORRADOR del query del sistema (OCRH / depositos de tarjeta de credito).
-  -- AJUSTAR nombres de tabla/columna a tu base SAP. Reglas obligatorias del
-  -- motor (validadas en runtime por prepareSapB1PreviewQuery):
+  -- Query del sistema (OCRH: pagos/vouchers de tarjeta de credito).
+  -- Reglas obligatorias del motor (validadas en runtime por
+  -- prepareSapB1PreviewQuery):
   --   * una sola sentencia SELECT (sin ;)
   --   * usar "${CompanyDB}" como esquema y $2 = Fecha Desde, $3 = Fecha Hasta
-  --   * (opcional) $1 = cuenta mayor; este borrador NO lo usa
-  -- El matching usa estas columnas por nombre, MANTENER los alias:
-  --   "Referencia" (se compara exacto contra Codigo autorizacion del CSV)
-  --   "Fecha"      (tolerancia de dias)
-  --   "Importe"    (debe coincidir; gate duro)
-  -- Las demas columnas son informativas.
-  -- Base: estructura del objeto Deposits (ODPS + lineas de credito CreditLines).
+  --   * (opcional) $1 = cuenta mayor; este query NO lo usa
+  --   * incluir "AbsId": el deposito del Service Layer lo usa (CreditLines[].AbsId)
+  -- Los alias del matching NO van en el SQL: el backend renombra en memoria
+  -- VoucherNum->Referencia, PayDate->Fecha, CreditSum->Importe
+  -- (sap-tarjetas-system.util.ts). Las demas columnas son informativas.
   -- =========================================================================
   $SIS$
 SELECT
-  T0."VoucherNum"                          AS "Referencia",
-  TO_VARCHAR(T0."PayDate", 'YYYY-MM-DD')   AS "Fecha",
-  TO_VARCHAR(TO_BIGINT(T0."CreditSum"))    AS "Importe",
-  T0."ConfNum"                             AS "Confirmacion",
-  T0."CrdCardNum"                          AS "NroTarjeta",
-  T0."CardName"                            AS "Titular",
-  T0."CardCode"                            AS "Cliente",
-  T0."NumOfPmnts"                          AS "Cuotas",
-  T0."CreditCurr"                          AS "Moneda",
-  T0."Deposited"                           AS "Depositado",
-  T0."DepNum"                              AS "NroDeposito"
-FROM "${CompanyDB}".OCRH T0
-WHERE CAST(T0."PayDate" AS DATE) BETWEEN $2 AND $3
-  AND T0."Canceled" = 'N'
-  AND T0."Storno" = 'N'
-ORDER BY T0."PayDate" DESC, T0."VoucherNum"
+  T0."AbsId",
+  T0."VoucherNum",
+  T0."PayDate",
+  T0."CreditSum",
+  T0."CreditCurr"
+FROM "${CompanyDB}"."OCRH" T0
+WHERE T0."Canceled" = 'N'
+  AND T0."PayDate" BETWEEN $2 AND $3
 $SIS$
 FROM source_config sc
 ON CONFLICT (emp_id, LOWER(epc_codigo)) DO UPDATE

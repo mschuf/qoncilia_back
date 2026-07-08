@@ -48,27 +48,22 @@ VALUES (
   -- ---------------------------------------------------------------------------
   -- Query OCRH (pagos/vouchers de tarjeta de credito de SAP B1). Obligatorio:
   --   * un solo SELECT (sin ;)  * "${CompanyDB}" como esquema  * $2 = Fecha Desde, $3 = Fecha Hasta
-  --   * alias EXACTOS "Referencia" / "Fecha" / "Importe" (los usa el matching)
-  -- Referencia = VoucherNum; si tu cod. de autorizacion va en ConfNum, cambialo.
+  --   * incluir "AbsId": el deposito del Service Layer lo usa (CreditLines[].AbsId)
+  -- Los alias del matching NO van en el SQL: el backend renombra en memoria
+  -- VoucherNum->Referencia, PayDate->Fecha, CreditSum->Importe
+  -- (sap-tarjetas-system.util.ts). Si el cod. de autorizacion va en ConfNum,
+  -- ajusta ese mapeo, no este query.
   -- ---------------------------------------------------------------------------
   $SIS$
 SELECT
-  T0."VoucherNum"                          AS "Referencia",
-  TO_VARCHAR(T0."PayDate", 'YYYY-MM-DD')   AS "Fecha",
-  TO_VARCHAR(TO_BIGINT(T0."CreditSum"))    AS "Importe",
-  T0."ConfNum"                             AS "Confirmacion",
-  T0."CrdCardNum"                          AS "NroTarjeta",
-  T0."CardName"                            AS "Titular",
-  T0."CardCode"                            AS "Cliente",
-  T0."NumOfPmnts"                          AS "Cuotas",
-  T0."CreditCurr"                          AS "Moneda",
-  T0."Deposited"                           AS "Depositado",
-  T0."DepNum"                              AS "NroDeposito"
-FROM "${CompanyDB}".OCRH T0
-WHERE CAST(T0."PayDate" AS DATE) BETWEEN $2 AND $3
-  AND T0."Canceled" = 'N'
-  AND T0."Storno" = 'N'
-ORDER BY T0."PayDate" DESC, T0."VoucherNum"
+  T0."AbsId",
+  T0."VoucherNum",
+  T0."PayDate",
+  T0."CreditSum",
+  T0."CreditCurr"
+FROM "${CompanyDB}"."OCRH" T0
+WHERE T0."Canceled" = 'N'
+  AND T0."PayDate" BETWEEN $2 AND $3
 $SIS$
 )
 ON CONFLICT (LOWER(ept_codigo)) DO UPDATE

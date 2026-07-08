@@ -1,23 +1,15 @@
-import type { PublicSapB1QueryTable } from "./interfaces/sap-erp.interfaces"
+import * as XLSX from "xlsx"
 
-// Parser del CSV de liquidacion de la procesadora (BANCARD u otra) para el modo
-// SAP_TARJETAS. El archivo se procesa EN MEMORIA y nunca se persiste: solo sirve
-// para matchear contra los datos del sistema (query OCRH).
+// Parser del archivo de liquidacion de la procesadora para SAP_TARJETAS.
+// Soporta CSV texto separado por ";" y Excel real (.xls/.xlsx). El archivo se
+// procesa en memoria y no se persiste.
 //
-// Caracteristicas del archivo:
-//  - separador ";" (punto y coma)
-//  - codificacion ISO-8859-1 (latin1)
-//  - campos opcionalmente entre comillas dobles, con comillas escapadas como ""
-//  - artificio Excel ="texto" para forzar texto (ej: ="00", ="174782")
-//
-// Se devuelven TODAS las filas del CSV (debito, credito, otros): NO se filtra por
-// "Tipo de tarjeta" — esa columna queda visible para que el usuario distinga el
-// tipo de cada registro. Las columnas clave se aliasan a los MISMOS nombres
-// canonicos que expone el lado sistema (ver sap-tarjetas-system.util.ts), porque
-// el motor compara por nombre de columna identico en ambos lados:
-//   Codigo autorizacion           -> "Referencia" (match con VoucherNum, exacta)
-//   Fecha de credito del comercio -> "Fecha"      (match con PayDate, +/- 7 dias)
-//   Importe                       -> "Importe"    (match con CreditSum, GATE DURO)
+// Solo se incluyen filas con "Tipo de tarjeta" = Debito. Las columnas clave se
+// aliasan a los mismos nombres canonicos del lado sistema:
+//   Codigo autorizacion           -> Referencia (match con VoucherNum)
+//   Fecha de credito del comercio -> Fecha      (match con PayDate)
+//   Importe                       -> Importe    (match con CreditSum)
+// "Nro. transaccion" se conserva para proponer VoucherAccount en el deposito.
 
 export type SapTarjetasCsvParseResult = {
   columns: string[]
@@ -25,13 +17,9 @@ export type SapTarjetasCsvParseResult = {
   totalRows: number
 }
 
-// Columnas del CSV de origen -> columna de salida. El orden define el orden de
-// las columnas de la tabla resultante: Referencia primero (alineada con el lado
-// sistema para facilitar la comparacion manual). Las primeras tres
-// (Referencia/Fecha/Importe) son las que usa el motor de matching; el resto es
-// informativo. No se exponen "Nro. transaccion" ni "Importe Neto" (a pedido).
 const COLUMN_MAP: Array<{ source: string; target: string; kind?: "date" }> = [
   { source: "Codigo autorizacion", target: "Referencia" },
+  { source: "Nro. transaccion", target: "Nro. transaccion" },
   { source: "Fecha de credito del comercio", target: "Fecha", kind: "date" },
   { source: "Importe", target: "Importe" },
   { source: "Tipo de tarjeta", target: "Tipo de tarjeta" },
@@ -42,13 +30,7 @@ const COLUMN_MAP: Array<{ source: string; target: string; kind?: "date" }> = [
 ]
 
 export function parseSapTarjetasCsv(buffer: Buffer): SapTarjetasCsvParseResult {
-  // El contrato es ISO-8859-1, pero si el usuario reexporta desde Excel como
-  // UTF-8 (con BOM EF BB BF) lo decodificamos como UTF-8 para no romper acentos.
-  const hasUtf8Bom =
-    buffer.length >= 3 && buffer[0] === 0xef && buffer[1] === 0xbb && buffer[2] === 0xbf
-  const content = (hasUtf8Bom ? buffer.subarray(3).toString("utf8") : buffer.toString("latin1"))
-    .replace(/^﻿/, "")
-  const matrix = parseDelimited(content, ";").filter((row) => row.some((cell) => cell !== ""))
+  const matrix = parseInputMatrix(buffer).filter((row) => row.some((cell) => cell !== ""))
 
   if (matrix.length === 0) {
     return { columns: COLUMN_MAP.map((item) => item.target), rows: [], totalRows: 0 }
@@ -69,7 +51,12 @@ export function parseSapTarjetasCsv(buffer: Buffer): SapTarjetasCsvParseResult {
     const rawRow = matrix[i]
     totalRows += 1
 
-    // Sin filtro por tipo de tarjeta: se incluyen todas las filas del CSV.
+    const typeIndex = headerIndex.get(normalizeHeader("Tipo de tarjeta"))
+    const cardType = typeIndex === undefined ? "" : cleanCell(rawRow[typeIndex] ?? "")
+    if (normalizeHeader(cardType) !== "debito") {
+      continue
+    }
+
     const row: Record<string, unknown> = {}
     for (const item of COLUMN_MAP) {
       const sourceIndex = headerIndex.get(normalizeHeader(item.source))
@@ -82,8 +69,40 @@ export function parseSapTarjetasCsv(buffer: Buffer): SapTarjetasCsvParseResult {
   return { columns, rows, totalRows }
 }
 
-// Lector CSV minimo con soporte de comillas dobles (escape "") y delimitador
-// configurable. Maneja saltos \n y \r\n.
+function parseInputMatrix(buffer: Buffer): string[][] {
+  if (looksLikeWorkbook(buffer)) {
+    const workbook = XLSX.read(buffer, { type: "buffer", cellDates: true })
+    const sheetName = workbook.SheetNames[0]
+    const worksheet = sheetName ? workbook.Sheets[sheetName] : null
+    if (worksheet) {
+      return XLSX.utils.sheet_to_json<string[]>(worksheet, {
+        header: 1,
+        raw: false,
+        blankrows: false,
+        defval: ""
+      })
+    }
+  }
+
+  const hasUtf8Bom =
+    buffer.length >= 3 && buffer[0] === 0xef && buffer[1] === 0xbb && buffer[2] === 0xbf
+  const content = (hasUtf8Bom ? buffer.subarray(3).toString("utf8") : buffer.toString("latin1"))
+    .replace(/^\u00ef\u00bb\u00bf/, "")
+    .replace(/^\ufeff/, "")
+  return parseDelimited(content, ";")
+}
+
+function looksLikeWorkbook(buffer: Buffer): boolean {
+  if (buffer.length < 4) return false
+  const isZip = buffer[0] === 0x50 && buffer[1] === 0x4b
+  const isOle =
+    buffer[0] === 0xd0 &&
+    buffer[1] === 0xcf &&
+    buffer[2] === 0x11 &&
+    buffer[3] === 0xe0
+  return isZip || isOle
+}
+
 function parseDelimited(content: string, delimiter: string): string[][] {
   const rows: string[][] = []
   let row: string[] = []
@@ -107,9 +126,6 @@ function parseDelimited(content: string, delimiter: string): string[][] {
       continue
     }
 
-    // Solo se abre comilla al INICIO del campo (RFC 4180). Asi tanto el caso
-    // CSV-citado ("=""174782""") como el crudo (="174782") se preservan literales
-    // y cleanCell quita el artificio Excel.
     if (char === '"' && field === "") {
       inQuotes = true
     } else if (char === delimiter) {
@@ -133,7 +149,6 @@ function parseDelimited(content: string, delimiter: string): string[][] {
   return rows
 }
 
-// Quita el artificio Excel ="..." y espacios sobrantes. "=\"00\"" -> "00".
 function cleanCell(value: string): string {
   const trimmed = value.trim()
   const excelText = /^="(.*)"$/.exec(trimmed)
@@ -143,14 +158,12 @@ function cleanCell(value: string): string {
 function normalizeHeader(value: string): string {
   return value
     .normalize("NFD")
-    .replace(/[̀-ͯ]/g, "")
+    .replace(/[\u0300-\u036f]/g, "")
     .replace(/\s+/g, " ")
     .trim()
     .toLowerCase()
 }
 
-// "05/06/2026 16:35" -> "2026-06-05". Si no matchea dd/mm/yyyy, devuelve el
-// valor original (el motor de matching lo intentara parsear igual).
 function toIsoDate(value: string): string {
   const match = /^(\d{1,2})\/(\d{1,2})\/(\d{4})/.exec(value)
   if (!match) return value
