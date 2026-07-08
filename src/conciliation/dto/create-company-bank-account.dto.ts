@@ -1,12 +1,13 @@
 import { Transform, Type } from "class-transformer";
 import { IsBoolean, IsInt, IsNotEmpty, IsOptional, IsString, MaxLength, Min } from "class-validator";
 
-const emptyToUndefined = ({ value }: { value: unknown }) => {
-  if (typeof value === "string" && value.trim() === "") {
-    return undefined;
-  }
+const trimString = ({ value }: { value: unknown }) =>
+  typeof value === "string" ? value.trim() : value;
 
-  return value;
+const emptyToNull = ({ value }: { value: unknown }) => {
+  if (typeof value !== "string") return value;
+  const trimmed = value.trim();
+  return trimmed === "" ? null : trimmed;
 };
 
 const toBoolean = ({ value }: { value: unknown }) => {
@@ -28,37 +29,37 @@ export class CreateCompanyBankAccountDto {
   @Min(1)
   bankId!: number;
 
-  @Transform(emptyToUndefined)
+  @Transform(trimString)
   @IsString()
   @IsNotEmpty()
   @MaxLength(160)
   name!: string;
 
-  @Transform(emptyToUndefined)
+  @Transform(trimString)
   @IsString()
   @IsNotEmpty()
   @MaxLength(20)
   currency!: string;
 
-  @Transform(emptyToUndefined)
+  @Transform(trimString)
   @IsString()
   @IsNotEmpty()
   @MaxLength(80)
   accountNumber!: string;
 
-  @Transform(emptyToUndefined)
+  @Transform(emptyToNull)
   @IsOptional()
   @IsString()
   @MaxLength(80)
   bankErpId?: string;
 
-  @Transform(emptyToUndefined)
+  @Transform(trimString)
   @IsString()
   @IsNotEmpty()
   @MaxLength(80)
   majorAccountNumber!: string;
 
-  @Transform(emptyToUndefined)
+  @Transform(emptyToNull)
   @IsOptional()
   @IsString()
   @MaxLength(80)

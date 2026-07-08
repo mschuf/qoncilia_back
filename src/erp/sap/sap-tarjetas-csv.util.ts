@@ -10,6 +10,7 @@ import * as XLSX from "xlsx"
 //   Fecha de credito del comercio -> Fecha      (match con PayDate)
 //   Importe                       -> Importe    (match con CreditSum)
 // "Nro. transaccion" se conserva para proponer VoucherAccount en el deposito.
+// "Moneda" se conserva como dato informativo para revisar las filas importadas.
 
 export type SapTarjetasCsvParseResult = {
   columns: string[]
@@ -21,6 +22,7 @@ const COLUMN_MAP: Array<{ source: string; target: string; kind?: "date" }> = [
   { source: "Codigo autorizacion", target: "Referencia" },
   { source: "Nro. transaccion", target: "Nro. transaccion" },
   { source: "Fecha de credito del comercio", target: "Fecha", kind: "date" },
+  { source: "Moneda", target: "Moneda" },
   { source: "Importe", target: "Importe" },
   { source: "Tipo de tarjeta", target: "Tipo de tarjeta" },
   { source: "Marca", target: "Marca" },
