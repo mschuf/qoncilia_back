@@ -67,6 +67,9 @@ type SapTarjetasUploadFile = {
   originalname?: string
 }
 
+// Comentario por defecto del asiento del deposito de tarjetas (flujo BANCARD).
+const SAP_TARJETAS_DEFAULT_JOURNAL_REMARKS = "COMPRA P.O.S BANCARD"
+
 type SapReadableRow = {
   rowId?: string
   sourceRowId?: string
@@ -440,6 +443,7 @@ export class SapErpService {
     }
 
     let accountCode: string | null = null
+    let paymentAccountCode: string | null = null
     if (payload.companyBankAccountId) {
       const account = await this.requireCompanyBankAccountForConfig(
         actor,
@@ -447,6 +451,9 @@ export class SapErpService {
         payload.companyBankAccountId
       )
       accountCode = this.normalizeRequired(account.majorAccountNumber, "Cuenta Mayor")
+      // "Cuenta Pago ERP" de la cuenta bancaria: el front la manda como
+      // BankAccountNum (cabecera) al crear el deposito.
+      paymentAccountCode = this.normalizeOptional(account.paymentAccountNumber)
     }
 
     const systemQuery = this.prepareSapB1PreviewQuery(
@@ -471,6 +478,7 @@ export class SapErpService {
         companyErpConfigName: config.name,
         companyDb,
         accountCode,
+        paymentAccountCode,
         dateFrom,
         dateTo,
         system
@@ -1545,6 +1553,12 @@ export class SapErpService {
   ): SapTarjetasDepositPayload {
     const depositAccount = this.normalizeRequired(payload.depositAccount, "DepositAccount")
     const voucherAccount = this.normalizeOptional(payload.voucherAccount) ?? depositAccount
+    // Comentario del asiento: el usuario puede editarlo/ampliarlo; si viene vacio
+    // se aplica el default del flujo BANCARD.
+    const journalRemarks =
+      this.normalizeOptional(payload.journalRemarks) ?? SAP_TARJETAS_DEFAULT_JOURNAL_REMARKS
+    // "Cuenta Pago ERP" de la cuenta bancaria (cabecera BankAccountNum).
+    const bankAccountNum = this.normalizeOptional(payload.bankAccountNum)
     const seenAbsIds = new Set<number>()
     const creditLines = payload.creditLines
       .map((line) => this.toPositiveInteger(line.absId))
@@ -1564,7 +1578,9 @@ export class SapErpService {
       DepositAccount: depositAccount,
       DepositType: "dtCredit",
       ReconcileAfterDeposit: "tNO",
-      VoucherAccount: voucherAccount
+      VoucherAccount: voucherAccount,
+      JournalRemarks: journalRemarks,
+      ...(bankAccountNum ? { BankAccountNum: bankAccountNum } : {})
     }
   }
 

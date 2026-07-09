@@ -61,6 +61,8 @@ export interface PublicSapTarjetasSystemQueryResult {
   companyErpConfigName: string
   companyDb: string
   accountCode: string | null
+  // "Cuenta Pago ERP" de la cuenta bancaria: viaja como BankAccountNum en el deposito.
+  paymentAccountCode: string | null
   dateFrom: string
   dateTo: string
   system: PublicSapB1QueryTable
@@ -139,4 +141,7 @@ export interface SapTarjetasDepositPayload extends Record<string, unknown> {
   DepositType: "dtCredit"
   ReconcileAfterDeposit: "tNO"
   VoucherAccount: string
+  JournalRemarks: string
+  // Cabecera: "Cuenta Pago ERP" de la cuenta bancaria. Se omite si no esta configurada.
+  BankAccountNum?: string
 }
