@@ -137,5 +137,6 @@ export interface SapTarjetasDepositPayload extends Record<string, unknown> {
   CreditLines: SapTarjetasDepositCreditLinePayload[]
   DepositAccount: string
   DepositType: "dtCredit"
+  ReconcileAfterDeposit: "tNO"
   VoucherAccount: string
 }

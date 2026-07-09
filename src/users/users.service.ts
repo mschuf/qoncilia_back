@@ -551,6 +551,8 @@ export class UsersService {
           AppModuleCode.HOME,
           AppModuleCode.PROFILE,
           AppModuleCode.CONCILIATION,
+          AppModuleCode.BANK_CONCILIATION,
+          AppModuleCode.CARD_PAYMENT,
           AppModuleCode.USERS,
           AppModuleCode.LAYOUT_MANAGEMENT,
           AppModuleCode.ACCESS_MATRIX,
@@ -563,13 +565,33 @@ export class UsersService {
           AppModuleCode.HOME,
           AppModuleCode.PROFILE,
           AppModuleCode.CONCILIATION,
+          AppModuleCode.BANK_CONCILIATION,
+          AppModuleCode.CARD_PAYMENT,
           AppModuleCode.USERS,
           AppModuleCode.LAYOUT_MANAGEMENT,
           AppModuleCode.ERP_MANAGEMENT
         ]
       ],
-      [Role.GESTOR_COBRANZA, [AppModuleCode.HOME, AppModuleCode.PROFILE, AppModuleCode.CONCILIATION]],
-      [Role.GESTOR_PAGOS, [AppModuleCode.HOME, AppModuleCode.PROFILE, AppModuleCode.CONCILIATION]]
+      [
+        Role.GESTOR_COBRANZA,
+        [
+          AppModuleCode.HOME,
+          AppModuleCode.PROFILE,
+          AppModuleCode.CONCILIATION,
+          AppModuleCode.BANK_CONCILIATION,
+          AppModuleCode.CARD_PAYMENT
+        ]
+      ],
+      [
+        Role.GESTOR_PAGOS,
+        [
+          AppModuleCode.HOME,
+          AppModuleCode.PROFILE,
+          AppModuleCode.CONCILIATION,
+          AppModuleCode.BANK_CONCILIATION,
+          AppModuleCode.CARD_PAYMENT
+        ]
+      ]
     ];
 
     const toPersist: CompanyRoleModule[] = [];

@@ -56,7 +56,6 @@ export class ConciliationController {
 
   @Get("catalog")
   @Roles(Role.ADMIN, Role.IS_SUPER_ADMIN, Role.GESTOR_COBRANZA, Role.GESTOR_PAGOS)
-  @RequiredModule(AppModuleCode.CONCILIATION)
   listCatalog(@CurrentUser() actor: AuthUser, @Query() query: ConciliationKpiQueryDto) {
     return this.conciliationService.listCatalog(actor, query.userId);
   }
@@ -305,7 +304,6 @@ export class ConciliationController {
 
   @Get("kpis")
   @Roles(Role.ADMIN, Role.IS_SUPER_ADMIN, Role.GESTOR_COBRANZA, Role.GESTOR_PAGOS)
-  @RequiredModule(AppModuleCode.CONCILIATION)
   getKpis(@CurrentUser() actor: AuthUser, @Query() query: ConciliationKpiQueryDto) {
     return this.conciliationService.getKpis(actor, query.userId);
   }

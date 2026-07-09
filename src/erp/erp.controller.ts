@@ -34,14 +34,24 @@ export class ErpController {
 
   @Get("reference")
   @Roles(Role.GESTOR_COBRANZA, Role.GESTOR_PAGOS, Role.ADMIN, Role.IS_SUPER_ADMIN)
-  @RequiredModule(AppModuleCode.ERP_MANAGEMENT, AppModuleCode.CONCILIATION)
+  @RequiredModule(
+    AppModuleCode.ERP_MANAGEMENT,
+    AppModuleCode.CONCILIATION,
+    AppModuleCode.BANK_CONCILIATION,
+    AppModuleCode.CARD_PAYMENT
+  )
   listReference(@CurrentUser() actor: AuthUser) {
     return this.erpService.listReference(actor)
   }
 
   @Get("configs")
   @Roles(Role.GESTOR_COBRANZA, Role.GESTOR_PAGOS, Role.ADMIN, Role.IS_SUPER_ADMIN)
-  @RequiredModule(AppModuleCode.ERP_MANAGEMENT, AppModuleCode.CONCILIATION)
+  @RequiredModule(
+    AppModuleCode.ERP_MANAGEMENT,
+    AppModuleCode.CONCILIATION,
+    AppModuleCode.BANK_CONCILIATION,
+    AppModuleCode.CARD_PAYMENT
+  )
   listCompanyErpConfigs(@CurrentUser() actor: AuthUser, @Query() query: ListCompanyErpConfigsQueryDto) {
     return this.erpService.listCompanyErpConfigs(actor, query)
   }

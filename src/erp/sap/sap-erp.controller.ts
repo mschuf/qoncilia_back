@@ -36,7 +36,12 @@ type UploadedMemoryFile = {
 
 @Controller("erp/sap")
 @UseGuards(JwtAuthGuard, RolesGuard, ModuleAccessGuard)
-@RequiredModule(AppModuleCode.ERP_MANAGEMENT, AppModuleCode.CONCILIATION)
+@RequiredModule(
+  AppModuleCode.ERP_MANAGEMENT,
+  AppModuleCode.CONCILIATION,
+  AppModuleCode.BANK_CONCILIATION,
+  AppModuleCode.CARD_PAYMENT
+)
 export class SapErpController {
   constructor(private readonly sapErpService: SapErpService) {}
 

@@ -3,6 +3,7 @@ import {
   ArrayMinSize,
   IsArray,
   IsInt,
+  IsOptional,
   IsString,
   MaxLength,
   Min,
@@ -31,9 +32,10 @@ export class SendSapTarjetasDepositDto {
   depositAccount!: string
 
   @Transform(trimString)
+  @IsOptional()
   @IsString()
   @MaxLength(80)
-  voucherAccount!: string
+  voucherAccount?: string
 
   @IsArray()
   @ArrayMinSize(1)

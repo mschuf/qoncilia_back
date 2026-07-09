@@ -1544,7 +1544,7 @@ export class SapErpService {
     payload: SendSapTarjetasDepositDto
   ): SapTarjetasDepositPayload {
     const depositAccount = this.normalizeRequired(payload.depositAccount, "DepositAccount")
-    const voucherAccount = this.normalizeRequired(payload.voucherAccount, "VoucherAccount")
+    const voucherAccount = this.normalizeOptional(payload.voucherAccount) ?? depositAccount
     const seenAbsIds = new Set<number>()
     const creditLines = payload.creditLines
       .map((line) => this.toPositiveInteger(line.absId))
@@ -1563,6 +1563,7 @@ export class SapErpService {
       CreditLines: creditLines,
       DepositAccount: depositAccount,
       DepositType: "dtCredit",
+      ReconcileAfterDeposit: "tNO",
       VoucherAccount: voucherAccount
     }
   }
