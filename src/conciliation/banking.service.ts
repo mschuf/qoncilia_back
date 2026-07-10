@@ -173,6 +173,7 @@ export class BankingService {
         "account.bankErpId",
         "account.majorAccountNumber",
         "account.paymentAccountNumber",
+        "account.branchName",
         "account.active",
         "company.id",
         "company.name",
@@ -338,6 +339,7 @@ export class BankingService {
       bankErpId: this.normalizeOptional(payload.bankErpId),
       majorAccountNumber: this.normalizeRequired(payload.majorAccountNumber, "majorAccountNumber"),
       paymentAccountNumber: this.normalizeOptional(payload.paymentAccountNumber),
+      branchName: this.normalizeOptional(payload.branchName),
       active: payload.active ?? true
     });
 
@@ -393,6 +395,9 @@ export class BankingService {
     }
     if (payload.paymentAccountNumber !== undefined) {
       account.paymentAccountNumber = this.normalizeOptional(payload.paymentAccountNumber);
+    }
+    if (payload.branchName !== undefined) {
+      account.branchName = this.normalizeOptional(payload.branchName);
     }
     if (payload.active !== undefined) {
       account.active = payload.active;
@@ -633,6 +638,7 @@ export class BankingService {
         bankErpId: true,
         majorAccountNumber: true,
         paymentAccountNumber: true,
+        branchName: true,
         active: true,
         company: { id: true, name: true },
         bank: { id: true, name: true, branch: true, active: true, company: { id: true }, user: { id: true, usrLogin: true } }
@@ -734,6 +740,7 @@ export class BankingService {
       bankErpId: account.bankErpId ?? "",
       majorAccountNumber: account.majorAccountNumber,
       paymentAccountNumber: account.paymentAccountNumber,
+      branchName: account.branchName,
       active: account.active
     };
   }

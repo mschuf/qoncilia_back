@@ -51,6 +51,11 @@ export class CompanyBankAccount {
   @Column({ name: "cuenta_bancaria_numero_pago", type: "varchar", length: 80, nullable: true })
   paymentAccountNumber!: string | null;
 
+  // Sucursal de la cuenta (NO la del banco): cabecera BankBranch del deposito
+  // SAP de tarjetas. Requiere sql/39_add_sucursal_cuentas_bancarias.sql.
+  @Column({ name: "cuenta_bancaria_sucursal", type: "varchar", length: 120, nullable: true })
+  branchName!: string | null;
+
   @Column({ name: "cuenta_bancaria_activa", type: "boolean", default: true })
   active!: boolean;
 

@@ -65,6 +65,13 @@ export class CreateCompanyBankAccountDto {
   @MaxLength(80)
   paymentAccountNumber?: string;
 
+  // Sucursal de la cuenta (cabecera BankBranch del deposito SAP de tarjetas).
+  @Transform(emptyToNull)
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  branchName?: string;
+
   @Transform(toBoolean)
   @IsOptional()
   @IsBoolean()

@@ -45,7 +45,9 @@ import {
   PublicSapB1SmartMatch,
   PublicSapExternalReconciliationResult,
   PublicSapSessionStatus,
+  PublicSapTarjetasBulkDepositResult,
   PublicSapTarjetasCsvParseResult,
+  PublicSapTarjetasDepositItemResult,
   PublicSapTarjetasSystemQueryResult,
   SapExternalReconciliationAccountType,
   SapExternalReconciliationBankStatementLinePayload,
@@ -444,6 +446,8 @@ export class SapErpService {
 
     let accountCode: string | null = null
     let paymentAccountCode: string | null = null
+    let bankName: string | null = null
+    let bankBranch: string | null = null
     if (payload.companyBankAccountId) {
       const account = await this.requireCompanyBankAccountForConfig(
         actor,
@@ -451,9 +455,14 @@ export class SapErpService {
         payload.companyBankAccountId
       )
       accountCode = this.normalizeRequired(account.majorAccountNumber, "Cuenta Mayor")
-      // "Cuenta Pago ERP" de la cuenta bancaria: el front la manda como
-      // BankAccountNum (cabecera) al crear el deposito.
+      // Cabeceras del deposito de tarjetas: el front las manda al crear el
+      // deposito. BankAccountNum = "Cuenta Pago ERP"; Bank = descripcion del
+      // banco (cae al nombre si no tiene); BankBranch = sucursal de la CUENTA.
       paymentAccountCode = this.normalizeOptional(account.paymentAccountNumber)
+      bankName =
+        this.normalizeOptional(account.bank?.description) ??
+        this.normalizeOptional(account.bank?.name)
+      bankBranch = this.normalizeOptional(account.branchName)
     }
 
     const systemQuery = this.prepareSapB1PreviewQuery(
@@ -479,6 +488,8 @@ export class SapErpService {
         companyDb,
         accountCode,
         paymentAccountCode,
+        bankName,
+        bankBranch,
         dateFrom,
         dateTo,
         system
@@ -528,10 +539,13 @@ export class SapErpService {
     }
   }
 
+  // Deposito masivo: crea UN deposito en SAP por cada AbsId (misma cabecera y
+  // JournalRemarks para todos). Los POST van en secuencia y una falla individual
+  // no corta el lote (salvo 401/403, que invalida la sesion y aborta el resto).
   async createSapTarjetasDeposit(
     actor: AuthUser,
     payload: SendSapTarjetasDepositDto
-  ): Promise<PublicSapExternalReconciliationResult> {
+  ): Promise<PublicSapTarjetasBulkDepositResult> {
     this.ensureCanRunExternalReconciliation(actor)
 
     const config = await this.requireConfigForActor(actor, payload.companyErpConfigId)
@@ -549,82 +563,131 @@ export class SapErpService {
         "sapDepositEndpoint"
       ]) ?? "Deposits"
     const endpoint = this.sapB1Service.joinUrl(config.serviceLayerUrl, endpointPath)
-    const sapPayload = this.buildSapTarjetasDepositPayload(payload)
+    const { CreditLines: creditLines, ...depositHeader } =
+      this.buildSapTarjetasDepositPayload(payload)
 
-    try {
-      this.logger.log(
-        this.stringifyLogPayload({
-          event: "sap_tarjetas_deposit_request",
-          actorId: actor.id,
-          companyErpConfigId: config.id,
-          endpoint,
-          payload: sapPayload
-        })
-      )
-
-      const cookieHeader = this.decryptSessionCookie(session.sessionCookieEncrypted)
-      const sapResponse = await this.sapB1Service.createDeposit(
-        config,
-        cookieHeader,
-        sapPayload,
-        endpointPath
-      )
-      const now = new Date()
-      session.lastValidatedAt = now
-      await this.userErpSessionRepository.save(session)
-
-      this.logger.log(
-        this.stringifyLogPayload({
-          event: "sap_tarjetas_deposit_success",
-          actorId: actor.id,
-          companyErpConfigId: config.id,
-          endpoint,
-          httpStatus: sapResponse.statusCode,
-          responsePayload: sapResponse.bodyJson
-        })
-      )
-
-      return {
-        id: 0,
-        reconciliationId: null,
+    this.logger.log(
+      this.stringifyLogPayload({
+        event: "sap_tarjetas_bulk_deposit_request",
+        actorId: actor.id,
         companyErpConfigId: config.id,
-        companyErpConfigName: config.name,
-        documentType: "sap_tarjetas_deposit",
-        status: "success",
         endpoint,
-        httpStatus: sapResponse.statusCode,
-        responsePayload: sapResponse.bodyJson,
-        errorMessage: null,
-        externalReconciliationNo: null,
-        externalReference: this.extractExternalReference(sapResponse.bodyJson, [
-          "DepositNumber",
-          "DeposNum",
-          "AbsEntry",
-          "AbsoluteEntry",
-          "DocEntry",
-          "Number"
-        ]),
-        createdAt: now,
-        updatedAt: now
-      }
-    } catch (error) {
-      if (error instanceof ExternalRequestError && [401, 403].includes(error.statusCode ?? 0)) {
-        session.invalidatedAt = new Date()
-        await this.userErpSessionRepository.save(session)
-      }
+        deposits: creditLines.length,
+        header: depositHeader
+      })
+    )
 
-      this.logger.error(
-        this.stringifyLogPayload({
-          event: "sap_tarjetas_deposit_failed",
-          actorId: actor.id,
-          companyErpConfigId: config.id,
-          endpoint,
-          error: error instanceof Error ? error.message : String(error),
-          requestPayload: sapPayload
+    const cookieHeader = this.decryptSessionCookie(session.sessionCookieEncrypted)
+    const results: PublicSapTarjetasDepositItemResult[] = []
+    let sessionInvalidated = false
+
+    for (let index = 0; index < creditLines.length; index += 1) {
+      const line = creditLines[index]
+      const sapPayload: SapTarjetasDepositPayload = {
+        ...depositHeader,
+        CreditLines: [line]
+      } as SapTarjetasDepositPayload
+
+      try {
+        const sapResponse = await this.sapB1Service.createDeposit(
+          config,
+          cookieHeader,
+          sapPayload,
+          endpointPath
+        )
+        results.push({
+          absId: line.AbsId,
+          status: "success",
+          httpStatus: sapResponse.statusCode,
+          externalReference: this.extractExternalReference(sapResponse.bodyJson, [
+            "DepositNumber",
+            "DeposNum",
+            "AbsEntry",
+            "AbsoluteEntry",
+            "DocEntry",
+            "Number"
+          ]),
+          errorMessage: null
         })
-      )
-      const mapped = this.mapExternalError(error)
-      throw mapped.exception
+      } catch (error) {
+        const mapped = this.mapExternalError(error)
+
+        this.logger.error(
+          this.stringifyLogPayload({
+            event: "sap_tarjetas_deposit_item_failed",
+            actorId: actor.id,
+            companyErpConfigId: config.id,
+            endpoint,
+            absId: line.AbsId,
+            error: mapped.message,
+            requestPayload: sapPayload
+          })
+        )
+
+        if (error instanceof ExternalRequestError && [401, 403].includes(error.statusCode ?? 0)) {
+          session.invalidatedAt = new Date()
+          await this.userErpSessionRepository.save(session)
+          sessionInvalidated = true
+
+          results.push({
+            absId: line.AbsId,
+            status: "error",
+            httpStatus: mapped.statusCode ?? null,
+            externalReference: null,
+            errorMessage: `Sesion ERP invalida: ${mapped.message}`
+          })
+          // Los AbsId restantes no se intentan: sin sesion fallarian todos igual.
+          for (let rest = index + 1; rest < creditLines.length; rest += 1) {
+            results.push({
+              absId: creditLines[rest].AbsId,
+              status: "error",
+              httpStatus: null,
+              externalReference: null,
+              errorMessage: "No enviado: la sesion ERP se invalido en un deposito anterior."
+            })
+          }
+          break
+        }
+
+        results.push({
+          absId: line.AbsId,
+          status: "error",
+          httpStatus: mapped.statusCode ?? null,
+          externalReference: null,
+          errorMessage: mapped.message
+        })
+      }
+    }
+
+    if (!sessionInvalidated) {
+      session.lastValidatedAt = new Date()
+      await this.userErpSessionRepository.save(session)
+    }
+
+    const succeeded = results.filter((item) => item.status === "success").length
+    const failed = results.length - succeeded
+
+    this.logger.log(
+      this.stringifyLogPayload({
+        event: "sap_tarjetas_bulk_deposit_result",
+        actorId: actor.id,
+        companyErpConfigId: config.id,
+        endpoint,
+        total: results.length,
+        succeeded,
+        failed,
+        results
+      })
+    )
+
+    return {
+      companyErpConfigId: config.id,
+      companyErpConfigName: config.name,
+      endpoint,
+      total: results.length,
+      succeeded,
+      failed,
+      results
     }
   }
 
@@ -1553,12 +1616,23 @@ export class SapErpService {
   ): SapTarjetasDepositPayload {
     const depositAccount = this.normalizeRequired(payload.depositAccount, "DepositAccount")
     const voucherAccount = this.normalizeOptional(payload.voucherAccount) ?? depositAccount
+    // Fecha del deposito (obligatoria): llega YYYY-MM-DD (o ISO) del front y el
+    // Service Layer la recibe como medianoche UTC.
+    const depositDateRaw = this.normalizeRequired(payload.depositDate, "DepositDate")
+    const depositDateMatch = /^(\d{4}-\d{2}-\d{2})/.exec(depositDateRaw)
+    if (!depositDateMatch) {
+      throw new BadRequestException("DepositDate invalida: usa el formato YYYY-MM-DD.")
+    }
+    const depositDate = `${depositDateMatch[1]}T00:00:00Z`
     // Comentario del asiento: el usuario puede editarlo/ampliarlo; si viene vacio
     // se aplica el default del flujo BANCARD.
     const journalRemarks =
       this.normalizeOptional(payload.journalRemarks) ?? SAP_TARJETAS_DEFAULT_JOURNAL_REMARKS
-    // "Cuenta Pago ERP" de la cuenta bancaria (cabecera BankAccountNum).
+    // Cabeceras con datos de la cuenta bancaria: BankAccountNum = "Cuenta Pago
+    // ERP", Bank = descripcion del banco, BankBranch = sucursal de la cuenta.
     const bankAccountNum = this.normalizeOptional(payload.bankAccountNum)
+    const bank = this.normalizeOptional(payload.bank)
+    const bankBranch = this.normalizeOptional(payload.bankBranch)
     const seenAbsIds = new Set<number>()
     const creditLines = payload.creditLines
       .map((line) => this.toPositiveInteger(line.absId))
@@ -1579,8 +1653,11 @@ export class SapErpService {
       DepositType: "dtCredit",
       ReconcileAfterDeposit: "tNO",
       VoucherAccount: voucherAccount,
+      DepositDate: depositDate,
       JournalRemarks: journalRemarks,
-      ...(bankAccountNum ? { BankAccountNum: bankAccountNum } : {})
+      ...(bankAccountNum ? { BankAccountNum: bankAccountNum } : {}),
+      ...(bank ? { Bank: bank } : {}),
+      ...(bankBranch ? { BankBranch: bankBranch } : {})
     }
   }
 

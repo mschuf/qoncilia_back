@@ -63,6 +63,10 @@ export interface PublicSapTarjetasSystemQueryResult {
   accountCode: string | null
   // "Cuenta Pago ERP" de la cuenta bancaria: viaja como BankAccountNum en el deposito.
   paymentAccountCode: string | null
+  // Descripcion del banco: viaja como Bank (cabecera) en el deposito.
+  bankName: string | null
+  // Sucursal de la CUENTA bancaria (no la del banco): viaja como BankBranch.
+  bankBranch: string | null
   dateFrom: string
   dateTo: string
   system: PublicSapB1QueryTable
@@ -141,7 +145,34 @@ export interface SapTarjetasDepositPayload extends Record<string, unknown> {
   DepositType: "dtCredit"
   ReconcileAfterDeposit: "tNO"
   VoucherAccount: string
+  // Cabecera: fecha del deposito, formato "YYYY-MM-DDT00:00:00Z".
+  DepositDate: string
   JournalRemarks: string
   // Cabecera: "Cuenta Pago ERP" de la cuenta bancaria. Se omite si no esta configurada.
   BankAccountNum?: string
+  // Cabecera: descripcion del banco. Se omite si no esta configurada.
+  Bank?: string
+  // Cabecera: sucursal de la cuenta bancaria. Se omite si no esta configurada.
+  BankBranch?: string
+}
+
+// Deposito masivo: se crea UN deposito en SAP por cada AbsId matcheado (misma
+// cabecera/JournalRemarks para todos). El resultado detalla registro por registro
+// para que el front conserve los fallidos y permita reintentar solo esos.
+export interface PublicSapTarjetasDepositItemResult {
+  absId: number
+  status: "success" | "error"
+  httpStatus: number | null
+  externalReference: string | null
+  errorMessage: string | null
+}
+
+export interface PublicSapTarjetasBulkDepositResult {
+  companyErpConfigId: number
+  companyErpConfigName: string
+  endpoint: string
+  total: number
+  succeeded: number
+  failed: number
+  results: PublicSapTarjetasDepositItemResult[]
 }

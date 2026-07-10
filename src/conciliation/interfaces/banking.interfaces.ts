@@ -27,6 +27,8 @@ export interface PublicCompanyBankAccount {
   bankErpId: string;
   majorAccountNumber: string;
   paymentAccountNumber: string | null;
+  // Sucursal de la cuenta (cabecera BankBranch del deposito SAP de tarjetas).
+  branchName: string | null;
   active: boolean;
 }
 

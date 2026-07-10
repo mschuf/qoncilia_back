@@ -2,6 +2,7 @@ import { Transform, Type } from "class-transformer"
 import {
   ArrayMinSize,
   IsArray,
+  IsDateString,
   IsInt,
   IsOptional,
   IsString,
@@ -31,6 +32,12 @@ export class SendSapTarjetasDepositDto {
   @MaxLength(80)
   depositAccount!: string
 
+  // Fecha del deposito (cabecera DepositDate). Obligatoria; el front manda
+  // YYYY-MM-DD y el backend la envia al Service Layer como medianoche UTC.
+  @Transform(trimString)
+  @IsDateString()
+  depositDate!: string
+
   @Transform(trimString)
   @IsOptional()
   @IsString()
@@ -51,6 +58,20 @@ export class SendSapTarjetasDepositDto {
   @IsString()
   @MaxLength(80)
   bankAccountNum?: string
+
+  // Descripcion del banco (cabecera Bank).
+  @Transform(trimString)
+  @IsOptional()
+  @IsString()
+  @MaxLength(160)
+  bank?: string
+
+  // Sucursal de la cuenta bancaria (cabecera BankBranch).
+  @Transform(trimString)
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  bankBranch?: string
 
   @IsArray()
   @ArrayMinSize(1)
