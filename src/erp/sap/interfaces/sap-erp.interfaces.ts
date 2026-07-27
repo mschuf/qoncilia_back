@@ -143,7 +143,8 @@ export interface SapTarjetasDepositPayload extends Record<string, unknown> {
   CreditLines: SapTarjetasDepositCreditLinePayload[]
   DepositAccount: string
   DepositType: "dtCredit"
-  ReconcileAfterDeposit: "tNO"
+  // SAP reconcilia automaticamente los importes presentados al crear el deposito.
+  ReconcileAfterDeposit: "tYES"
   VoucherAccount: string
   // Cabecera: fecha del deposito, formato "YYYY-MM-DDT00:00:00Z".
   DepositDate: string

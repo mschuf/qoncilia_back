@@ -566,16 +566,18 @@ export class SapErpService {
     const { CreditLines: creditLines, ...depositHeader } =
       this.buildSapTarjetasDepositPayload(payload)
 
-    this.logger.log(
-      this.stringifyLogPayload({
-        event: "sap_tarjetas_bulk_deposit_request",
-        actorId: actor.id,
-        companyErpConfigId: config.id,
-        endpoint,
-        deposits: creditLines.length,
-        header: depositHeader
-      })
-    )
+    const batchRequestLog = {
+      event: "sap_tarjetas_bulk_deposit_request",
+      timestamp: new Date().toISOString(),
+      actorId: actor.id,
+      companyErpConfigId: config.id,
+      companyErpConfigName: config.name,
+      endpoint,
+      deposits: creditLines.length,
+      header: depositHeader
+    }
+    this.logger.log(this.stringifyLogPayload(batchRequestLog))
+    await this.persistSapTarjetasDepositLog(batchRequestLog)
 
     const cookieHeader = this.decryptSessionCookie(session.sessionCookieEncrypted)
     const results: PublicSapTarjetasDepositItemResult[] = []
@@ -588,6 +590,18 @@ export class SapErpService {
         CreditLines: [line]
       } as SapTarjetasDepositPayload
 
+      const itemRequestLog = {
+        event: "sap_tarjetas_deposit_item_request",
+        timestamp: new Date().toISOString(),
+        actorId: actor.id,
+        companyErpConfigId: config.id,
+        endpoint,
+        absId: line.AbsId,
+        requestPayload: sapPayload
+      }
+      this.logger.log(this.stringifyLogPayload(itemRequestLog))
+      await this.persistSapTarjetasDepositLog(itemRequestLog)
+
       try {
         const sapResponse = await this.sapB1Service.createDeposit(
           config,
@@ -595,7 +609,7 @@ export class SapErpService {
           sapPayload,
           endpointPath
         )
-        results.push({
+        const itemResult: PublicSapTarjetasDepositItemResult = {
           absId: line.AbsId,
           status: "success",
           httpStatus: sapResponse.statusCode,
@@ -608,21 +622,39 @@ export class SapErpService {
             "Number"
           ]),
           errorMessage: null
-        })
+        }
+        results.push(itemResult)
+
+        const itemSuccessLog = {
+          event: "sap_tarjetas_deposit_item_success",
+          timestamp: new Date().toISOString(),
+          actorId: actor.id,
+          companyErpConfigId: config.id,
+          endpoint,
+          absId: line.AbsId,
+          httpStatus: sapResponse.statusCode,
+          externalReference: itemResult.externalReference,
+          responsePayload: sapResponse.bodyJson
+        }
+        this.logger.log(this.stringifyLogPayload(itemSuccessLog))
+        await this.persistSapTarjetasDepositLog(itemSuccessLog)
       } catch (error) {
         const mapped = this.mapExternalError(error)
 
-        this.logger.error(
-          this.stringifyLogPayload({
-            event: "sap_tarjetas_deposit_item_failed",
-            actorId: actor.id,
-            companyErpConfigId: config.id,
-            endpoint,
-            absId: line.AbsId,
-            error: mapped.message,
-            requestPayload: sapPayload
-          })
-        )
+        const itemFailureLog = {
+          event: "sap_tarjetas_deposit_item_failed",
+          timestamp: new Date().toISOString(),
+          actorId: actor.id,
+          companyErpConfigId: config.id,
+          endpoint,
+          absId: line.AbsId,
+          httpStatus: mapped.statusCode ?? null,
+          error: mapped.message,
+          requestPayload: sapPayload,
+          responsePayload: mapped.responsePayload
+        }
+        this.logger.error(this.stringifyLogPayload(itemFailureLog))
+        await this.persistSapTarjetasDepositLog(itemFailureLog)
 
         if (error instanceof ExternalRequestError && [401, 403].includes(error.statusCode ?? 0)) {
           session.invalidatedAt = new Date()
@@ -667,18 +699,20 @@ export class SapErpService {
     const succeeded = results.filter((item) => item.status === "success").length
     const failed = results.length - succeeded
 
-    this.logger.log(
-      this.stringifyLogPayload({
-        event: "sap_tarjetas_bulk_deposit_result",
-        actorId: actor.id,
-        companyErpConfigId: config.id,
-        endpoint,
-        total: results.length,
-        succeeded,
-        failed,
-        results
-      })
-    )
+    const batchResultLog = {
+      event: "sap_tarjetas_bulk_deposit_result",
+      timestamp: new Date().toISOString(),
+      actorId: actor.id,
+      companyErpConfigId: config.id,
+      companyErpConfigName: config.name,
+      endpoint,
+      total: results.length,
+      succeeded,
+      failed,
+      results
+    }
+    this.logger.log(this.stringifyLogPayload(batchResultLog))
+    await this.persistSapTarjetasDepositLog(batchResultLog)
 
     return {
       companyErpConfigId: config.id,
@@ -1651,7 +1685,9 @@ export class SapErpService {
       CreditLines: creditLines,
       DepositAccount: depositAccount,
       DepositType: "dtCredit",
-      ReconcileAfterDeposit: "tNO",
+      // Equivale a marcar "Reconciliar importes tras presentacion" en SAP.
+      // SAP admite esta propiedad para depositos de cheques y tarjetas.
+      ReconcileAfterDeposit: "tYES",
       VoucherAccount: voucherAccount,
       DepositDate: depositDate,
       JournalRemarks: journalRemarks,
@@ -2404,6 +2440,22 @@ export class SapErpService {
     } catch (error) {
       this.logger.warn(
         `No se pudo guardar el log de conciliacion SAP en ${logFile}: ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      )
+    }
+  }
+
+  private async persistSapTarjetasDepositLog(payload: Record<string, unknown>): Promise<void> {
+    const logsDir = join(process.cwd(), "logs")
+    const logFile = join(logsDir, "sap-credit-card-deposits.log")
+
+    try {
+      await mkdir(logsDir, { recursive: true })
+      await appendFile(logFile, `${JSON.stringify(payload)}\n`, "utf8")
+    } catch (error) {
+      this.logger.warn(
+        `No se pudo guardar el log de depositos de tarjetas SAP en ${logFile}: ${
           error instanceof Error ? error.message : String(error)
         }`
       )
