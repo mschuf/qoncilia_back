@@ -4,8 +4,10 @@ import * as XLSX from "xlsx"
 // Soporta CSV texto separado por ";" y Excel real (.xls/.xlsx). El archivo se
 // procesa en memoria y no se persiste.
 //
-// Solo se incluyen filas con "Tipo de tarjeta" = Debito. Las columnas clave se
-// aliasan a los mismos nombres canonicos del lado sistema:
+// Se incluyen las filas con "Tipo de tarjeta" = Debito y las operaciones de
+// debito que la procesadora clasifica como "Otro" pero identifica mediante
+// "Prestacion". Las columnas clave se aliasan a los mismos nombres canonicos
+// del lado sistema:
 //   Codigo autorizacion           -> Referencia (match con VoucherNum)
 //   Fecha de credito del comercio -> Fecha      (match con PayDate)
 //   Importe                       -> Importe    (match con CreditSum)
@@ -25,11 +27,15 @@ const COLUMN_MAP: Array<{ source: string; target: string; kind?: "date" }> = [
   { source: "Moneda", target: "Moneda" },
   { source: "Importe", target: "Importe" },
   { source: "Tipo de tarjeta", target: "Tipo de tarjeta" },
+  { source: "Prestación", target: "Prestación" },
   { source: "Marca", target: "Marca" },
   { source: "Emisor", target: "Emisor" },
   { source: "Nro. tarjeta", target: "Nro. tarjeta" },
   { source: "Estado", target: "Estado" }
 ]
+
+const DEBIT_CARD_TYPE = "debito"
+const DEBIT_PRESENTATIONS = new Set(["td", "stqr", "tdtk", "tdqr"])
 
 export function parseSapTarjetasCsv(buffer: Buffer): SapTarjetasCsvParseResult {
   const matrix = parseInputMatrix(buffer).filter((row) => row.some((cell) => cell !== ""))
@@ -55,7 +61,13 @@ export function parseSapTarjetasCsv(buffer: Buffer): SapTarjetasCsvParseResult {
 
     const typeIndex = headerIndex.get(normalizeHeader("Tipo de tarjeta"))
     const cardType = typeIndex === undefined ? "" : cleanCell(rawRow[typeIndex] ?? "")
-    if (normalizeHeader(cardType) !== "debito") {
+    const presentationIndex = headerIndex.get(normalizeHeader("Prestación"))
+    const presentation =
+      presentationIndex === undefined ? "" : cleanCell(rawRow[presentationIndex] ?? "")
+    const isDebitOperation =
+      normalizeHeader(cardType) === DEBIT_CARD_TYPE ||
+      DEBIT_PRESENTATIONS.has(normalizeHeader(presentation))
+    if (!isDebitOperation) {
       continue
     }
 

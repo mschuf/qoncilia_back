@@ -73,7 +73,7 @@ export interface PublicSapTarjetasSystemQueryResult {
 }
 
 // Resultado de parsear el archivo de la procesadora. El archivo no se guarda:
-// includedRows = filas Debito incluidas para comparar contra el sistema.
+// includedRows = operaciones de debito incluidas para comparar contra el sistema.
 export interface PublicSapTarjetasCsvParseResult {
   fileName: string
   totalRows: number
