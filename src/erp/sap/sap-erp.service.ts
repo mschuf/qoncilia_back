@@ -401,11 +401,21 @@ export class SapErpService {
       ...payload.system.columns
     ])
     const referenceMatchMode = payload.referenceMatchMode ?? "exact"
+    const strictReferenceAmountMatch = payload.strictReferenceAmountMatch === true
+    const hasAmount = Boolean(
+      matchColumns.amount || matchColumns.debit || matchColumns.credit
+    )
+    if (strictReferenceAmountMatch && (!matchColumns.reference || !hasAmount)) {
+      throw new BadRequestException(
+        "El matching estricto de tarjetas requiere las columnas Referencia e Importe."
+      )
+    }
     const matches = this.calculateSapB1SmartMatches(
       systemRows,
       bankRows,
       matchColumns,
-      referenceMatchMode
+      referenceMatchMode,
+      strictReferenceAmountMatch
     )
     const matchedBankRowIds = new Set(matches.map((match) => match.bankRow.rowId))
     const matchedSystemRowIds = new Set(matches.map((match) => match.systemRow.rowId))
@@ -903,7 +913,8 @@ export class SapErpService {
     systemRows: ConciliationPreviewRow[],
     bankRows: ConciliationPreviewRow[],
     columns: SapB1MatchColumns,
-    referenceMatchMode: "exact" | "like" = "exact"
+    referenceMatchMode: "exact" | "like" = "exact",
+    strictReferenceAmountMatch = false
   ): PublicSapB1SmartMatch[] {
     const hasAmount = Boolean(columns.amount || columns.debit || columns.credit)
     if (!columns.reference && !columns.date && !hasAmount) return []
@@ -935,7 +946,15 @@ export class SapErpService {
             systemNet !== null &&
             bankNet !== null &&
             Math.abs(systemNet) > 0.0001 &&
-            Math.abs(systemNet - bankNet) < 0.0001
+            (strictReferenceAmountMatch
+              ? systemNet === bankNet
+              : Math.abs(systemNet - bankNet) < 0.0001)
+
+          // Pagos de tarjeta de OCHO A: no hay match automatico si falta Referencia,
+          // alguno de los importes no se puede leer o los importes difieren.
+          if (strictReferenceAmountMatch && (!referenceMatched || !amountMatched)) {
+            return null
+          }
 
           // El monto debe coincidir SIEMPRE: si hay columna(s) de importe y
           // ambos netos estan presentes pero no cuadran, no es match aunque la
@@ -1129,14 +1148,24 @@ export class SapErpService {
     mode: "exact" | "like"
   ): boolean {
     if (mode !== "like") return this.sapB1ExactMatch(left, right)
-    const normalizedLeft = this.normalizeSapB1ComparableText(left)
-    const normalizedRight = this.normalizeSapB1ComparableText(right)
+    const normalizedLeft = this.normalizeSapB1Reference(left)
+    const normalizedRight = this.normalizeSapB1Reference(right)
     if (!normalizedLeft || !normalizedRight) return false
     return (
       normalizedLeft === normalizedRight ||
       normalizedLeft.includes(normalizedRight) ||
       normalizedRight.includes(normalizedLeft)
     )
+  }
+
+  // La referencia es un identificador, no texto libre: se quitan espacios y
+  // separadores para que "Voucher # 000123" y "123" puedan compararse por
+  // contencion sin importar donde este el codigo dentro de la cadena.
+  private normalizeSapB1Reference(value: SapB1ComparableValue): string | null {
+    const normalized = this.normalizeSapB1ComparableText(value)
+    if (!normalized) return null
+    const reference = normalized.replace(/[^a-z0-9]/g, "")
+    return reference || null
   }
 
   private parseSapB1AmountValue(value: SapB1ComparableValue): number | null {

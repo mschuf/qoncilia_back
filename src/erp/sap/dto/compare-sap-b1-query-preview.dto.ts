@@ -1,6 +1,7 @@
 import { Type } from "class-transformer"
 import {
   IsArray,
+  IsBoolean,
   IsIn,
   IsInt,
   IsObject,
@@ -55,4 +56,10 @@ export class CompareSapB1QueryPreviewDto {
   @IsOptional()
   @IsIn(["exact", "like"])
   referenceMatchMode?: "exact" | "like"
+
+  // Pagos de tarjeta de OCHO A: exige referencia por contencion bidireccional
+  // y el importe identico en ambos lados antes del matching automatico.
+  @IsOptional()
+  @IsBoolean()
+  strictReferenceAmountMatch?: boolean
 }
