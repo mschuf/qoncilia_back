@@ -35,7 +35,7 @@ INSERT INTO public.modulos (
     'card_payment',
     'Pago de Tarjeta',
     '/pago-tarjeta',
-    'Conciliacion de liquidaciones de tarjeta debito contra OCRH (config ERP SAP_TARJETAS).',
+    'Conciliacion de liquidaciones de tarjeta debito y credito contra OCRH (config ERP SAP_TARJETAS).',
     TRUE
   )
 ON CONFLICT (mod_codigo) DO UPDATE

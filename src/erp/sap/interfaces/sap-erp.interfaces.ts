@@ -73,7 +73,7 @@ export interface PublicSapTarjetasSystemQueryResult {
 }
 
 // Resultado de parsear el archivo de la procesadora. El archivo no se guarda:
-// includedRows = operaciones de debito incluidas para comparar contra el sistema.
+// includedRows = operaciones de debito y credito incluidas para comparar contra el sistema.
 export interface PublicSapTarjetasCsvParseResult {
   fileName: string
   totalRows: number
@@ -157,9 +157,9 @@ export interface SapTarjetasDepositPayload extends Record<string, unknown> {
   BankBranch?: string
 }
 
-// Deposito masivo: se crea UN deposito en SAP por cada AbsId matcheado (misma
-// cabecera/JournalRemarks para todos). El resultado detalla registro por registro
-// para que el front conserve los fallidos y permita reintentar solo esos.
+// Deposito masivo: se crea UN deposito en SAP con todos los AbsId del lote en
+// CreditLines. El resultado conserva el detalle por AbsId para que el front pueda
+// mantener los fallidos y reintentar solo ese lote.
 export interface PublicSapTarjetasDepositItemResult {
   absId: number
   status: "success" | "error"

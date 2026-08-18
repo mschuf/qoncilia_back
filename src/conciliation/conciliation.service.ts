@@ -1707,7 +1707,9 @@ export class ConciliationService {
     const limit = Math.min(requestedLimit, 100);
     const skip = (page - 1) * limit;
 
-    const queryBuilder = await this.buildBankStatementQuery(actor, query);
+    // Los extractos se comparten entre usuarios de la misma empresa. El resto
+    // de consultas que reutilizan este builder conserva su alcance anterior.
+    const queryBuilder = await this.buildBankStatementQuery(actor, query, true);
     const [statements, total] = await queryBuilder.skip(skip).take(limit).getManyAndCount();
 
     return {
@@ -1979,9 +1981,12 @@ export class ConciliationService {
 
   private async buildBankStatementQuery(
     actor: AuthUser,
-    query: ListBankStatementsQueryDto
+    query: ListBankStatementsQueryDto,
+    shareWithinCompany = false
   ): Promise<SelectQueryBuilder<BankStatement>> {
-    const scope = await this.resolveAccessibleUserScope(actor, query.userId);
+    const scope = shareWithinCompany
+      ? await this.resolveAccessibleBankStatementScope(actor, query.userId)
+      : await this.resolveAccessibleUserScope(actor, query.userId);
     const queryBuilder = this.bankStatementRepository
       .createQueryBuilder("statement")
       .leftJoinAndSelect("statement.user", "user")
@@ -2289,7 +2294,9 @@ export class ConciliationService {
       throw new NotFoundException("Extracto bancario no encontrado.");
     }
 
-    ensureActorCanAccessTargetUser(actor, statement.user);
+    // Abrir o comparar un extracto es permitido a cualquier usuario de su
+    // empresa; nunca a usuarios de una empresa distinta.
+    ensureActorCanAccessCompany(actor, statement.user.company.id);
 
     return statement;
   }
@@ -3065,6 +3072,43 @@ export class ConciliationService {
     }
 
     return { userId: actor.id };
+  }
+
+  private async resolveAccessibleBankStatementScope(
+    actor: AuthUser,
+    requestedUserId?: number
+  ): Promise<AccessibleUserScope> {
+    if (actor.role === Role.IS_SUPER_ADMIN) {
+      if (!requestedUserId) {
+        return {};
+      }
+
+      const targetUser = await this.requireUser(requestedUserId);
+      return { companyId: targetUser.company.id };
+    }
+
+    if (actor.role === Role.ADMIN) {
+      if (!requestedUserId) {
+        return { companyId: actor.companyId };
+      }
+
+      const targetUser = await this.requireUser(requestedUserId);
+      if (targetUser.company.id !== actor.companyId) {
+        throw new ForbiddenException("No podes consultar datos de usuarios de otra empresa.");
+      }
+
+      return { userId: targetUser.id };
+    }
+
+    if (requestedUserId) {
+      if (requestedUserId !== actor.id) {
+        throw new ForbiddenException("No podes consultar datos de otro usuario.");
+      }
+
+      return { userId: actor.id };
+    }
+
+    return { companyId: actor.companyId };
   }
 
   private async resolveAccessibleConfigurationScope(

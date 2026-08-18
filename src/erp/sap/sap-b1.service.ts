@@ -148,7 +148,8 @@ export class SapB1Service {
     config: CompanyErpConfig,
     cookieHeader: string,
     payload: Record<string, unknown>,
-    endpointPath = "Deposits"
+    endpointPath = "Deposits",
+    timeoutMs = 120000
   ): Promise<JsonRequestResponse> {
     return this.performJsonRequest(this.joinUrl(config.serviceLayerUrl, endpointPath), {
       method: "POST",
@@ -158,7 +159,8 @@ export class SapB1Service {
         Cookie: cookieHeader
       },
       tlsVersion: config.tlsVersion,
-      allowSelfSigned: config.allowSelfSigned
+      allowSelfSigned: config.allowSelfSigned,
+      timeoutMs
     })
   }
 
@@ -222,6 +224,7 @@ export class SapB1Service {
       headers?: Record<string, string>
       tlsVersion?: string | null
       allowSelfSigned?: boolean
+      timeoutMs?: number
     }
   ): Promise<JsonRequestResponse> {
     const url = new URL(targetUrl)
@@ -288,7 +291,7 @@ export class SapB1Service {
         }
       )
 
-      request.setTimeout(15000, () => {
+      request.setTimeout(options.timeoutMs ?? 15000, () => {
         request.destroy(new ExternalRequestError("Tiempo de espera agotado al conectar con SAP."))
       })
 

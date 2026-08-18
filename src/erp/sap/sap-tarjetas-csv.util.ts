@@ -4,9 +4,10 @@ import * as XLSX from "xlsx"
 // Soporta CSV texto separado por ";" y Excel real (.xls/.xlsx). El archivo se
 // procesa en memoria y no se persiste.
 //
-// Se incluyen las filas con "Tipo de tarjeta" = Debito y las operaciones de
-// debito que la procesadora clasifica como "Otro" pero identifica mediante
-// "Prestacion". Las columnas clave se aliasan a los mismos nombres canonicos
+// Se incluyen las filas con "Tipo de tarjeta" = Debito o Credito, y cualquier
+// operacion que la procesadora identifica mediante "Prestacion". Esto tambien
+// contempla los registros clasificados como "Otro" y evita depender de una lista
+// cerrada de codigos de prestacion. Las columnas clave se aliasan a los mismos nombres canonicos
 // del lado sistema:
 //   Codigo autorizacion           -> Referencia (match con VoucherNum)
 //   Fecha de credito del comercio -> Fecha      (match con PayDate)
@@ -24,6 +25,11 @@ const COLUMN_MAP: Array<{ source: string; target: string; kind?: "date" }> = [
   { source: "Codigo autorizacion", target: "Referencia" },
   { source: "Nro. transaccion", target: "Nro. transaccion" },
   { source: "Fecha de credito del comercio", target: "Fecha", kind: "date" },
+  {
+    source: "Fecha de credito del comercio",
+    target: "Fecha de credito del comercio",
+    kind: "date"
+  },
   { source: "Moneda", target: "Moneda" },
   { source: "Importe", target: "Importe" },
   { source: "Tipo de tarjeta", target: "Tipo de tarjeta" },
@@ -34,8 +40,7 @@ const COLUMN_MAP: Array<{ source: string; target: string; kind?: "date" }> = [
   { source: "Estado", target: "Estado" }
 ]
 
-const DEBIT_CARD_TYPE = "debito"
-const DEBIT_PRESENTATIONS = new Set(["td", "stqr", "tdtk", "tdqr"])
+const SUPPORTED_CARD_TYPES = new Set(["debito", "credito"])
 
 export function parseSapTarjetasCsv(buffer: Buffer): SapTarjetasCsvParseResult {
   const matrix = parseInputMatrix(buffer).filter((row) => row.some((cell) => cell !== ""))
@@ -64,10 +69,10 @@ export function parseSapTarjetasCsv(buffer: Buffer): SapTarjetasCsvParseResult {
     const presentationIndex = headerIndex.get(normalizeHeader("Prestación"))
     const presentation =
       presentationIndex === undefined ? "" : cleanCell(rawRow[presentationIndex] ?? "")
-    const isDebitOperation =
-      normalizeHeader(cardType) === DEBIT_CARD_TYPE ||
-      DEBIT_PRESENTATIONS.has(normalizeHeader(presentation))
-    if (!isDebitOperation) {
+    const isSupportedCardOperation =
+      SUPPORTED_CARD_TYPES.has(normalizeHeader(cardType)) ||
+      normalizeHeader(presentation) !== ""
+    if (!isSupportedCardOperation) {
       continue
     }
 
@@ -179,11 +184,20 @@ function normalizeHeader(value: string): string {
 }
 
 function toIsoDate(value: string): string {
-  const match = /^(\d{1,2})\/(\d{1,2})\/(\d{4})/.exec(value)
+  const match = /^(\d{1,2})\/(\d{1,2})\/(\d{4}|\d{2})/.exec(value)
   if (!match) return value
   const [, day, month, year] = match
-  const dayNum = Number(day)
-  const monthNum = Number(month)
+  const first = Number(day)
+  const second = Number(month)
+  const yearNum = Number(year)
+  const fullYear = year.length === 2 ? 2000 + yearNum : yearNum
+
+  // Los Excel de BANCARD suelen exponer la fecha como M/D/YY (p.ej. 1/19/26),
+  // mientras que los CSV usan D/M/YYYY. Conservamos ambos formatos sin confundir
+  // la fecha de acreditacion que se usa para mostrar y agrupar los resultados.
+  const isWorkbookStyle = year.length === 2 && first <= 12
+  const dayNum = isWorkbookStyle ? second : first
+  const monthNum = isWorkbookStyle ? first : second
   if (dayNum < 1 || dayNum > 31 || monthNum < 1 || monthNum > 12) return value
-  return `${year}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`
+  return `${fullYear}-${String(monthNum).padStart(2, "0")}-${String(dayNum).padStart(2, "0")}`
 }

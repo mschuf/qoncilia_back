@@ -539,9 +539,9 @@ export class SapErpService {
     }
   }
 
-  // Deposito masivo: crea UN deposito en SAP por cada AbsId (misma cabecera y
-  // JournalRemarks para todos). Los POST van en secuencia y una falla individual
-  // no corta el lote (salvo 401/403, que invalida la sesion y aborta el resto).
+  // Cada lote recibido genera UN solo deposito en SAP: todos sus AbsId viajan
+  // juntos dentro de CreditLines. El front envia los lotes de debito y credito
+  // por separado, por lo que cada tipo produce una unica llamada al Service Layer.
   async createSapTarjetasDeposit(
     actor: AuthUser,
     payload: SendSapTarjetasDepositDto
@@ -563,8 +563,9 @@ export class SapErpService {
         "sapDepositEndpoint"
       ]) ?? "Deposits"
     const endpoint = this.sapB1Service.joinUrl(config.serviceLayerUrl, endpointPath)
-    const { CreditLines: creditLines, ...depositHeader } =
-      this.buildSapTarjetasDepositPayload(payload)
+    const sapPayload = this.buildSapTarjetasDepositPayload(payload)
+    const creditLines = sapPayload.CreditLines
+    const absIds = creditLines.map((line) => line.AbsId)
 
     const batchRequestLog = {
       event: "sap_tarjetas_bulk_deposit_request",
@@ -573,126 +574,89 @@ export class SapErpService {
       companyErpConfigId: config.id,
       companyErpConfigName: config.name,
       endpoint,
-      deposits: creditLines.length,
-      header: depositHeader
+      absIds,
+      requestPayload: sapPayload
     }
     this.logger.log(this.stringifyLogPayload(batchRequestLog))
     await this.persistSapTarjetasDepositLog(batchRequestLog)
 
     const cookieHeader = this.decryptSessionCookie(session.sessionCookieEncrypted)
-    const results: PublicSapTarjetasDepositItemResult[] = []
-    let sessionInvalidated = false
+    let results: PublicSapTarjetasDepositItemResult[]
 
-    for (let index = 0; index < creditLines.length; index += 1) {
-      const line = creditLines[index]
-      const sapPayload: SapTarjetasDepositPayload = {
-        ...depositHeader,
-        CreditLines: [line]
-      } as SapTarjetasDepositPayload
+    try {
+      const sapResponse = await this.sapB1Service.createDeposit(
+        config,
+        cookieHeader,
+        sapPayload,
+        endpointPath
+      )
+      const externalReference = this.extractExternalReference(sapResponse.bodyJson, [
+        "DepositNumber",
+        "DeposNum",
+        "AbsEntry",
+        "AbsoluteEntry",
+        "DocEntry",
+        "Number"
+      ])
+      results = creditLines.map((line) => ({
+        absId: line.AbsId,
+        status: "success",
+        httpStatus: sapResponse.statusCode,
+        externalReference,
+        errorMessage: null
+      }))
 
-      const itemRequestLog = {
-        event: "sap_tarjetas_deposit_item_request",
+      const successLog = {
+        event: "sap_tarjetas_bulk_deposit_success",
         timestamp: new Date().toISOString(),
         actorId: actor.id,
         companyErpConfigId: config.id,
         endpoint,
-        absId: line.AbsId,
-        requestPayload: sapPayload
+        absIds,
+        httpStatus: sapResponse.statusCode,
+        externalReference,
+        responsePayload: sapResponse.bodyJson
       }
-      this.logger.log(this.stringifyLogPayload(itemRequestLog))
-      await this.persistSapTarjetasDepositLog(itemRequestLog)
-
-      try {
-        const sapResponse = await this.sapB1Service.createDeposit(
-          config,
-          cookieHeader,
-          sapPayload,
-          endpointPath
-        )
-        const itemResult: PublicSapTarjetasDepositItemResult = {
-          absId: line.AbsId,
-          status: "success",
-          httpStatus: sapResponse.statusCode,
-          externalReference: this.extractExternalReference(sapResponse.bodyJson, [
-            "DepositNumber",
-            "DeposNum",
-            "AbsEntry",
-            "AbsoluteEntry",
-            "DocEntry",
-            "Number"
-          ]),
-          errorMessage: null
-        }
-        results.push(itemResult)
-
-        const itemSuccessLog = {
-          event: "sap_tarjetas_deposit_item_success",
-          timestamp: new Date().toISOString(),
-          actorId: actor.id,
-          companyErpConfigId: config.id,
-          endpoint,
-          absId: line.AbsId,
-          httpStatus: sapResponse.statusCode,
-          externalReference: itemResult.externalReference,
-          responsePayload: sapResponse.bodyJson
-        }
-        this.logger.log(this.stringifyLogPayload(itemSuccessLog))
-        await this.persistSapTarjetasDepositLog(itemSuccessLog)
-      } catch (error) {
-        const mapped = this.mapExternalError(error)
-
-        const itemFailureLog = {
-          event: "sap_tarjetas_deposit_item_failed",
-          timestamp: new Date().toISOString(),
-          actorId: actor.id,
-          companyErpConfigId: config.id,
-          endpoint,
-          absId: line.AbsId,
-          httpStatus: mapped.statusCode ?? null,
-          error: mapped.message,
-          requestPayload: sapPayload,
-          responsePayload: mapped.responsePayload
-        }
-        this.logger.error(this.stringifyLogPayload(itemFailureLog))
-        await this.persistSapTarjetasDepositLog(itemFailureLog)
-
-        if (error instanceof ExternalRequestError && [401, 403].includes(error.statusCode ?? 0)) {
-          session.invalidatedAt = new Date()
-          await this.userErpSessionRepository.save(session)
-          sessionInvalidated = true
-
-          results.push({
-            absId: line.AbsId,
-            status: "error",
-            httpStatus: mapped.statusCode ?? null,
-            externalReference: null,
-            errorMessage: `Sesion ERP invalida: ${mapped.message}`
-          })
-          // Los AbsId restantes no se intentan: sin sesion fallarian todos igual.
-          for (let rest = index + 1; rest < creditLines.length; rest += 1) {
-            results.push({
-              absId: creditLines[rest].AbsId,
-              status: "error",
-              httpStatus: null,
-              externalReference: null,
-              errorMessage: "No enviado: la sesion ERP se invalido en un deposito anterior."
-            })
-          }
-          break
-        }
-
-        results.push({
-          absId: line.AbsId,
-          status: "error",
-          httpStatus: mapped.statusCode ?? null,
-          externalReference: null,
-          errorMessage: mapped.message
-        })
-      }
-    }
-
-    if (!sessionInvalidated) {
+      this.logger.log(this.stringifyLogPayload(successLog))
+      await this.persistSapTarjetasDepositLog(successLog)
       session.lastValidatedAt = new Date()
+      await this.userErpSessionRepository.save(session)
+    } catch (error) {
+      const mapped = this.mapExternalError(error)
+      const sessionInvalidated =
+        error instanceof ExternalRequestError && [401, 403].includes(error.statusCode ?? 0)
+      const errorMessage = sessionInvalidated
+        ? `Sesion ERP invalida: ${mapped.message}`
+        : mapped.message
+
+      results = creditLines.map((line) => ({
+        absId: line.AbsId,
+        status: "error",
+        httpStatus: mapped.statusCode ?? null,
+        externalReference: null,
+        errorMessage
+      }))
+
+      const failureLog = {
+        event: "sap_tarjetas_bulk_deposit_failed",
+        timestamp: new Date().toISOString(),
+        actorId: actor.id,
+        companyErpConfigId: config.id,
+        endpoint,
+        absIds,
+        httpStatus: mapped.statusCode ?? null,
+        error: mapped.message,
+        requestPayload: sapPayload,
+        responsePayload: mapped.responsePayload
+      }
+      this.logger.error(this.stringifyLogPayload(failureLog))
+      await this.persistSapTarjetasDepositLog(failureLog)
+
+      if (sessionInvalidated) {
+        session.invalidatedAt = new Date()
+      } else {
+        session.lastValidatedAt = new Date()
+      }
       await this.userErpSessionRepository.save(session)
     }
 
