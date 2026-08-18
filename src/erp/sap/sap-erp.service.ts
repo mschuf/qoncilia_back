@@ -72,6 +72,15 @@ type SapTarjetasUploadFile = {
 // Comentario por defecto del asiento del deposito de tarjetas (flujo BANCARD).
 const SAP_TARJETAS_DEFAULT_JOURNAL_REMARKS = "COMPRA P.O.S BANCARD"
 
+// Reglas adicionales que un modulo especializado puede solicitar sin alterar
+// el payload de Pago de tarjeta estandar.
+type SapTarjetasDepositOptions = {
+  commission?: {
+    account: string
+    amount: number
+  }
+}
+
 type SapReadableRow = {
   rowId?: string
   sourceRowId?: string
@@ -544,7 +553,8 @@ export class SapErpService {
   // por separado, por lo que cada tipo produce una unica llamada al Service Layer.
   async createSapTarjetasDeposit(
     actor: AuthUser,
-    payload: SendSapTarjetasDepositDto
+    payload: SendSapTarjetasDepositDto,
+    options?: SapTarjetasDepositOptions
   ): Promise<PublicSapTarjetasBulkDepositResult> {
     this.ensureCanRunExternalReconciliation(actor)
 
@@ -563,7 +573,7 @@ export class SapErpService {
         "sapDepositEndpoint"
       ]) ?? "Deposits"
     const endpoint = this.sapB1Service.joinUrl(config.serviceLayerUrl, endpointPath)
-    const sapPayload = this.buildSapTarjetasDepositPayload(payload)
+    const sapPayload = this.buildSapTarjetasDepositPayload(payload, options)
     const creditLines = sapPayload.CreditLines
     const absIds = creditLines.map((line) => line.AbsId)
 
@@ -1610,7 +1620,8 @@ export class SapErpService {
   }
 
   private buildSapTarjetasDepositPayload(
-    payload: SendSapTarjetasDepositDto
+    payload: SendSapTarjetasDepositDto,
+    options?: SapTarjetasDepositOptions
   ): SapTarjetasDepositPayload {
     const depositAccount = this.normalizeRequired(payload.depositAccount, "DepositAccount")
     const voucherAccount = this.normalizeOptional(payload.voucherAccount) ?? depositAccount
@@ -1657,7 +1668,16 @@ export class SapErpService {
       JournalRemarks: journalRemarks,
       ...(bankAccountNum ? { BankAccountNum: bankAccountNum } : {}),
       ...(bank ? { Bank: bank } : {}),
-      ...(bankBranch ? { BankBranch: bankBranch } : {})
+      ...(bankBranch ? { BankBranch: bankBranch } : {}),
+      ...(options?.commission
+        ? {
+            CommissionAccount: options.commission.account,
+            Commission: options.commission.amount,
+            CommissionDate: depositDate,
+            TaxCode: "",
+            DepositAccountType: "datBankAccount" as const
+          }
+        : {})
     }
   }
 

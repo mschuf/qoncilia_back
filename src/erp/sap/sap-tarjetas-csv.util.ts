@@ -12,6 +12,7 @@ import * as XLSX from "xlsx"
 //   Codigo autorizacion           -> Referencia (match con VoucherNum)
 //   Fecha de credito del comercio -> Fecha      (match con PayDate)
 //   Importe                       -> Importe    (match con CreditSum)
+//   Importe neto                  -> Importe neto (calculo de comision OCHO A)
 // "Nro. transaccion" se conserva para proponer VoucherAccount en el deposito.
 // "Moneda" se conserva como dato informativo para revisar las filas importadas.
 
@@ -32,6 +33,7 @@ const COLUMN_MAP: Array<{ source: string; target: string; kind?: "date" }> = [
   },
   { source: "Moneda", target: "Moneda" },
   { source: "Importe", target: "Importe" },
+  { source: "Importe neto", target: "Importe neto" },
   { source: "Tipo de tarjeta", target: "Tipo de tarjeta" },
   { source: "Prestación", target: "Prestación" },
   { source: "Marca", target: "Marca" },

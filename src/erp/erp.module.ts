@@ -15,6 +15,8 @@ import { ErpController } from "./erp.controller"
 import { ErpService } from "./erp.service"
 import { UserErpSession } from "./sap/entities/user-erp-session.entity"
 import { SapB1Service } from "./sap/sap-b1.service"
+import { OchoASapTarjetasController } from "./sap/ocho-a-sap-tarjetas.controller"
+import { OchoASapTarjetasService } from "./sap/ocho-a-sap-tarjetas.service"
 import { SapErpController } from "./sap/sap-erp.controller"
 import { SapErpService } from "./sap/sap-erp.service"
 
@@ -32,8 +34,16 @@ import { SapErpService } from "./sap/sap-erp.service"
       UserErpSession
     ])
   ],
-  controllers: [ErpController, SapErpController],
-  providers: [ErpService, SapErpService, SapB1Service, JwtAuthGuard, RolesGuard, ModuleAccessGuard],
+  controllers: [ErpController, SapErpController, OchoASapTarjetasController],
+  providers: [
+    ErpService,
+    SapErpService,
+    OchoASapTarjetasService,
+    SapB1Service,
+    JwtAuthGuard,
+    RolesGuard,
+    ModuleAccessGuard
+  ],
   exports: [ErpService]
 })
 export class ErpModule {}

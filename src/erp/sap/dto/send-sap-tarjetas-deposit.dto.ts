@@ -4,6 +4,7 @@ import {
   IsArray,
   IsDateString,
   IsInt,
+  IsNumber,
   IsOptional,
   IsString,
   MaxLength,
@@ -72,6 +73,14 @@ export class SendSapTarjetasDepositDto {
   @IsString()
   @MaxLength(120)
   bankBranch?: string
+
+  // Solo el endpoint de credito de OCHO A utiliza este valor. El frontend lo
+  // calcula a partir de Importe - Importe neto de las filas matcheadas.
+  @Type(() => Number)
+  @IsOptional()
+  @IsNumber({ allowNaN: false, allowInfinity: false })
+  @Min(0)
+  commission?: number
 
   @IsArray()
   @ArrayMinSize(1)

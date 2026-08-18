@@ -155,6 +155,12 @@ export interface SapTarjetasDepositPayload extends Record<string, unknown> {
   Bank?: string
   // Cabecera: sucursal de la cuenta bancaria. Se omite si no esta configurada.
   BankBranch?: string
+  // Campos exclusivos del deposito de credito de OCHO A.
+  CommissionAccount?: string
+  Commission?: number
+  CommissionDate?: string
+  TaxCode?: string
+  DepositAccountType?: "datBankAccount"
 }
 
 // Deposito masivo: se crea UN deposito en SAP con todos los AbsId del lote en
