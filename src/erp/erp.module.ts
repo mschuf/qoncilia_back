@@ -19,6 +19,8 @@ import { OchoASapTarjetasController } from "./sap/ocho-a-sap-tarjetas.controller
 import { OchoASapTarjetasService } from "./sap/ocho-a-sap-tarjetas.service"
 import { SapErpController } from "./sap/sap-erp.controller"
 import { SapErpService } from "./sap/sap-erp.service"
+import { OchoASapBankController } from "./sap/ocho-a-sap-bank.controller"
+import { OchoASapBankService } from "./sap/ocho-a-sap-bank.service"
 
 @Module({
   imports: [
@@ -34,10 +36,16 @@ import { SapErpService } from "./sap/sap-erp.service"
       UserErpSession
     ])
   ],
-  controllers: [ErpController, SapErpController, OchoASapTarjetasController],
+  controllers: [
+    ErpController,
+    SapErpController,
+    OchoASapTarjetasController,
+    OchoASapBankController
+  ],
   providers: [
     ErpService,
     SapErpService,
+    OchoASapBankService,
     OchoASapTarjetasService,
     SapB1Service,
     JwtAuthGuard,

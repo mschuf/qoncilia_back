@@ -53,6 +53,14 @@ export class SendSapTarjetasDepositDto {
   @MaxLength(200)
   journalRemarks?: string
 
+  // Solo el endpoint de credito de OCHO A utiliza este valor como cabecera
+  // BankReference del deposito en SAP.
+  @Transform(trimString)
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  bankReference?: string
+
   // "Cuenta Pago ERP" de la cuenta bancaria (cabecera BankAccountNum).
   @Transform(trimString)
   @IsOptional()

@@ -38,6 +38,8 @@ export class ErpController {
     AppModuleCode.ERP_MANAGEMENT,
     AppModuleCode.CONCILIATION,
     AppModuleCode.BANK_CONCILIATION,
+    AppModuleCode.CONCILIATION_OCHO_A,
+    AppModuleCode.BANK_CONCILIATION_OCHO_A,
     AppModuleCode.CARD_PAYMENT,
     AppModuleCode.CARD_PAYMENT_OCHO_A
   )
@@ -51,6 +53,8 @@ export class ErpController {
     AppModuleCode.ERP_MANAGEMENT,
     AppModuleCode.CONCILIATION,
     AppModuleCode.BANK_CONCILIATION,
+    AppModuleCode.CONCILIATION_OCHO_A,
+    AppModuleCode.BANK_CONCILIATION_OCHO_A,
     AppModuleCode.CARD_PAYMENT,
     AppModuleCode.CARD_PAYMENT_OCHO_A
   )

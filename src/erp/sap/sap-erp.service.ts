@@ -79,6 +79,7 @@ type SapTarjetasDepositOptions = {
     account: string
     amount: number
   }
+  bankReference?: string
 }
 
 type SapReadableRow = {
@@ -1637,6 +1638,7 @@ export class SapErpService {
     // se aplica el default del flujo BANCARD.
     const journalRemarks =
       this.normalizeOptional(payload.journalRemarks) ?? SAP_TARJETAS_DEFAULT_JOURNAL_REMARKS
+    const bankReference = this.normalizeOptional(options?.bankReference)
     // Cabeceras con datos de la cuenta bancaria: BankAccountNum = "Cuenta Pago
     // ERP", Bank = descripcion del banco, BankBranch = sucursal de la cuenta.
     const bankAccountNum = this.normalizeOptional(payload.bankAccountNum)
@@ -1666,6 +1668,7 @@ export class SapErpService {
       VoucherAccount: voucherAccount,
       DepositDate: depositDate,
       JournalRemarks: journalRemarks,
+      ...(bankReference ? { BankReference: bankReference } : {}),
       ...(bankAccountNum ? { BankAccountNum: bankAccountNum } : {}),
       ...(bank ? { Bank: bank } : {}),
       ...(bankBranch ? { BankBranch: bankBranch } : {}),

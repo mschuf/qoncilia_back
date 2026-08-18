@@ -68,7 +68,8 @@ export class OchoASapTarjetasService {
       commission: {
         account: OCHO_A_CREDIT_CARD_COMMISSION_ACCOUNT,
         amount: payload.commission
-      }
+      },
+      bankReference: payload.bankReference
     })
   }
 

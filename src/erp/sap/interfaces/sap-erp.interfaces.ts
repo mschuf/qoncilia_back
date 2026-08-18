@@ -149,6 +149,8 @@ export interface SapTarjetasDepositPayload extends Record<string, unknown> {
   // Cabecera: fecha del deposito, formato "YYYY-MM-DDT00:00:00Z".
   DepositDate: string
   JournalRemarks: string
+  // Referencia bancaria editable, exclusiva de credito OCHO A.
+  BankReference?: string
   // Cabecera: "Cuenta Pago ERP" de la cuenta bancaria. Se omite si no esta configurada.
   BankAccountNum?: string
   // Cabecera: descripcion del banco. Se omite si no esta configurada.

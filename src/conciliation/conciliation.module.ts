@@ -16,6 +16,8 @@ import { BankStatementRow } from "./entities/bank-statement-row.entity";
 import { CompanyBankAccount } from "./entities/company-bank-account.entity";
 import { ConciliationController } from "./conciliation.controller";
 import { ConciliationService } from "./conciliation.service";
+import { OchoAConciliationController } from "./ocho-a-conciliation.controller";
+import { OchoAConciliationService } from "./ocho-a-conciliation.service";
 import { ReconciliationLayoutMapping } from "./entities/reconciliation-layout-mapping.entity";
 import { ReconciliationLayout } from "./entities/reconciliation-layout.entity";
 import { ReconciliationMatch } from "./entities/reconciliation-match.entity";
@@ -48,9 +50,10 @@ import { UserTemplateAvailability } from "./entities/user-template-availability.
       ReconciliationMatch
     ])
   ],
-  controllers: [ConciliationController, BankingController],
+  controllers: [ConciliationController, BankingController, OchoAConciliationController],
   providers: [
     ConciliationService,
+    OchoAConciliationService,
     BankingService,
     SapB1Service,
     JwtAuthGuard,
