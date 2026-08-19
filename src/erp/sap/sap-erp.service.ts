@@ -137,6 +137,7 @@ type SapB1DateMatchResult = {
 // debit/credit = columnas separadas (preferido).
 type SapB1MatchColumns = {
   reference: string | null
+  reference2: string | null
   date: string | null
   amount: string | null
   debit: string | null
@@ -402,6 +403,11 @@ export class SapErpService {
     ])
     const referenceMatchMode = payload.referenceMatchMode ?? "exact"
     const strictReferenceAmountMatch = payload.strictReferenceAmountMatch === true
+    // La capacidad de agrupar varias lineas de sistema contra una bancaria es
+    // una personalizacion exclusiva de OCHO_A, aunque otro cliente intente
+    // enviar el flag a la ruta generica.
+    const groupSystemMatches =
+      payload.groupSystemMatches === true && actor.companyCode.trim().toUpperCase() === "OCHO_A"
     const hasAmount = Boolean(
       matchColumns.amount || matchColumns.debit || matchColumns.credit
     )
@@ -410,13 +416,25 @@ export class SapErpService {
         "El matching estricto de tarjetas requiere las columnas Referencia e Importe."
       )
     }
-    const matches = this.calculateSapB1SmartMatches(
-      systemRows,
-      bankRows,
-      matchColumns,
-      referenceMatchMode,
-      strictReferenceAmountMatch
-    )
+    if (groupSystemMatches && (!matchColumns.reference || !hasAmount)) {
+      throw new BadRequestException(
+        "El matching agrupado requiere las columnas Referencia e Importe."
+      )
+    }
+    const matches = groupSystemMatches
+      ? this.calculateSapB1GroupedSystemMatches(
+          systemRows,
+          bankRows,
+          matchColumns,
+          referenceMatchMode
+        )
+      : this.calculateSapB1SmartMatches(
+          systemRows,
+          bankRows,
+          matchColumns,
+          referenceMatchMode,
+          strictReferenceAmountMatch
+        )
     const matchedBankRowIds = new Set(matches.map((match) => match.bankRow.rowId))
     const matchedSystemRowIds = new Set(matches.map((match) => match.systemRow.rowId))
     const unmatchedBankRows = bankRows.filter((row) => !matchedBankRowIds.has(row.rowId))
@@ -435,7 +453,11 @@ export class SapErpService {
         unmatchedSystem: unmatchedSystemRows.length,
         unmatchedBank: unmatchedBankRows.length,
         matchPercentage:
-          totalRows > 0 ? Math.round(((matches.length * 2) / totalRows) * 10000) / 100 : 0
+          totalRows > 0
+            ? Math.round(
+                ((matchedSystemRowIds.size + matchedBankRowIds.size) / totalRows) * 10000
+              ) / 100
+            : 0
       }
     }
   }
@@ -1018,6 +1040,129 @@ export class SapErpService {
     return matches
   }
 
+  // OCHO A puede tener un movimiento bancario que representa varias lineas de
+  // asiento. Primero intenta agrupar por Referencia; si esa referencia no
+  // coincide, usa Referencia 2 del sistema contra la Referencia del banco. El
+  // grupo solo es valido cuando la suma exacta de sus importes cuadra con el
+  // importe de la fila bancaria. Cada linea del sistema se conserva como match
+  // individual para que el envio a SAP incluya todos sus TransId/LineNumber.
+  private calculateSapB1GroupedSystemMatches(
+    systemRows: ConciliationPreviewRow[],
+    bankRows: ConciliationPreviewRow[],
+    columns: SapB1MatchColumns,
+    referenceMatchMode: "exact" | "like"
+  ): PublicSapB1SmartMatch[] {
+    if (!columns.reference) return []
+
+    const matches: PublicSapB1SmartMatch[] = []
+    const usedSystemRows = new Set<string>()
+
+    for (const bankRow of bankRows) {
+      const bankNet = this.sapB1RowNet(bankRow, columns, "bank")
+      const bankReference = this.readSapB1PreviewRowValue(bankRow, columns.reference)
+      if (bankNet === null || Math.abs(bankNet) <= 0.0001 || bankReference === null) continue
+
+      const directCandidates: Array<{ row: ConciliationPreviewRow; amount: number }> = []
+      const reference2Candidates: Array<{ row: ConciliationPreviewRow; amount: number }> = []
+
+      for (const systemRow of systemRows) {
+        if (usedSystemRows.has(systemRow.rowId)) continue
+
+        const systemNet = this.sapB1RowNet(systemRow, columns, "system")
+        if (systemNet === null) continue
+
+        const primaryReferenceMatched = this.sapB1ReferenceMatch(
+          this.readSapB1PreviewRowValue(systemRow, columns.reference),
+          bankReference,
+          referenceMatchMode
+        )
+        if (primaryReferenceMatched) {
+          directCandidates.push({ row: systemRow, amount: systemNet })
+          continue
+        }
+
+        const reference2Matched = columns.reference2
+          ? this.sapB1ReferenceMatch(
+              this.readSapB1PreviewRowValue(systemRow, columns.reference2),
+              bankReference,
+              referenceMatchMode
+            )
+          : false
+        if (reference2Matched) {
+          reference2Candidates.push({ row: systemRow, amount: systemNet })
+        }
+      }
+
+      const chosen =
+        this.findSapB1SystemGroupForBank(directCandidates, bankNet) ??
+        this.findSapB1SystemGroupForBank(reference2Candidates, bankNet)
+      if (!chosen) continue
+
+      for (const item of chosen) {
+        usedSystemRows.add(item.row.rowId)
+        matches.push({
+          systemRow: item.row,
+          bankRow,
+          score: 1,
+          // La referencia obligatoria se cumplio, ya sea por Referencia o por
+          // Referencia 2. La tabla muestra ambas columnas para poder auditarlo.
+          column1Match: true,
+          column2Match: false,
+          column3Match: true,
+          matchReason: "reference",
+          dateDifferenceDays: null
+        })
+      }
+    }
+
+    return matches
+  }
+
+  // Encuentra una combinacion exacta de lineas del sistema para una linea del
+  // banco. Primero intenta una sola linea y el total completo (casos comunes),
+  // luego usa programacion dinamica acotada para soportar subconjuntos sin que
+  // una referencia con miles de filas degrade el proceso de comparacion.
+  private findSapB1SystemGroupForBank<T extends { amount: number }>(
+    candidates: T[],
+    bankNet: number
+  ): T[] | null {
+    if (candidates.length === 0) return null
+
+    const target = Math.round(bankNet * 10000)
+    const amounts = candidates.map((item) => Math.round(item.amount * 10000))
+    const exactIndex = amounts.findIndex((amount) => amount === target)
+    if (exactIndex >= 0) return [candidates[exactIndex]]
+
+    const fullTotal = amounts.reduce((total, amount) => total + amount, 0)
+    if (fullTotal === target) return candidates
+
+    const combinations = new Map<number, number[]>()
+    combinations.set(0, [])
+    const maxCombinations = 12000
+
+    for (let index = 0; index < amounts.length; index += 1) {
+      const amount = amounts[index]
+      const currentCombinations = [...combinations.entries()]
+      for (const [sum, indexes] of currentCombinations) {
+        const nextSum = sum + amount
+        if (combinations.has(nextSum)) continue
+
+        const nextIndexes = [...indexes, index]
+        if (nextSum === target) {
+          return nextIndexes.map((candidateIndex) => candidates[candidateIndex])
+        }
+
+        if (combinations.size < maxCombinations) {
+          combinations.set(nextSum, nextIndexes)
+        }
+      }
+
+      if (combinations.size >= maxCombinations) break
+    }
+
+    return null
+  }
+
   // Clasifica las columnas de comparacion en roles (referencia/fecha/importe).
   // `availableColumns` (todas las columnas disponibles) permite completar el par
   // Debito/Credito si la lista de comparacion truncada dejo solo uno.
@@ -1041,6 +1186,7 @@ export class SapErpService {
     const findAvailable = makeFinder(availableColumns)
 
     const reference = find("referencia", "reference", "ref")
+    const reference2 = findAvailable("referencia2", "reference2", "ref2")
     const date = find("fecha", "date")
     let debit = find(...DEBIT_KEYS)
     let credit = find(...CREDIT_KEYS)
@@ -1055,14 +1201,14 @@ export class SapErpService {
     // de comparacion que no sea referencia ni fecha.
     if (!amount && !debit && !credit) {
       const used = new Set(
-        [reference, date]
+        [reference, reference2, date]
           .filter((column): column is string => Boolean(column))
           .map((column) => this.normalizeLookupKey(column))
       )
       amount = columns.find((column) => !used.has(this.normalizeLookupKey(column))) ?? null
     }
 
-    return { reference, date, amount, debit, credit }
+    return { reference, reference2, date, amount, debit, credit }
   }
 
   // Importe neto con signo de una fila. La convencion de signo (que invierte por

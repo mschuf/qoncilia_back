@@ -62,4 +62,10 @@ export class CompareSapB1QueryPreviewDto {
   @IsOptional()
   @IsBoolean()
   strictReferenceAmountMatch?: boolean
+
+  // Exclusivo de la conciliacion bancaria de OCHO A: permite que varias filas
+  // del sistema compongan el importe de una sola fila bancaria.
+  @IsOptional()
+  @IsBoolean()
+  groupSystemMatches?: boolean
 }

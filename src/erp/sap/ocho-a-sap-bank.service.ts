@@ -35,7 +35,10 @@ export class OchoASapBankService {
 
   compareQueryPreview(actor: AuthUser, payload: CompareSapB1QueryPreviewDto) {
     this.ensureOchoA(actor)
-    return this.sapErpService.compareSapB1QueryPreview(actor, payload)
+    return this.sapErpService.compareSapB1QueryPreview(actor, {
+      ...payload,
+      groupSystemMatches: true
+    })
   }
 
   reconcileExternal(actor: AuthUser, payload: SendSapExternalReconciliationDto) {

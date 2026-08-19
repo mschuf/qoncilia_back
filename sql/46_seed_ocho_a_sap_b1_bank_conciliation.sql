@@ -174,12 +174,15 @@ $BANCO$,
   query_sistema = $SISTEMA$
 SELECT
     T0."Ref3Line"                           AS "Referencia",
+    T1."Ref2"                               AS "Referencia2",
     TO_VARCHAR(T0."RefDate", 'YYYY-MM-DD') AS "Fecha",
     TO_VARCHAR(TO_BIGINT(T0."Debit"))       AS "Debito",
     TO_VARCHAR(TO_BIGINT(T0."Credit"))      AS "Credito",
     T0."TransId"                            AS "TransactionNumber",
     T0."Line_ID"                            AS "LineNumber"
 FROM "${CompanyDB}".JDT1 T0
+INNER JOIN "${CompanyDB}".OJDT T1
+  ON T0."TransId" = T1."TransId"
 WHERE T0."Account" = $1
   AND T0."ExtrMatch" = 0
   AND T0."RefDate" BETWEEN $2 AND $3
@@ -266,12 +269,15 @@ $BANCO$,
   $SISTEMA$
 SELECT
     T0."Ref3Line"                           AS "Referencia",
+    T1."Ref2"                               AS "Referencia2",
     TO_VARCHAR(T0."RefDate", 'YYYY-MM-DD') AS "Fecha",
     TO_VARCHAR(TO_BIGINT(T0."Debit"))       AS "Debito",
     TO_VARCHAR(TO_BIGINT(T0."Credit"))      AS "Credito",
     T0."TransId"                            AS "TransactionNumber",
     T0."Line_ID"                            AS "LineNumber"
 FROM "${CompanyDB}".JDT1 T0
+INNER JOIN "${CompanyDB}".OJDT T1
+  ON T0."TransId" = T1."TransId"
 WHERE T0."Account" = $1
   AND T0."ExtrMatch" = 0
   AND T0."RefDate" BETWEEN $2 AND $3
