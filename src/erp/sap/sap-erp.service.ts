@@ -419,9 +419,9 @@ export class SapErpService {
         "El matching estricto de tarjetas requiere las columnas Referencia e Importe."
       )
     }
-    if (groupSystemMatches && (!matchColumns.reference || !hasAmount)) {
+    if (groupSystemMatches && (!matchColumns.reference || !matchColumns.date || !hasAmount)) {
       throw new BadRequestException(
-        "El matching agrupado requiere las columnas Referencia e Importe."
+        "El matching agrupado requiere las columnas Referencia, Fecha e Importe."
       )
     }
     const matches = groupSystemMatches
@@ -1059,7 +1059,8 @@ export class SapErpService {
     referenceMatchMode: "exact" | "like"
   ): PublicSapB1SmartMatch[] {
     const referenceColumn = columns.reference
-    if (!referenceColumn) return []
+    const dateColumn = columns.date
+    if (!referenceColumn || !dateColumn) return []
 
     const matches: PublicSapB1SmartMatch[] = []
     const usedSystemRows = new Set<string>()
@@ -1085,6 +1086,16 @@ export class SapErpService {
 
         const systemNet = this.sapB1RowNet(systemRow, columns, "system")
         if (systemNet === null) continue
+
+        // En OCHO A la referencia (o Referencia 2) es obligatoria, y la fecha
+        // debe ser exactamente la misma. No se permiten matches automaticos
+        // solo por importe y fecha, ni con tolerancia de dias.
+        const dateMatched = this.sapB1DateMatchWithinDays(
+          this.readSapB1PreviewRowRawValue(systemRow, dateColumn),
+          this.readSapB1PreviewRowRawValue(bankRow, dateColumn),
+          0
+        ).matched
+        if (!dateMatched) continue
 
         const primaryReference = this.readSapB1PreviewRowValue(systemRow, referenceColumn)
         const reference2 = columns.reference2
@@ -1115,7 +1126,8 @@ export class SapErpService {
       // Para grupos exactos por Referencia o Referencia 2, el total de TODAS
       // sus lineas tiene prioridad sobre cualquier subconjunto. Esto cubre
       // asientos con muchas lineas, incluidas lineas de Debito y de Credito,
-      // que componen una sola fila del extracto.
+      // que componen una sola fila del extracto. La referencia, fecha e importe
+      // neto ya fueron validados antes de formar el grupo.
       const completeDirectReferenceGroup =
         matchMode === "exact"
           ? this.findSapB1CompleteSystemGroupForBank(directCandidates, bankNet)
@@ -1139,12 +1151,12 @@ export class SapErpService {
           bankRow,
           score: 1,
           // La referencia obligatoria se cumplio, ya sea por Referencia o por
-          // Referencia 2. La tabla muestra ambas columnas para poder auditarlo.
+          // Referencia 2. La fecha e importe tambien ya fueron validados.
           column1Match: true,
-          column2Match: false,
+          column2Match: true,
           column3Match: true,
           matchReason: "reference",
-          dateDifferenceDays: null
+          dateDifferenceDays: 0
         })
       }
 
