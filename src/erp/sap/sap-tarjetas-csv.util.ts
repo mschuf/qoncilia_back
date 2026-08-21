@@ -22,6 +22,13 @@ export type SapTarjetasCsvParseResult = {
   totalRows: number
 }
 
+// El CSV estandar conserva exactamente sus columnas historicas. OCHO_A usa la
+// fecha de venta para separar los depositos de debito, por eso la expone solo
+// cuando su modulo especializado lo solicita.
+export type SapTarjetasCsvParseOptions = {
+  includeSaleDate?: boolean
+}
+
 const COLUMN_MAP: Array<{ source: string; target: string; kind?: "date" }> = [
   { source: "Codigo autorizacion", target: "Referencia" },
   { source: "Nro. transaccion", target: "Nro. transaccion" },
@@ -42,13 +49,25 @@ const COLUMN_MAP: Array<{ source: string; target: string; kind?: "date" }> = [
   { source: "Estado", target: "Estado" }
 ]
 
+const OCHO_A_SALE_DATE_COLUMN: (typeof COLUMN_MAP)[number] = {
+  source: "Fecha de venta",
+  target: "Fecha de venta",
+  kind: "date"
+}
+
 const SUPPORTED_CARD_TYPES = new Set(["debito", "credito"])
 
-export function parseSapTarjetasCsv(buffer: Buffer): SapTarjetasCsvParseResult {
+export function parseSapTarjetasCsv(
+  buffer: Buffer,
+  options: SapTarjetasCsvParseOptions = {}
+): SapTarjetasCsvParseResult {
+  const columnMap = options.includeSaleDate
+    ? [...COLUMN_MAP, OCHO_A_SALE_DATE_COLUMN]
+    : COLUMN_MAP
   const matrix = parseInputMatrix(buffer).filter((row) => row.some((cell) => cell !== ""))
 
   if (matrix.length === 0) {
-    return { columns: COLUMN_MAP.map((item) => item.target), rows: [], totalRows: 0 }
+    return { columns: columnMap.map((item) => item.target), rows: [], totalRows: 0 }
   }
 
   const header = matrix[0].map((cell) => cleanCell(cell))
@@ -58,7 +77,7 @@ export function parseSapTarjetasCsv(buffer: Buffer): SapTarjetasCsvParseResult {
     if (!headerIndex.has(key)) headerIndex.set(key, index)
   })
 
-  const columns = COLUMN_MAP.map((item) => item.target)
+  const columns = columnMap.map((item) => item.target)
   const rows: Record<string, unknown>[] = []
   let totalRows = 0
 
@@ -79,7 +98,7 @@ export function parseSapTarjetasCsv(buffer: Buffer): SapTarjetasCsvParseResult {
     }
 
     const row: Record<string, unknown> = {}
-    for (const item of COLUMN_MAP) {
+    for (const item of columnMap) {
       const sourceIndex = headerIndex.get(normalizeHeader(item.source))
       const rawValue = sourceIndex === undefined ? "" : cleanCell(rawRow[sourceIndex] ?? "")
       row[item.target] = item.kind === "date" ? toIsoDate(rawValue) : rawValue

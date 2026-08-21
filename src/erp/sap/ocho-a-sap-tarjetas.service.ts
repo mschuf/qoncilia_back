@@ -48,7 +48,9 @@ export class OchoASapTarjetasService {
 
   parseCsv(actor: AuthUser, companyErpConfigId: number, file: SapTarjetasUploadFile) {
     this.ensureOchoA(actor)
-    return this.sapErpService.parseSapTarjetasCsv(actor, companyErpConfigId, file)
+    return this.sapErpService.parseSapTarjetasCsv(actor, companyErpConfigId, file, {
+      includeSaleDate: true
+    })
   }
 
   createDebitDeposit(actor: AuthUser, payload: SendSapTarjetasDepositDto) {

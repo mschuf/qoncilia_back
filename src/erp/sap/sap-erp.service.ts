@@ -61,7 +61,10 @@ import {
   ensureSapTarjetasConfig,
   validateSapConfig
 } from "./sap-config.validator"
-import { parseSapTarjetasCsv } from "./sap-tarjetas-csv.util"
+import {
+  parseSapTarjetasCsv,
+  type SapTarjetasCsvParseOptions
+} from "./sap-tarjetas-csv.util"
 import { aliasSapTarjetasSystemTable } from "./sap-tarjetas-system.util"
 
 type SapTarjetasUploadFile = {
@@ -559,7 +562,8 @@ export class SapErpService {
   async parseSapTarjetasCsv(
     actor: AuthUser,
     companyErpConfigId: number,
-    file: SapTarjetasUploadFile | undefined
+    file: SapTarjetasUploadFile | undefined,
+    options?: SapTarjetasCsvParseOptions
   ): Promise<PublicSapTarjetasCsvParseResult> {
     const config = await this.requireConfigForActor(actor, companyErpConfigId)
 
@@ -571,7 +575,7 @@ export class SapErpService {
       throw new BadRequestException("No se recibio el archivo CSV de tarjetas.")
     }
 
-    const parsed = parseSapTarjetasCsv(file.buffer)
+    const parsed = parseSapTarjetasCsv(file.buffer, options)
 
     return {
       fileName: file.originalname ?? "tarjetas.csv",
@@ -582,8 +586,8 @@ export class SapErpService {
   }
 
   // Cada lote recibido genera UN solo deposito en SAP: todos sus AbsId viajan
-  // juntos dentro de CreditLines. El front envia los lotes de debito y credito
-  // por separado, por lo que cada tipo produce una unica llamada al Service Layer.
+  // juntos dentro de CreditLines. El flujo estandar envia un lote por tipo; el
+  // modulo OCHO_A puede dividir debito por fecha de venta antes de invocarlo.
   async createSapTarjetasDeposit(
     actor: AuthUser,
     payload: SendSapTarjetasDepositDto,
