@@ -1045,26 +1045,37 @@ export class SapErpService {
   }
 
   // OCHO A puede tener un movimiento bancario que representa varias lineas de
-  // asiento. Primero intenta agrupar por Referencia; si esa referencia no
-  // coincide, usa Referencia 2 del sistema contra la Referencia del banco. El
-  // grupo solo es valido cuando la suma exacta de sus importes cuadra con el
-  // importe de la fila bancaria. Cada linea del sistema se conserva como match
-  // individual para que el envio a SAP incluya todos sus TransId/LineNumber.
+  // asiento. Primero intenta grupos por igualdad exacta de Referencia y
+  // Referencia 2; todas las filas de la misma referencia se consideran juntas
+  // antes de aplicar el match flexible. Solo despues usa la variante "like"
+  // como respaldo para tolerar padding. El grupo es valido cuando la suma neta
+  // de sus importes (Debito - Credito) cuadra con la fila bancaria.
+  // Cada linea del sistema se conserva como match individual para que el envio
+  // a SAP incluya todos sus TransId/LineNumber.
   private calculateSapB1GroupedSystemMatches(
     systemRows: ConciliationPreviewRow[],
     bankRows: ConciliationPreviewRow[],
     columns: SapB1MatchColumns,
     referenceMatchMode: "exact" | "like"
   ): PublicSapB1SmartMatch[] {
-    if (!columns.reference) return []
+    const referenceColumn = columns.reference
+    if (!referenceColumn) return []
 
     const matches: PublicSapB1SmartMatch[] = []
     const usedSystemRows = new Set<string>()
+    const matchedBankRows = new Set<string>()
 
-    for (const bankRow of bankRows) {
+    const tryMatchBankRow = (
+      bankRow: ConciliationPreviewRow,
+      matchMode: "exact" | "like"
+    ): boolean => {
+      if (matchedBankRows.has(bankRow.rowId)) return false
+
       const bankNet = this.sapB1RowNet(bankRow, columns, "bank")
-      const bankReference = this.readSapB1PreviewRowValue(bankRow, columns.reference)
-      if (bankNet === null || Math.abs(bankNet) <= 0.0001 || bankReference === null) continue
+      const bankReference = this.readSapB1PreviewRowValue(bankRow, referenceColumn)
+      if (bankNet === null || Math.abs(bankNet) <= 0.0001 || bankReference === null) {
+        return false
+      }
 
       const directCandidates: Array<{ row: ConciliationPreviewRow; amount: number }> = []
       const reference2Candidates: Array<{ row: ConciliationPreviewRow; amount: number }> = []
@@ -1075,33 +1086,52 @@ export class SapErpService {
         const systemNet = this.sapB1RowNet(systemRow, columns, "system")
         if (systemNet === null) continue
 
-        const primaryReferenceMatched = this.sapB1ReferenceMatch(
-          this.readSapB1PreviewRowValue(systemRow, columns.reference),
-          bankReference,
-          referenceMatchMode
-        )
+        const primaryReference = this.readSapB1PreviewRowValue(systemRow, referenceColumn)
+        const reference2 = columns.reference2
+          ? this.readSapB1PreviewRowValue(systemRow, columns.reference2)
+          : null
+        const primaryReferenceExact = this.sapB1ExactMatch(primaryReference, bankReference)
+        const reference2Exact = this.sapB1ExactMatch(reference2, bankReference)
+        const primaryReferenceMatched =
+          matchMode === "exact"
+            ? primaryReferenceExact
+            : !primaryReferenceExact &&
+              this.sapB1ReferenceMatch(primaryReference, bankReference, "like")
+        const reference2Matched =
+          matchMode === "exact"
+            ? reference2Exact
+            : !reference2Exact && this.sapB1ReferenceMatch(reference2, bankReference, "like")
+
+        // Una linea puede pertenecer a ambos grupos; no la excluimos del grupo
+        // Ref. 2 solo porque su Referencia principal tambien coincida.
         if (primaryReferenceMatched) {
           directCandidates.push({ row: systemRow, amount: systemNet })
-          continue
         }
-
-        const reference2Matched = columns.reference2
-          ? this.sapB1ReferenceMatch(
-              this.readSapB1PreviewRowValue(systemRow, columns.reference2),
-              bankReference,
-              referenceMatchMode
-            )
-          : false
         if (reference2Matched) {
           reference2Candidates.push({ row: systemRow, amount: systemNet })
         }
       }
 
+      // Para grupos exactos por Referencia o Referencia 2, el total de TODAS
+      // sus lineas tiene prioridad sobre cualquier subconjunto. Esto cubre
+      // asientos con muchas lineas, incluidas lineas de Debito y de Credito,
+      // que componen una sola fila del extracto.
+      const completeDirectReferenceGroup =
+        matchMode === "exact"
+          ? this.findSapB1CompleteSystemGroupForBank(directCandidates, bankNet)
+          : null
+      const completeReference2Group =
+        matchMode === "exact"
+          ? this.findSapB1CompleteSystemGroupForBank(reference2Candidates, bankNet)
+          : null
       const chosen =
+        completeReference2Group ??
+        completeDirectReferenceGroup ??
         this.findSapB1SystemGroupForBank(directCandidates, bankNet) ??
         this.findSapB1SystemGroupForBank(reference2Candidates, bankNet)
-      if (!chosen) continue
+      if (!chosen) return false
 
+      matchedBankRows.add(bankRow.rowId)
       for (const item of chosen) {
         usedSystemRows.add(item.row.rowId)
         matches.push({
@@ -1117,9 +1147,48 @@ export class SapErpService {
           dateDifferenceDays: null
         })
       }
+
+      return true
+    }
+
+    // Primero resolver todas las referencias exactas. Esto impide que una
+    // referencia parecida consuma lineas de un grupo exacto que aparece despues
+    // en el extracto bancario.
+    for (const bankRow of bankRows) {
+      tryMatchBankRow(bankRow, "exact")
+    }
+
+    // Conserva la tolerancia existente para referencias con ceros/padding o
+    // texto adicional, pero solo si la igualdad exacta no resolvio la fila.
+    if (referenceMatchMode === "like") {
+      for (const bankRow of bankRows) {
+        tryMatchBankRow(bankRow, "like")
+      }
     }
 
     return matches
+  }
+
+  // A diferencia de findSapB1SystemGroupForBank, aqui no se permiten
+  // subconjuntos: se requiere que la suma neta de todas las lineas de una
+  // referencia exacta, principal o Referencia 2, sea el importe bancario. Cada
+  // amount recibido ya es el neto de la fila del sistema (Debito - Credito),
+  // por lo que se incluyen tambien las lineas que tienen importe en Credito.
+  // Esto evita que un importe individual o un subconjunto oculte lineas del
+  // mismo grupo.
+  private findSapB1CompleteSystemGroupForBank<T extends { amount: number }>(
+    candidates: T[],
+    bankNet: number
+  ): T[] | null {
+    if (candidates.length === 0) return null
+
+    const target = Math.round(bankNet * 10000)
+    const fullTotal = candidates.reduce(
+      (total, item) => total + Math.round(item.amount * 10000),
+      0
+    )
+
+    return fullTotal === target ? candidates : null
   }
 
   // Encuentra una combinacion exacta de lineas del sistema para una linea del
