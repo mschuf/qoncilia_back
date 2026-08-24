@@ -1048,8 +1048,9 @@ export class SapErpService {
   // asiento. Primero intenta grupos por igualdad exacta de Referencia y
   // Referencia 2; todas las filas de la misma referencia se consideran juntas
   // antes de aplicar el match flexible. Solo despues usa la variante "like"
-  // como respaldo para tolerar padding. El grupo es valido cuando la suma neta
-  // de sus importes (Debito - Credito) cuadra con la fila bancaria.
+  // como respaldo para tolerar padding. Si ninguna referencia resuelve la fila,
+  // intenta por fecha exacta e importe neto combinado. El grupo es valido cuando
+  // la suma neta de sus importes (Debito - Credito) cuadra con la fila bancaria.
   // Cada linea del sistema se conserva como match individual para que el envio
   // a SAP incluya todos sus TransId/LineNumber.
   private calculateSapB1GroupedSystemMatches(
@@ -1065,6 +1066,30 @@ export class SapErpService {
     const matches: PublicSapB1SmartMatch[] = []
     const usedSystemRows = new Set<string>()
     const matchedBankRows = new Set<string>()
+    type GroupedCandidate = { row: ConciliationPreviewRow; amount: number }
+
+    const registerGroupedMatch = (
+      bankRow: ConciliationPreviewRow,
+      chosen: GroupedCandidate[],
+      matchReason: PublicSapB1SmartMatch["matchReason"]
+    ): boolean => {
+      matchedBankRows.add(bankRow.rowId)
+      for (const item of chosen) {
+        usedSystemRows.add(item.row.rowId)
+        matches.push({
+          systemRow: item.row,
+          bankRow,
+          score: matchReason === "reference" ? 1 : 0.95,
+          column1Match: matchReason === "reference",
+          column2Match: true,
+          column3Match: true,
+          matchReason,
+          dateDifferenceDays: 0
+        })
+      }
+
+      return true
+    }
 
     const tryMatchBankRow = (
       bankRow: ConciliationPreviewRow,
@@ -1078,8 +1103,8 @@ export class SapErpService {
         return false
       }
 
-      const directCandidates: Array<{ row: ConciliationPreviewRow; amount: number }> = []
-      const reference2Candidates: Array<{ row: ConciliationPreviewRow; amount: number }> = []
+      const directCandidates: GroupedCandidate[] = []
+      const reference2Candidates: GroupedCandidate[] = []
 
       for (const systemRow of systemRows) {
         if (usedSystemRows.has(systemRow.rowId)) continue
@@ -1087,9 +1112,8 @@ export class SapErpService {
         const systemNet = this.sapB1RowNet(systemRow, columns, "system")
         if (systemNet === null) continue
 
-        // En OCHO A la referencia (o Referencia 2) es obligatoria, y la fecha
-        // debe ser exactamente la misma. No se permiten matches automaticos
-        // solo por importe y fecha, ni con tolerancia de dias.
+        // Los grupos por referencia tambien deben corresponder a la misma fecha
+        // exacta; OCHO A no usa tolerancia de dias en este flujo.
         const dateMatched = this.sapB1DateMatchWithinDays(
           this.readSapB1PreviewRowRawValue(systemRow, dateColumn),
           this.readSapB1PreviewRowRawValue(bankRow, dateColumn),
@@ -1143,24 +1167,41 @@ export class SapErpService {
         this.findSapB1SystemGroupForBank(reference2Candidates, bankNet)
       if (!chosen) return false
 
-      matchedBankRows.add(bankRow.rowId)
-      for (const item of chosen) {
-        usedSystemRows.add(item.row.rowId)
-        matches.push({
-          systemRow: item.row,
-          bankRow,
-          score: 1,
-          // La referencia obligatoria se cumplio, ya sea por Referencia o por
-          // Referencia 2. La fecha e importe tambien ya fueron validados.
-          column1Match: true,
-          column2Match: true,
-          column3Match: true,
-          matchReason: "reference",
-          dateDifferenceDays: 0
-        })
+      return registerGroupedMatch(bankRow, chosen, "reference")
+    }
+
+    const tryMatchBankRowByDateAndAmount = (bankRow: ConciliationPreviewRow): boolean => {
+      if (matchedBankRows.has(bankRow.rowId)) return false
+
+      const bankNet = this.sapB1RowNet(bankRow, columns, "bank")
+      if (bankNet === null || Math.abs(bankNet) <= 0.0001) return false
+
+      const candidates: GroupedCandidate[] = []
+      for (const systemRow of systemRows) {
+        if (usedSystemRows.has(systemRow.rowId)) continue
+
+        const systemNet = this.sapB1RowNet(systemRow, columns, "system")
+        if (systemNet === null) continue
+
+        const dateMatched = this.sapB1DateMatchWithinDays(
+          this.readSapB1PreviewRowRawValue(systemRow, dateColumn),
+          this.readSapB1PreviewRowRawValue(bankRow, dateColumn),
+          0
+        ).matched
+        if (!dateMatched) continue
+
+        candidates.push({ row: systemRow, amount: systemNet })
       }
 
-      return true
+      // Si todas las filas pendientes de la fecha forman exactamente el monto
+      // bancario, conservar el grupo completo. Si no, buscar el subconjunto
+      // exacto que el usuario antes tenia que seleccionar manualmente.
+      const chosen =
+        this.findSapB1CompleteSystemGroupForBank(candidates, bankNet) ??
+        this.findSapB1SystemGroupForBank(candidates, bankNet)
+      if (!chosen) return false
+
+      return registerGroupedMatch(bankRow, chosen, "date_amount")
     }
 
     // Primero resolver todas las referencias exactas. Esto impide que una
@@ -1176,6 +1217,12 @@ export class SapErpService {
       for (const bankRow of bankRows) {
         tryMatchBankRow(bankRow, "like")
       }
+    }
+
+    // Ultimo respaldo exclusivo de OCHO A: misma fecha exacta y mismo importe
+    // neto, aunque Referencia y Referencia 2 sean distintas.
+    for (const bankRow of bankRows) {
+      tryMatchBankRowByDateAndAmount(bankRow)
     }
 
     return matches
