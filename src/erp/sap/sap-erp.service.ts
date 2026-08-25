@@ -1752,6 +1752,15 @@ export class SapErpService {
     const rows = await this.executeSapHanaQuery(connection, query.sql, query.params)
     const columns = this.resolveQueryColumns(rows)
 
+    // Diagnostico: conserva los valores crudos devueltos por HANA, antes de
+    // normalizarlos para la respuesta que consume el frontend.
+    console.log("[SAP_HANA] Resultado query", {
+      label,
+      rowCount: rows.length,
+      columns,
+      rows
+    })
+
     return {
       columns,
       rows: rows.map((row) => this.toPublicQueryRow(row))
