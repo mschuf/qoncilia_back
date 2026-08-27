@@ -1,5 +1,8 @@
 import { BadRequestException, ForbiddenException, Injectable } from "@nestjs/common"
+import { InjectRepository } from "@nestjs/typeorm"
+import { Repository } from "typeorm"
 import { AuthUser } from "../../common/interfaces/auth-user.interface"
+import { CompanyCardCreditCommissionConfig } from "../entities/company-card-credit-commission-config.entity"
 import { CompareSapB1QueryPreviewDto } from "./dto/compare-sap-b1-query-preview.dto"
 import { SapLoginDto } from "./dto/sap-login.dto"
 import { SapLogoutDto } from "./dto/sap-logout.dto"
@@ -12,14 +15,16 @@ type SapTarjetasUploadFile = {
   originalname: string
 }
 
-const OCHO_A_CREDIT_CARD_COMMISSION_ACCOUNT = "1111000104"
-
 // Punto de extension exclusivo de OCHO_A. Inicialmente delega al flujo que ya
 // esta validado; las reglas futuras de 8A se implementan aqui sin modificar el
 // servicio estandar de Pago de tarjeta.
 @Injectable()
 export class OchoASapTarjetasService {
-  constructor(private readonly sapErpService: SapErpService) {}
+  constructor(
+    private readonly sapErpService: SapErpService,
+    @InjectRepository(CompanyCardCreditCommissionConfig)
+    private readonly commissionConfigRepository: Repository<CompanyCardCreditCommissionConfig>
+  ) {}
 
   loginSapSession(actor: AuthUser, payload: SapLoginDto) {
     this.ensureOchoA(actor)
@@ -58,7 +63,7 @@ export class OchoASapTarjetasService {
     return this.sapErpService.createSapTarjetasDeposit(actor, payload)
   }
 
-  createCreditDeposit(actor: AuthUser, payload: SendSapTarjetasDepositDto) {
+  async createCreditDeposit(actor: AuthUser, payload: SendSapTarjetasDepositDto) {
     this.ensureOchoA(actor)
     if (payload.commission === undefined) {
       throw new BadRequestException(
@@ -66,13 +71,38 @@ export class OchoASapTarjetasService {
       )
     }
 
+    const commissionAccount = await this.requireCreditCommissionAccount(actor, payload)
     return this.sapErpService.createSapTarjetasDeposit(actor, payload, {
       commission: {
-        account: OCHO_A_CREDIT_CARD_COMMISSION_ACCOUNT,
+        account: commissionAccount,
         amount: payload.commission
       },
       bankReference: payload.bankReference
     })
+  }
+
+  private async requireCreditCommissionAccount(
+    actor: AuthUser,
+    payload: SendSapTarjetasDepositDto
+  ): Promise<string> {
+    const configuration = await this.commissionConfigRepository.findOne({
+      where: {
+        active: true,
+        companyErpConfig: {
+          id: payload.companyErpConfigId,
+          company: { id: actor.companyId }
+        }
+      }
+    })
+    const account = configuration?.creditCommissionAccount?.trim()
+
+    if (!account) {
+      throw new BadRequestException(
+        "Configura la cuenta de comision de credito para la ERP SAP_TARJETAS de OCHO A antes de enviar el deposito."
+      )
+    }
+
+    return account
   }
 
   private ensureOchoA(actor: AuthUser): void {

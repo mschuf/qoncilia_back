@@ -18,6 +18,8 @@ import { ConciliationController } from "./conciliation.controller";
 import { ConciliationService } from "./conciliation.service";
 import { OchoAConciliationController } from "./ocho-a-conciliation.controller";
 import { OchoAConciliationService } from "./ocho-a-conciliation.service";
+import { FgConciliationController } from "./fg-conciliation.controller";
+import { FgConciliationService } from "./fg-conciliation.service";
 import { ReconciliationLayoutMapping } from "./entities/reconciliation-layout-mapping.entity";
 import { ReconciliationLayout } from "./entities/reconciliation-layout.entity";
 import { ReconciliationMatch } from "./entities/reconciliation-match.entity";
@@ -50,10 +52,16 @@ import { UserTemplateAvailability } from "./entities/user-template-availability.
       ReconciliationMatch
     ])
   ],
-  controllers: [ConciliationController, BankingController, OchoAConciliationController],
+  controllers: [
+    ConciliationController,
+    BankingController,
+    OchoAConciliationController,
+    FgConciliationController
+  ],
   providers: [
     ConciliationService,
     OchoAConciliationService,
+    FgConciliationService,
     BankingService,
     SapB1Service,
     JwtAuthGuard,

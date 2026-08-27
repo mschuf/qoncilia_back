@@ -1,7 +1,7 @@
 -- =============================================================================
--- Copia AISLADA en Qoncilia de las empresas 5629621 y FG_TARJETA para QA.
+-- Copia AISLADA en Qoncilia de 5629621 hacia 5629621_QA.
 --
--- Crea exactamente un usuario con rol `admin` por copia y replica solamente la
+-- Crea exactamente un usuario con rol `admin` y replica solamente la
 -- configuracion necesaria para probar las pantallas:
 --   * perfil de empresa;
 --   * modulos/pantallas del rol admin;
@@ -12,31 +12,41 @@
 --   * disponibilidad de plantillas base para el nuevo administrador.
 --
 -- NO copia usuarios reales, sesiones ERP, extractos, filas de extractos ni
--- resultados/historial de conciliacion. NO hay UPDATE/DELETE sobre las dos
--- empresas origen ni sobre ningun otro registro preexistente.
+-- resultados/historial de conciliacion. NO hay UPDATE/DELETE sobre la empresa
+-- origen ni sobre ningun otro registro preexistente.
 --
--- Las nuevas empresas son:
---   5629621      -> 5629621_QA        / <nombre original> - QA Conciliacion
---   FG_TARJETA   -> FG_TARJETA_QA     / <nombre original> - QA Tarjetas
+-- Empresa nueva:
+--   5629621 -> 5629621_QA / <nombre original> - QA Conciliacion
 --
--- Usuarios que crea (solo si no existian):
+-- Usuario que crea (solo si no existia):
 --   qa.conciliacion.admin / Qoncilia.QA.2026!
---   qa.tarjetas.admin     / Qoncilia.QA.2026!
--- Cambiar ambas contrasenas inmediatamente despues del primer inicio de sesion.
+-- Cambiar la contrasena inmediatamente despues del primer inicio de sesion.
 --
 -- IMPORTANTE: las ERP clonadas apuntaran al MISMO SAP que las empresas origen y
 -- conservaran sus estados activo/predeterminado. Consultar datos es aislado a
 -- nivel Qoncilia, pero procesar BankPages, depositos de tarjetas,
 -- conciliaciones externas o borrados puede escribir en SAP real. No ejecutar
--- este seed hasta desplegar un bloqueo backend de escrituras para 5629621_QA y
--- FG_TARJETA_QA. Este SQL por si solo no protege SAP productivo.
+-- este seed hasta desplegar el bloqueo backend de escrituras para 5629621_QA.
+-- Este SQL por si solo no protege SAP productivo.
 --
--- Seguridad operacional: la ejecucion es atomica y de una sola vez. Si alguno
--- de los dos codigos QA ya existe, se aborta antes de hacer cambios para no
+-- Seguridad operacional: la ejecucion es atomica y de una sola vez. Si el
+-- codigo QA ya existe, se aborta antes de hacer cambios para no
 -- sobreescribir configuracion de pruebas previa.
 -- =============================================================================
 
 BEGIN;
+
+-- Esta instancia fue confirmada como la base de produccion. Las copias QA se
+-- crean aqui, pero el script aborta si se ejecuta contra otra base.
+DO $$
+DECLARE
+  expected_database CONSTANT TEXT := 'QONCILIA_BACK';
+BEGIN
+  IF current_database() <> expected_database THEN
+    RAISE EXCEPTION 'Base incorrecta. Esperada %, actual %.', expected_database, current_database();
+  END IF;
+END;
+$$;
 
 CREATE TEMP TABLE qa_clone_targets (
   source_tax_id   VARCHAR(50)  PRIMARY KEY,
@@ -67,16 +77,6 @@ INSERT INTO qa_clone_targets (
     'qa.conciliacion.admin',
     'Administrador',
     'QA Conciliacion',
-    'Qoncilia.QA.2026!'
-  ),
-  (
-    'FG_TARJETA',
-    'FG_TARJETA_QA',
-    ' - QA Tarjetas',
-    'qa.tarjetas.admin',
-    'qa.tarjetas.admin',
-    'Administrador',
-    'QA Tarjetas',
     'Qoncilia.QA.2026!'
   );
 
@@ -143,7 +143,7 @@ BEGIN
     WHERE source_company.emp_id IS NULL
        OR source_company.emp_activa IS NOT TRUE
   ) THEN
-    RAISE EXCEPTION 'No existe o no esta activa una de las empresas origen: 5629621, FG_TARJETA.';
+    RAISE EXCEPTION 'No existe o no esta activa la empresa origen 5629621.';
   END IF;
 
   IF EXISTS (
@@ -152,7 +152,7 @@ BEGIN
     JOIN public.empresas target_company
       ON LOWER(BTRIM(target_company.emp_id_fiscal)) = LOWER(BTRIM(t.target_tax_id))
   ) THEN
-    RAISE EXCEPTION 'Ya existe una empresa QA (5629621_QA o FG_TARJETA_QA). Este script no sobrescribe copias existentes.';
+    RAISE EXCEPTION 'Ya existe la empresa QA 5629621_QA. Este script no sobrescribe copias existentes.';
   END IF;
 
   IF (SELECT COUNT(*) FROM public.roles WHERE LOWER(BTRIM(rol_codigo)) = 'admin' AND rol_activo = TRUE) <> 1 THEN
@@ -189,8 +189,7 @@ BEGIN
   INTO missing_operational_config
   FROM (
     VALUES
-      ('5629621'::VARCHAR, 'SAP_B1'::VARCHAR),
-      ('FG_TARJETA'::VARCHAR, 'SAP_TARJETAS'::VARCHAR)
+      ('5629621'::VARCHAR, 'SAP_B1'::VARCHAR)
   ) AS required(source_tax_id, erp_code)
   WHERE NOT EXISTS (
     SELECT 1
@@ -227,8 +226,7 @@ BEGIN
   INTO missing_operational_screen
   FROM (
     VALUES
-      ('5629621'::VARCHAR, 'bank_conciliation'::VARCHAR),
-      ('FG_TARJETA'::VARCHAR, 'card_payment'::VARCHAR)
+      ('5629621'::VARCHAR, 'bank_conciliation'::VARCHAR)
   ) AS required(source_tax_id, module_code)
   WHERE NOT EXISTS (
     SELECT 1

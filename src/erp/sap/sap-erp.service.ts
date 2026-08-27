@@ -56,6 +56,7 @@ import {
   SapTarjetasDepositPayload
 } from "./interfaces/sap-erp.interfaces"
 import { ExternalRequestError, SapB1Service } from "./sap-b1.service"
+import { ensureSapWriteAllowedForActor } from "./sap-write-access.util"
 import {
   ensureSapErpType,
   ensureSapTarjetasConfig,
@@ -83,6 +84,13 @@ type SapTarjetasDepositOptions = {
     amount: number
   }
   bankReference?: string
+  reconcileAfterDeposit?: "tYES" | "tNO"
+}
+
+type SapTarjetasSystemQueryOptions = {
+  // El modulo FG QA necesita la cuenta origen de cada voucher para enviarla
+  // como VoucherAccount. Es distinta de la cuenta bancaria destino del deposito.
+  includeCreditVoucherAccount?: boolean
 }
 
 type SapReadableRow = {
@@ -147,6 +155,18 @@ type SapB1MatchColumns = {
   credit: string | null
 }
 
+type SapB1ComparisonOptions = {
+  allowGroupedSystemMatches?: boolean
+  // Solamente la fachada de Pago Credito FG_TARJETA_QA puede habilitarlo.
+  fgCreditCardTransactionFallback?: boolean
+}
+
+type SapB1FgCreditFallbackColumns = {
+  systemDate: string
+  bankSaleDate: string
+  bankTransaction: string
+}
+
 const SAP_B1_DATE_TOLERANCE_DAYS = 7
 
 @Injectable()
@@ -167,7 +187,7 @@ export class SapErpService {
     private readonly companyErpConfigRepository: Repository<CompanyErpConfig>,
     @InjectRepository(UserErpSession)
     private readonly userErpSessionRepository: Repository<UserErpSession>,
-    configService: ConfigService,
+    private readonly configService: ConfigService,
     private readonly sapB1Service: SapB1Service
   ) {
     this.credentialSecret =
@@ -382,7 +402,8 @@ export class SapErpService {
 
   async compareSapB1QueryPreview(
     actor: AuthUser,
-    payload: CompareSapB1QueryPreviewDto
+    payload: CompareSapB1QueryPreviewDto,
+    options?: SapB1ComparisonOptions
   ): Promise<PublicSapB1QueryComparisonResult> {
     const config = await this.requireConfigForActor(actor, payload.companyErpConfigId)
 
@@ -406,11 +427,20 @@ export class SapErpService {
     ])
     const referenceMatchMode = payload.referenceMatchMode ?? "exact"
     const strictReferenceAmountMatch = payload.strictReferenceAmountMatch === true
-    // La capacidad de agrupar varias lineas de sistema contra una bancaria es
-    // una personalizacion exclusiva de OCHO_A, aunque otro cliente intente
-    // enviar el flag a la ruta generica.
+    const useFgCreditCardTransactionFallback =
+      options?.fgCreditCardTransactionFallback === true &&
+      actor.companyCode.trim().toUpperCase() === "FG_TARJETA_QA"
+    const fgCreditFallbackColumns = useFgCreditCardTransactionFallback
+      ? this.resolveFgCreditCardFallbackColumns(payload)
+      : null
+    // La capacidad de agrupar varias lineas de sistema contra una bancaria se
+    // limita a las fachadas especializadas de OCHO_A y FG QA, aunque otro
+    // cliente intente enviar el flag a la ruta generica.
+    const groupedCompanyCodes = new Set(["OCHO_A", "5629621_QA", "5629621"])
     const groupSystemMatches =
-      payload.groupSystemMatches === true && actor.companyCode.trim().toUpperCase() === "OCHO_A"
+      options?.allowGroupedSystemMatches === true &&
+      payload.groupSystemMatches === true &&
+      groupedCompanyCodes.has(actor.companyCode.trim().toUpperCase())
     const hasAmount = Boolean(
       matchColumns.amount || matchColumns.debit || matchColumns.credit
     )
@@ -424,7 +454,7 @@ export class SapErpService {
         "El matching agrupado requiere las columnas Referencia, Fecha e Importe."
       )
     }
-    const matches = groupSystemMatches
+    let matches = groupSystemMatches
       ? this.calculateSapB1GroupedSystemMatches(
           systemRows,
           bankRows,
@@ -438,6 +468,21 @@ export class SapErpService {
           referenceMatchMode,
           strictReferenceAmountMatch
         )
+
+    // Nunca altera una coincidencia de la primera pasada. El respaldo se aplica
+    // solamente a filas de ambos lados que todavia estan libres.
+    if (fgCreditFallbackColumns) {
+      const matchedBankRowIds = new Set(matches.map((match) => match.bankRow.rowId))
+      const matchedSystemRowIds = new Set(matches.map((match) => match.systemRow.rowId))
+      const fallbackMatches = this.calculateFgCreditCardTransactionFallbackMatches(
+        systemRows.filter((row) => !matchedSystemRowIds.has(row.rowId)),
+        bankRows.filter((row) => !matchedBankRowIds.has(row.rowId)),
+        matchColumns,
+        fgCreditFallbackColumns
+      )
+      matches = [...matches, ...fallbackMatches]
+    }
+
     const matchedBankRowIds = new Set(matches.map((match) => match.bankRow.rowId))
     const matchedSystemRowIds = new Set(matches.map((match) => match.systemRow.rowId))
     const unmatchedBankRows = bankRows.filter((row) => !matchedBankRowIds.has(row.rowId))
@@ -473,7 +518,8 @@ export class SapErpService {
 
   async runSapTarjetasSystemQuery(
     actor: AuthUser,
-    payload: RunSapTarjetasQueryDto
+    payload: RunSapTarjetasQueryDto,
+    options?: SapTarjetasSystemQueryOptions
   ): Promise<PublicSapTarjetasSystemQueryResult> {
     const config = await this.requireConfigForActor(actor, payload.companyErpConfigId)
 
@@ -526,6 +572,12 @@ export class SapErpService {
       const system = aliasSapTarjetasSystemTable(
         await this.executeSapB1PreviewQuery(connection, systemQuery, "query_sistema")
       )
+      const includeCreditVoucherAccount =
+        options?.includeCreditVoucherAccount === true &&
+        actor.companyCode.trim().toUpperCase() === "FG_TARJETA_QA"
+      const enrichedSystem = includeCreditVoucherAccount
+        ? await this.addSapTarjetasVoucherAccounts(connection, system)
+        : system
 
       return {
         companyErpConfigId: config.id,
@@ -537,7 +589,7 @@ export class SapErpService {
         bankBranch,
         dateFrom,
         dateTo,
-        system
+        system: enrichedSystem
       }
     } catch (error) {
       this.logger.error(
@@ -593,6 +645,7 @@ export class SapErpService {
     payload: SendSapTarjetasDepositDto,
     options?: SapTarjetasDepositOptions
   ): Promise<PublicSapTarjetasBulkDepositResult> {
+    ensureSapWriteAllowedForActor(actor, this.configService)
     this.ensureCanRunExternalReconciliation(actor)
 
     const config = await this.requireConfigForActor(actor, payload.companyErpConfigId)
@@ -740,6 +793,7 @@ export class SapErpService {
     actor: AuthUser,
     payload: SendSapExternalReconciliationDto
   ): Promise<PublicSapExternalReconciliationResult> {
+    ensureSapWriteAllowedForActor(actor, this.configService)
     this.ensureCanRunExternalReconciliation(actor)
 
     const config = await this.requireConfigForActor(actor, payload.companyErpConfigId)
@@ -912,6 +966,34 @@ export class SapErpService {
     return (commonColumns.length > 0 ? commonColumns : payload.bank.columns).slice(0, 4)
   }
 
+  private resolveFgCreditCardFallbackColumns(
+    payload: CompareSapB1QueryPreviewDto
+  ): SapB1FgCreditFallbackColumns {
+    const systemDate = this.findSapB1Column(payload.system.columns, ["fecha", "date"])
+    const bankSaleDate = this.findSapB1Column(payload.bank.columns, [
+      "fechadeventa",
+      "saledate"
+    ])
+    const bankTransaction = this.findSapB1Column(payload.bank.columns, [
+      "nrotransaccion",
+      "numerotransaccion",
+      "transactionnumber"
+    ])
+
+    if (!systemDate || !bankSaleDate || !bankTransaction) {
+      throw new BadRequestException(
+        "El matching de credito FG requiere Fecha SAP, Fecha de venta y Nro. transaccion del CSV."
+      )
+    }
+
+    return { systemDate, bankSaleDate, bankTransaction }
+  }
+
+  private findSapB1Column(columns: string[], keys: string[]): string | null {
+    const wanted = new Set(keys.map((key) => this.normalizeLookupKey(key)))
+    return columns.find((column) => wanted.has(this.normalizeLookupKey(column))) ?? null
+  }
+
   private convertSapB1TableToPreviewRows(
     table: PublicSapB1QueryTable
   ): ConciliationPreviewRow[] {
@@ -1042,6 +1124,83 @@ export class SapErpService {
     }
 
     return matches
+  }
+
+  // Respaldo exclusivo de Pago Credito FG_TARJETA_QA. SAP guarda en Referencia
+  // el tramo final del Nro. transaccion de Bancard en ciertos movimientos. Para
+  // evitar falsos positivos se exigen simultaneamente importe bruto exacto,
+  // Fecha SAP = Fecha de venta y una relacion unica en ambos sentidos.
+  private calculateFgCreditCardTransactionFallbackMatches(
+    systemRows: ConciliationPreviewRow[],
+    bankRows: ConciliationPreviewRow[],
+    columns: SapB1MatchColumns,
+    fallbackColumns: SapB1FgCreditFallbackColumns
+  ): PublicSapB1SmartMatch[] {
+    if (!columns.reference || !(columns.amount || columns.debit || columns.credit)) {
+      return []
+    }
+
+    const candidatePairs: Array<{
+      systemRow: ConciliationPreviewRow
+      bankRow: ConciliationPreviewRow
+    }> = []
+
+    for (const systemRow of systemRows) {
+      const systemAmount = this.sapB1RowNet(systemRow, columns, "system")
+      if (systemAmount === null || Math.abs(systemAmount) <= 0.0001) continue
+
+      const systemReference = this.readSapB1PreviewRowValue(systemRow, columns.reference)
+      for (const bankRow of bankRows) {
+        const bankAmount = this.sapB1RowNet(bankRow, columns, "bank")
+        if (bankAmount === null || systemAmount !== bankAmount) continue
+
+        const referenceMatched = this.sapB1ReferenceContains(
+          systemReference,
+          this.readSapB1PreviewRowValue(bankRow, fallbackColumns.bankTransaction),
+          4
+        )
+        if (!referenceMatched) continue
+
+        const dateMatched = this.sapB1DateMatchWithinDays(
+          this.readSapB1PreviewRowRawValue(systemRow, fallbackColumns.systemDate),
+          this.readSapB1PreviewRowRawValue(bankRow, fallbackColumns.bankSaleDate),
+          0
+        ).matched
+        if (!dateMatched) continue
+
+        candidatePairs.push({ systemRow, bankRow })
+      }
+    }
+
+    const systemCandidateCounts = new Map<string, number>()
+    const bankCandidateCounts = new Map<string, number>()
+    for (const candidate of candidatePairs) {
+      systemCandidateCounts.set(
+        candidate.systemRow.rowId,
+        (systemCandidateCounts.get(candidate.systemRow.rowId) ?? 0) + 1
+      )
+      bankCandidateCounts.set(
+        candidate.bankRow.rowId,
+        (bankCandidateCounts.get(candidate.bankRow.rowId) ?? 0) + 1
+      )
+    }
+
+    return candidatePairs
+      .filter(
+        (candidate) =>
+          systemCandidateCounts.get(candidate.systemRow.rowId) === 1 &&
+          bankCandidateCounts.get(candidate.bankRow.rowId) === 1
+      )
+      .map(({ systemRow, bankRow }) => ({
+        systemRow,
+        bankRow,
+        score: 1,
+        column1Match: true,
+        column2Match: true,
+        column3Match: true,
+        matchReason: "reference",
+        dateDifferenceDays: 0
+      }))
   }
 
   // OCHO A puede tener un movimiento bancario que representa varias lineas de
@@ -1426,9 +1585,23 @@ export class SapErpService {
     mode: "exact" | "like"
   ): boolean {
     if (mode !== "like") return this.sapB1ExactMatch(left, right)
+    return this.sapB1ReferenceContains(left, right)
+  }
+
+  private sapB1ReferenceContains(
+    left: SapB1ComparableValue,
+    right: SapB1ComparableValue,
+    minimumLength = 1
+  ): boolean {
     const normalizedLeft = this.normalizeSapB1Reference(left)
     const normalizedRight = this.normalizeSapB1Reference(right)
     if (!normalizedLeft || !normalizedRight) return false
+    if (
+      normalizedLeft.length < minimumLength ||
+      normalizedRight.length < minimumLength
+    ) {
+      return false
+    }
     return (
       normalizedLeft === normalizedRight ||
       normalizedLeft.includes(normalizedRight) ||
@@ -1955,6 +2128,7 @@ export class SapErpService {
     const journalRemarks =
       this.normalizeOptional(payload.journalRemarks) ?? SAP_TARJETAS_DEFAULT_JOURNAL_REMARKS
     const bankReference = this.normalizeOptional(options?.bankReference)
+    const reconcileAfterDeposit = options?.reconcileAfterDeposit ?? "tYES"
     // Cabeceras con datos de la cuenta bancaria: BankAccountNum = "Cuenta Pago
     // ERP", Bank = descripcion del banco, BankBranch = sucursal de la cuenta.
     const bankAccountNum = this.normalizeOptional(payload.bankAccountNum)
@@ -1978,9 +2152,10 @@ export class SapErpService {
       CreditLines: creditLines,
       DepositAccount: depositAccount,
       DepositType: "dtCredit",
-      // Equivale a marcar "Reconciliar importes tras presentacion" en SAP.
-      // SAP admite esta propiedad para depositos de cheques y tarjetas.
-      ReconcileAfterDeposit: "tYES",
+      // Para los creditos FG QA con comision, SAP compara el neto depositado
+      // contra vouchers brutos y rechaza la reconciliacion automatica. En ese
+      // caso la fachada especializada indica tNO; los demas flujos conservan tYES.
+      ReconcileAfterDeposit: reconcileAfterDeposit,
       VoucherAccount: voucherAccount,
       DepositDate: depositDate,
       JournalRemarks: journalRemarks,
@@ -1998,6 +2173,56 @@ export class SapErpService {
           }
         : {})
     }
+  }
+
+  // OCRH.CreditAcct es la cuenta contable en la que nacieron los vouchers de
+  // tarjeta. Para un deposito con comision no puede sustituirse por la cuenta
+  // bancaria destino: SAP necesita reconciliar contra este origen.
+  private async addSapTarjetasVoucherAccounts(
+    connection: HanaConnection,
+    system: PublicSapB1QueryTable
+  ): Promise<PublicSapB1QueryTable> {
+    const absIds = [...new Set(
+      system.rows
+        .map((row) => this.toPositiveInteger(row.AbsId))
+        .filter((absId): absId is number => Boolean(absId))
+    )]
+    if (absIds.length === 0) return system
+
+    const placeholders = absIds.map(() => "?").join(", ")
+    const rows = await this.executeSapHanaQuery(
+      connection,
+      `SELECT "AbsId", "CreditAcct" FROM "OCRH" WHERE "AbsId" IN (${placeholders})`,
+      absIds
+    )
+    const accountsByAbsId = new Map<number, string>()
+    for (const row of rows) {
+      const absId = this.toPositiveInteger(row.AbsId)
+      const account = this.normalizeOptional(row.CreditAcct)
+      if (absId && account) accountsByAbsId.set(absId, account)
+    }
+
+    const voucherAccountColumn = "Cuenta vouchers SAP"
+    const columns = system.columns.includes(voucherAccountColumn)
+      ? system.columns
+      : [...system.columns, voucherAccountColumn]
+    const enrichedRows = system.rows.map((row) => {
+      const absId = this.toPositiveInteger(row.AbsId)
+      return {
+        ...row,
+        [voucherAccountColumn]: absId ? accountsByAbsId.get(absId) ?? null : null
+      }
+    })
+
+    this.logger.log(
+      this.stringifyLogPayload({
+        event: "sap_tarjetas_credit_voucher_accounts_loaded",
+        requestedAbsIds: absIds.length,
+        resolvedVoucherAccounts: accountsByAbsId.size
+      })
+    )
+
+    return { columns, rows: enrichedRows }
   }
 
   private async buildSapExternalReconciliationPayload(

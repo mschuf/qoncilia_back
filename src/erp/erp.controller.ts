@@ -40,8 +40,11 @@ export class ErpController {
     AppModuleCode.BANK_CONCILIATION,
     AppModuleCode.CONCILIATION_OCHO_A,
     AppModuleCode.BANK_CONCILIATION_OCHO_A,
+    AppModuleCode.CONCILIATION_FG,
+    AppModuleCode.BANK_CONCILIATION_FG,
     AppModuleCode.CARD_PAYMENT,
-    AppModuleCode.CARD_PAYMENT_OCHO_A
+    AppModuleCode.CARD_PAYMENT_OCHO_A,
+    AppModuleCode.CARD_PAYMENT_FG
   )
   listReference(@CurrentUser() actor: AuthUser) {
     return this.erpService.listReference(actor)
@@ -55,8 +58,11 @@ export class ErpController {
     AppModuleCode.BANK_CONCILIATION,
     AppModuleCode.CONCILIATION_OCHO_A,
     AppModuleCode.BANK_CONCILIATION_OCHO_A,
+    AppModuleCode.CONCILIATION_FG,
+    AppModuleCode.BANK_CONCILIATION_FG,
     AppModuleCode.CARD_PAYMENT,
-    AppModuleCode.CARD_PAYMENT_OCHO_A
+    AppModuleCode.CARD_PAYMENT_OCHO_A,
+    AppModuleCode.CARD_PAYMENT_FG
   )
   listCompanyErpConfigs(@CurrentUser() actor: AuthUser, @Query() query: ListCompanyErpConfigsQueryDto) {
     return this.erpService.listCompanyErpConfigs(actor, query)

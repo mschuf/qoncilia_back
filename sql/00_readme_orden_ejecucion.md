@@ -62,6 +62,28 @@ Estos scripts estan pensados para un `DROP`/recreacion limpia. Los scripts princ
 - `38_seed_modulos_banco_tarjetas.sql` (idempotente): registra los modulos por pantalla `bank_conciliation` ("Conciliacion de Banco", `/conciliacion-banco`, workbench SAP_B1) y `card_payment` ("Pago de Tarjeta", `/pago-tarjeta`, workbench SAP_TARJETAS) y los habilita para todas las empresas y roles la primera vez (el grant usa ON CONFLICT DO NOTHING: re-correrlo NO pisa lo que el superadmin haya apagado). Los checkboxes aparecen solos en `/access-control` (la matriz del superadmin es generica); desde ahi se apagan por empresa/rol. Requiere el backend/front con los codigos nuevos (enum `AppModuleCode` + `APP_MODULE_VALUES`).
 - `39_add_sucursal_cuentas_bancarias.sql` (incremental/idempotente): agrega `cuentas_bancarias.cuenta_bancaria_sucursal` — la sucursal POR CUENTA (distinta de `bancos.banco_sucursal`) que viaja como `BankBranch` en la cabecera del deposito SAP de tarjetas; `Bank` sale de `bancos.banco_descripcion`. Se carga por la UI de Cuentas Bancarias.
 - `52_fix_ocho_a_continental_debit_credit_layout.sql` (incremental/idempotente, solo OCHO_A): asegura que Continental procese `DEBE` (columna E) como `DebitAmount` y `HABER` (columna F) como `CreditAmount` al crear BankPages en SAP B1. No modifica las plantillas de otras empresas.
-- `53_clone_5629621_and_fg_tarjeta_for_qa.sql` (manual, atomico y de una sola ejecucion): crea las copias `5629621_QA` y `FG_TARJETA_QA`, cada una con un unico admin QA. Replica perfiles, modulos, ERPs activos, bancos/cuentas y layouts, pero no usuarios reales, sesiones ni extractos. Requiere el esquema hasta `39`; las ERPs clonadas apuntan al mismo SAP de origen, por lo que las operaciones que escriben en SAP deben ejecutarse solo contra un ambiente SAP de pruebas.
+- `53_clone_5629621_and_fg_tarjeta_for_qa.sql` queda como alternativa combinada de referencia. Replica todas las ERP activas e inactivas; no usar junto con `57`/`58`.
 - `54_fix_ocho_a_sudameris_usd_signed_layout.sql` (incremental/idempotente, solo OCHO_A): crea o reactiva la copia local de `Base Sudameris vs SAP B1` para `SUDAMERIS CTA 0003000003592029 USD` (banco 14 / empresa 6 / usuario 21, cuenta 24), y la adapta al extracto con encabezado en fila 8 y datos desde fila 9. Lee `Importe` (E) como importe firmado: negativo=`DebitAmount`, positivo=`CreditAmount`; `Saldo` (F) es solo visual. No modifica plantillas base ni otras empresas.
 - `55_seed_ocho_a_remaining_bank_layouts.sql` (manual, atomico e idempotente, solo OCHO_A): configura BASA, Familiar, GNB e Itaú desde los extractos de `EXTRACTOS BANCOS`, exclusivamente cuando esos bancos de la empresa 6 no tengan ninguna plantilla, activa ni inactiva. Verifica además que `emp_id_fiscal = 'OCHO_A'`, crea layouts locales con modo `debit_credit` y no actualiza layouts existentes, Sudameris, Continental, plantillas base, otros bancos ni otras empresas.
+
+### Migracion FG aislada con empresas QA
+
+Estos scripts son manuales y no forman parte de una recreacion automatica. El agente no los ejecuta. Orden:
+
+1. `56_preflight_fg_qa_clone.sql`: solo lectura; valida origenes, ERP, modulos, inventario y colisiones.
+2. `57_clone_5629621_to_qa.sql`: crea solamente `5629621_QA` y `qa.conciliacion.admin`.
+3. `58_clone_fg_tarjeta_to_qa.sql`: crea solamente `FG_TARJETA_QA` y `qa.tarjetas.admin`.
+4. `59_verify_fg_qa_erp_parity.sql`: solo lectura; exige copia exacta de todas las configuraciones ERP.
+5. Desplegar backend/frontend FG con `FG_QA_SAP_WRITES_ENABLED=false` (ausente tambien significa bloqueado).
+6. `60_seed_fg_qa_modules.sql`: crea/asigna los tres modulos FG solamente a los admins QA y deshabilita sus modulos operativos heredados.
+7. `61_verify_fg_qa_isolation.sql`: solo lectura; comprueba permisos, propiedad, ausencia de cruces y paridad ERP.
+
+La base confirmada para esta migracion es `QONCILIA_BACK`. Los SQL de escritura ya incluyen `expected_database = 'QONCILIA_BACK'` y abortan si `current_database()` no coincide. No cambiar esa constante sin una revision explicita del entorno.
+
+`62_enable_fg_modules_production.sql` se reserva para una promocion posterior aprobada. No modifica bancos, cuentas, layouts ni ERP productivos. `63_rollback_fg_module_assignments.sql` es recuperable: deshabilita modulos FG y ERP QA sin borrar datos.
+
+### Cuenta de comision de tarjetas de credito FG
+
+`64_seed_fg_credit_card_commission_accounts.sql` crea una tabla de configuracion por ERP y agrega un placeholder solo para `FG_TARJETA` y `FG_TARJETA_QA`. El backend rechaza ese placeholder: antes de enviar un deposito de credito hay que actualizar la cuenta real en el bloque comentado del mismo archivo. No afecta bancos, cuentas bancarias, layouts ni configuraciones de otras empresas.
+
+`65_seed_ocho_a_credit_card_commission_account.sql` requiere primero el `64` y guarda la cuenta actual de OCHO_A (`1111000104`) solamente en su ERP `SAP_TARJETAS`. Despues del despliegue, OCHO_A y FG leen la cuenta desde esta tabla por ERP.

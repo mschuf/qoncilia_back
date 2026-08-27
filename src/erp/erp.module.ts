@@ -10,6 +10,7 @@ import { CompanyBankAccount } from "../conciliation/entities/company-bank-accoun
 import { Reconciliation } from "../conciliation/entities/reconciliation.entity"
 import { User } from "../users/entities/user.entity"
 import { CompanyErpConfig } from "./entities/company-erp-config.entity"
+import { CompanyCardCreditCommissionConfig } from "./entities/company-card-credit-commission-config.entity"
 import { ErpConfigTemplate } from "./entities/erp-config-template.entity"
 import { ErpController } from "./erp.controller"
 import { ErpService } from "./erp.service"
@@ -21,6 +22,10 @@ import { SapErpController } from "./sap/sap-erp.controller"
 import { SapErpService } from "./sap/sap-erp.service"
 import { OchoASapBankController } from "./sap/ocho-a-sap-bank.controller"
 import { OchoASapBankService } from "./sap/ocho-a-sap-bank.service"
+import { FgSapBankController } from "./sap/fg-sap-bank.controller"
+import { FgSapBankService } from "./sap/fg-sap-bank.service"
+import { FgSapTarjetasController } from "./sap/fg-sap-tarjetas.controller"
+import { FgSapTarjetasService } from "./sap/fg-sap-tarjetas.service"
 
 @Module({
   imports: [
@@ -32,6 +37,7 @@ import { OchoASapBankService } from "./sap/ocho-a-sap-bank.service"
       CompanyBankAccount,
       Reconciliation,
       CompanyErpConfig,
+      CompanyCardCreditCommissionConfig,
       ErpConfigTemplate,
       UserErpSession
     ])
@@ -40,13 +46,17 @@ import { OchoASapBankService } from "./sap/ocho-a-sap-bank.service"
     ErpController,
     SapErpController,
     OchoASapTarjetasController,
-    OchoASapBankController
+    OchoASapBankController,
+    FgSapTarjetasController,
+    FgSapBankController
   ],
   providers: [
     ErpService,
     SapErpService,
     OchoASapBankService,
     OchoASapTarjetasService,
+    FgSapBankService,
+    FgSapTarjetasService,
     SapB1Service,
     JwtAuthGuard,
     RolesGuard,

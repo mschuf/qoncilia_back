@@ -20,6 +20,7 @@ import {
 import { CompanyErpConfig } from "../erp/entities/company-erp-config.entity";
 import { ExternalRequestError, SapB1Service, SapBankPagePayload } from "../erp/sap/sap-b1.service";
 import { ensureSapErpType, validateSapConfig } from "../erp/sap/sap-config.validator";
+import { ensureSapWriteAllowedForActor } from "../erp/sap/sap-write-access.util";
 import { Role } from "../common/enums/role.enum";
 import { AuthUser } from "../common/interfaces/auth-user.interface";
 import { decryptText } from "../common/utils/encryption.util";
@@ -179,7 +180,7 @@ export class ConciliationService {
     private readonly layoutMappingRepository: Repository<ReconciliationLayoutMapping>,
     @InjectRepository(CompanyErpConfig)
     private readonly companyErpConfigRepository: Repository<CompanyErpConfig>,
-    configService: ConfigService,
+    private readonly configService: ConfigService,
     private readonly sapB1Service: SapB1Service
   ) {
     this.credentialSecret =
@@ -1492,6 +1493,8 @@ export class ConciliationService {
     payload: CreateBankStatementDto,
     file?: UploadedMemoryFile
   ): Promise<SapBankPageProcessResponse> {
+    ensureSapWriteAllowedForActor(actor, this.configService);
+
     if (!file?.buffer) {
       throw new BadRequestException("Debes subir el Excel del extracto bancario.");
     }

@@ -68,4 +68,10 @@ export class CompareSapB1QueryPreviewDto {
   @IsOptional()
   @IsBoolean()
   groupSystemMatches?: boolean
+
+  // Identifica la pantalla dedicada que origina la comparacion. La fachada FG
+  // valida ademas la empresa autenticada antes de habilitar reglas exclusivas.
+  @IsOptional()
+  @IsIn(["debit", "credit"])
+  cardPaymentKind?: "debit" | "credit"
 }

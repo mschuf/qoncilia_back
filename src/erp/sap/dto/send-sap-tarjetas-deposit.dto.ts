@@ -82,7 +82,7 @@ export class SendSapTarjetasDepositDto {
   @MaxLength(120)
   bankBranch?: string
 
-  // Solo el endpoint de credito de OCHO A utiliza este valor. El frontend lo
+  // Los endpoints de credito de OCHO A y FG utilizan este valor. El frontend lo
   // calcula a partir de Importe - Importe neto de las filas matcheadas.
   @Type(() => Number)
   @IsOptional()

@@ -143,8 +143,8 @@ export interface SapTarjetasDepositPayload extends Record<string, unknown> {
   CreditLines: SapTarjetasDepositCreditLinePayload[]
   DepositAccount: string
   DepositType: "dtCredit"
-  // SAP reconcilia automaticamente los importes presentados al crear el deposito.
-  ReconcileAfterDeposit: "tYES"
+  // SAP puede reconciliar automaticamente los importes al crear el deposito.
+  ReconcileAfterDeposit: "tYES" | "tNO"
   VoucherAccount: string
   // Cabecera: fecha del deposito, formato "YYYY-MM-DDT00:00:00Z".
   DepositDate: string
@@ -157,7 +157,7 @@ export interface SapTarjetasDepositPayload extends Record<string, unknown> {
   Bank?: string
   // Cabecera: sucursal de la cuenta bancaria. Se omite si no esta configurada.
   BankBranch?: string
-  // Campos exclusivos del deposito de credito de OCHO A.
+  // Campos de comision para los depositos de credito especializados.
   CommissionAccount?: string
   Commission?: number
   CommissionDate?: string
