@@ -12,6 +12,7 @@ export type LayoutDataType = "text" | "number" | "amount" | "date";
 // null = autodeteccion (columnas separadas si existen, si no signo del monto).
 export const amountModes = [
   "debit_credit",
+  "debit_credit_abs",
   "signed",
   "single_credit",
   "single_debit"

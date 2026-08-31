@@ -2544,6 +2544,18 @@ export class ConciliationService {
         debitAmount = explicitDebit ?? 0;
         break;
       }
+      case "debit_credit_abs": {
+        // Itaú publica su columna Débitos con signo negativo. La columna sigue
+        // siendo Débito: se elimina solo el signo, sin moverla a Créditos.
+        if (explicitCredit === null && explicitDebit === null) {
+          throw new BadRequestException(
+            `La fila ${rowLabel} no tiene Debito ni Credito mapeados.`
+          );
+        }
+        creditAmount = Math.abs(explicitCredit ?? 0);
+        debitAmount = Math.abs(explicitDebit ?? 0);
+        break;
+      }
       case "signed": {
         // Importe unico con signo (+ credito / - debito). Si no hay columna
         // unica pero si DEBE/HABER, derivar el neto = credito - debito.
