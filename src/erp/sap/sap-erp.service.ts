@@ -2152,9 +2152,8 @@ export class SapErpService {
       CreditLines: creditLines,
       DepositAccount: depositAccount,
       DepositType: "dtCredit",
-      // Para los creditos FG QA con comision, SAP compara el neto depositado
-      // contra vouchers brutos y rechaza la reconciliacion automatica. En ese
-      // caso la fachada especializada indica tNO; los demas flujos conservan tYES.
+      // La fachada especializada de FG QA solicita tYES, por lo que SAP intenta
+      // reconciliar automaticamente los vouchers al crear el deposito.
       ReconcileAfterDeposit: reconcileAfterDeposit,
       VoucherAccount: voucherAccount,
       DepositDate: depositDate,
