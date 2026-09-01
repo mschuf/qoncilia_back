@@ -43,7 +43,15 @@ export class OchoASapTarjetasService {
 
   compareQueryPreview(actor: AuthUser, payload: CompareSapB1QueryPreviewDto) {
     this.ensureOchoA(actor)
-    return this.sapErpService.compareSapB1QueryPreview(actor, payload)
+    // Solo Crédito OCHO_A compara Fecha SAP contra Fecha de venta del CSV con
+    // igualdad exacta. Débito conserva su comportamiento actual.
+    return this.sapErpService.compareSapB1QueryPreview(
+      actor,
+      payload,
+      payload.cardPaymentKind === "credit"
+        ? { requireExactDateMatch: true }
+        : undefined
+    )
   }
 
   runSystemQuery(actor: AuthUser, payload: RunSapTarjetasQueryDto) {

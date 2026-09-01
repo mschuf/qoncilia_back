@@ -159,6 +159,9 @@ type SapB1ComparisonOptions = {
   allowGroupedSystemMatches?: boolean
   // Solamente la fachada de Pago Credito FG_TARJETA_QA puede habilitarlo.
   fgCreditCardTransactionFallback?: boolean
+  // Solamente la fachada de Pago Credito OCHO_A puede exigir igualdad exacta
+  // entre Fecha SAP y Fecha de venta del CSV.
+  requireExactDateMatch?: boolean
 }
 
 type SapB1FgCreditFallbackColumns = {
@@ -427,6 +430,7 @@ export class SapErpService {
     ])
     const referenceMatchMode = payload.referenceMatchMode ?? "exact"
     const strictReferenceAmountMatch = payload.strictReferenceAmountMatch === true
+    const requireExactDateMatch = options?.requireExactDateMatch === true
     const useFgCreditCardTransactionFallback =
       options?.fgCreditCardTransactionFallback === true &&
       actor.companyCode.trim().toUpperCase() === "FG_TARJETA_QA"
@@ -449,6 +453,11 @@ export class SapErpService {
         "El matching estricto de tarjetas requiere las columnas Referencia e Importe."
       )
     }
+    if (requireExactDateMatch && !matchColumns.date) {
+      throw new BadRequestException(
+        "El matching de credito requiere Fecha SAP y Fecha de venta del CSV."
+      )
+    }
     if (groupSystemMatches && (!matchColumns.reference || !matchColumns.date || !hasAmount)) {
       throw new BadRequestException(
         "El matching agrupado requiere las columnas Referencia, Fecha e Importe."
@@ -466,7 +475,8 @@ export class SapErpService {
           bankRows,
           matchColumns,
           referenceMatchMode,
-          strictReferenceAmountMatch
+          strictReferenceAmountMatch,
+          requireExactDateMatch
         )
 
     // Nunca altera una coincidencia de la primera pasada. El respaldo se aplica
@@ -1022,7 +1032,8 @@ export class SapErpService {
     bankRows: ConciliationPreviewRow[],
     columns: SapB1MatchColumns,
     referenceMatchMode: "exact" | "like" = "exact",
-    strictReferenceAmountMatch = false
+    strictReferenceAmountMatch = false,
+    requireExactDateMatch = false
   ): PublicSapB1SmartMatch[] {
     const hasAmount = Boolean(columns.amount || columns.debit || columns.credit)
     if (!columns.reference && !columns.date && !hasAmount) return []
@@ -1046,7 +1057,7 @@ export class SapErpService {
             ? this.sapB1DateMatchWithinDays(
                 this.readSapB1PreviewRowRawValue(systemRow, columns.date),
                 this.readSapB1PreviewRowRawValue(bankRow, columns.date),
-                SAP_B1_DATE_TOLERANCE_DAYS
+                requireExactDateMatch ? 0 : SAP_B1_DATE_TOLERANCE_DAYS
               )
             : { matched: false, differenceDays: null }
           const bankNet = this.sapB1RowNet(bankRow, columns, "bank")
@@ -1061,6 +1072,13 @@ export class SapErpService {
           // Pagos de tarjeta de OCHO A: no hay match automatico si falta Referencia,
           // alguno de los importes no se puede leer o los importes difieren.
           if (strictReferenceAmountMatch && (!referenceMatched || !amountMatched)) {
+            return null
+          }
+
+          // En Pago Tarjeta Crédito de OCHO_A se exige adicionalmente que la
+          // Fecha SAP sea exactamente la Fecha de venta del CSV. La fecha de
+          // crédito del comercio se conserva para la posterior liquidación.
+          if (requireExactDateMatch && !dateResult.matched) {
             return null
           }
 

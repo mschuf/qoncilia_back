@@ -69,8 +69,9 @@ export class CompareSapB1QueryPreviewDto {
   @IsBoolean()
   groupSystemMatches?: boolean
 
-  // Identifica la pantalla dedicada que origina la comparacion. La fachada FG
-  // valida ademas la empresa autenticada antes de habilitar reglas exclusivas.
+  // Identifica la pantalla dedicada que origina la comparacion. Las fachadas
+  // FG y OCHO_A validan ademas la empresa autenticada antes de habilitar sus
+  // reglas exclusivas de credito.
   @IsOptional()
   @IsIn(["debit", "credit"])
   cardPaymentKind?: "debit" | "credit"
