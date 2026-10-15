@@ -21,4 +21,13 @@ export class RunSapTarjetasQueryDto {
 
   @IsDateString()
   dateTo!: string
+
+  // Solo Dinelco Irvine: ventas de las operaciones del rango de acreditacion.
+  @IsOptional()
+  @IsDateString()
+  saleDateFrom?: string
+
+  @IsOptional()
+  @IsDateString()
+  saleDateTo?: string
 }

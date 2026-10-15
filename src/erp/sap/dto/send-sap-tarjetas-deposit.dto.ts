@@ -3,6 +3,7 @@ import {
   ArrayMinSize,
   IsArray,
   IsDateString,
+  IsIn,
   IsInt,
   IsNumber,
   IsOptional,
@@ -60,6 +61,30 @@ export class SendSapTarjetasDepositDto {
   @IsString()
   @MaxLength(100)
   bankReference?: string
+
+  // Sucursal comercial del lote Dinelco (distinta de BankBranch del banco).
+  @Transform(trimString)
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  dinelcoBranch?: string
+
+  // Solo Dinelco Irvine: SPI se deposita separado de las otras prestaciones.
+  @IsOptional()
+  @IsIn(["SPI", "OTHER"])
+  dinelcoPresentationGroup?: "SPI" | "OTHER"
+
+  @Type(() => Number)
+  @IsOptional()
+  @IsNumber({ allowNaN: false, allowInfinity: false })
+  @Min(0)
+  dinelcoGrossAmount?: number
+
+  @Type(() => Number)
+  @IsOptional()
+  @IsNumber({ allowNaN: false, allowInfinity: false })
+  @Min(0)
+  dinelcoNetAmount?: number
 
   // "Cuenta Pago ERP" de la cuenta bancaria (cabecera BankAccountNum).
   @Transform(trimString)

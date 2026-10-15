@@ -7,36 +7,36 @@ import {
   Injectable,
   Logger,
   NotFoundException,
-  UnprocessableEntityException
-} from "@nestjs/common"
-import { ConfigService } from "@nestjs/config"
-import { InjectRepository } from "@nestjs/typeorm"
-import { appendFile, mkdir } from "fs/promises"
-import { join } from "path"
-import { Repository } from "typeorm"
-import { CompanyErpConfig } from "../entities/company-erp-config.entity"
-import { Role } from "../../common/enums/role.enum"
-import { AuthUser } from "../../common/interfaces/auth-user.interface"
-import { decryptText, encryptText } from "../../common/utils/encryption.util"
-import { isSuperAdminRole } from "../../common/utils/role.util"
-import { BankStatement } from "../../conciliation/entities/bank-statement.entity"
-import { BankStatementRow } from "../../conciliation/entities/bank-statement-row.entity"
-import { CompanyBankAccount } from "../../conciliation/entities/company-bank-account.entity"
-import { Reconciliation } from "../../conciliation/entities/reconciliation.entity"
-import type { ConciliationPreviewRow } from "../../conciliation/interfaces/conciliation.interfaces"
-import { User } from "../../users/entities/user.entity"
-import { CompareSapB1QueryPreviewDto } from "./dto/compare-sap-b1-query-preview.dto"
-import { RunSapB1QueryPreviewDto } from "./dto/run-sap-b1-query-preview.dto"
-import { RunSapTarjetasQueryDto } from "./dto/run-sap-tarjetas-query.dto"
-import { SapLoginDto } from "./dto/sap-login.dto"
+  UnprocessableEntityException,
+} from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
+import { InjectRepository } from "@nestjs/typeorm";
+import { appendFile, mkdir } from "fs/promises";
+import { join } from "path";
+import { Repository } from "typeorm";
+import { CompanyErpConfig } from "../entities/company-erp-config.entity";
+import { Role } from "../../common/enums/role.enum";
+import { AuthUser } from "../../common/interfaces/auth-user.interface";
+import { decryptText, encryptText } from "../../common/utils/encryption.util";
+import { isSuperAdminRole } from "../../common/utils/role.util";
+import { BankStatement } from "../../conciliation/entities/bank-statement.entity";
+import { BankStatementRow } from "../../conciliation/entities/bank-statement-row.entity";
+import { CompanyBankAccount } from "../../conciliation/entities/company-bank-account.entity";
+import { Reconciliation } from "../../conciliation/entities/reconciliation.entity";
+import type { ConciliationPreviewRow } from "../../conciliation/interfaces/conciliation.interfaces";
+import { User } from "../../users/entities/user.entity";
+import { CompareSapB1QueryPreviewDto } from "./dto/compare-sap-b1-query-preview.dto";
+import { RunSapB1QueryPreviewDto } from "./dto/run-sap-b1-query-preview.dto";
+import { RunSapTarjetasQueryDto } from "./dto/run-sap-tarjetas-query.dto";
+import { SapLoginDto } from "./dto/sap-login.dto";
 import {
   SapExternalReconciliationBankStatementLineDto,
   SapExternalReconciliationMatchDto,
   SendSapExternalReconciliationDto,
-  sapExternalReconciliationAccountTypes
-} from "./dto/send-sap-external-reconciliation.dto"
-import { SendSapTarjetasDepositDto } from "./dto/send-sap-tarjetas-deposit.dto"
-import { UserErpSession } from "./entities/user-erp-session.entity"
+  sapExternalReconciliationAccountTypes,
+} from "./dto/send-sap-external-reconciliation.dto";
+import { SendSapTarjetasDepositDto } from "./dto/send-sap-tarjetas-deposit.dto";
+import { UserErpSession } from "./entities/user-erp-session.entity";
 import {
   PublicSapErpSession,
   PublicSapB1QueryComparisonResult,
@@ -53,129 +53,141 @@ import {
   SapExternalReconciliationBankStatementLinePayload,
   SapExternalReconciliationJournalEntryLinePayload,
   SapExternalReconciliationPayload,
-  SapTarjetasDepositPayload
-} from "./interfaces/sap-erp.interfaces"
-import { ExternalRequestError, SapB1Service } from "./sap-b1.service"
-import { ensureSapWriteAllowedForActor } from "./sap-write-access.util"
+  SapTarjetasDepositPayload,
+} from "./interfaces/sap-erp.interfaces";
+import { ExternalRequestError, SapB1Service } from "./sap-b1.service";
+import { ensureSapWriteAllowedForActor } from "./sap-write-access.util";
 import {
   ensureSapErpType,
   ensureSapTarjetasConfig,
-  validateSapConfig
-} from "./sap-config.validator"
+  validateSapConfig,
+} from "./sap-config.validator";
 import {
   parseSapTarjetasCsv,
-  type SapTarjetasCsvParseOptions
-} from "./sap-tarjetas-csv.util"
-import { aliasSapTarjetasSystemTable } from "./sap-tarjetas-system.util"
+  type SapTarjetasCsvParseOptions,
+} from "./sap-tarjetas-csv.util";
+import { aliasSapTarjetasSystemTable } from "./sap-tarjetas-system.util";
+import { parseDinelcoTarjetas } from "./dinelco-tarjetas.util";
 
 type SapTarjetasUploadFile = {
-  buffer: Buffer
-  originalname?: string
-}
+  buffer: Buffer;
+  originalname?: string;
+};
 
 // Comentario por defecto del asiento del deposito de tarjetas (flujo BANCARD).
-const SAP_TARJETAS_DEFAULT_JOURNAL_REMARKS = "COMPRA P.O.S BANCARD"
+const SAP_TARJETAS_DEFAULT_JOURNAL_REMARKS = "COMPRA P.O.S BANCARD";
+
+// Cuenta de comisión exclusiva de los depósitos Dinelco de Irvine.
+const SAP_IRVINE_DINELCO_COMMISSION_ACCOUNT = "6.01.03.001.008";
 
 // Reglas adicionales que un modulo especializado puede solicitar sin alterar
 // el payload de Pago de tarjeta estandar.
 type SapTarjetasDepositOptions = {
   commission?: {
-    account: string
-    amount: number
-  }
-  bankReference?: string
-  reconcileAfterDeposit?: "tYES" | "tNO"
-}
+    account: string;
+    amount: number;
+  };
+  bankReference?: string;
+  reconcileAfterDeposit?: "tYES" | "tNO";
+};
 
 type SapTarjetasSystemQueryOptions = {
   // El modulo FG QA necesita la cuenta origen de cada voucher para enviarla
   // como VoucherAccount. Es distinta de la cuenta bancaria destino del deposito.
-  includeCreditVoucherAccount?: boolean
-}
+  includeCreditVoucherAccount?: boolean;
+};
 
 type SapReadableRow = {
-  rowId?: string
-  sourceRowId?: string
-  rowNumber?: number
-  values?: Record<string, unknown> | null
-  normalized?: Record<string, unknown> | null
-}
+  rowId?: string;
+  sourceRowId?: string;
+  rowNumber?: number;
+  values?: Record<string, unknown> | null;
+  normalized?: Record<string, unknown> | null;
+};
 
 type HanaConnectionParams = {
-  serverNode: string
-  uid: string
-  pwd: string
-}
+  serverNode: string;
+  uid: string;
+  pwd: string;
+};
 
 type HanaConnection = {
-  connect(params: HanaConnectionParams, callback: (error?: Error | null) => void): void
-  exec(sql: string, callback: (error: Error | null, rows?: Record<string, unknown>[]) => void): void
+  connect(
+    params: HanaConnectionParams,
+    callback: (error?: Error | null) => void,
+  ): void;
+  exec(
+    sql: string,
+    callback: (error: Error | null, rows?: Record<string, unknown>[]) => void,
+  ): void;
   exec(
     sql: string,
     params: unknown[],
-    callback: (error: Error | null, rows?: Record<string, unknown>[]) => void
-  ): void
-  disconnect(callback?: (error?: Error | null) => void): void
-}
+    callback: (error: Error | null, rows?: Record<string, unknown>[]) => void,
+  ): void;
+  disconnect(callback?: (error?: Error | null) => void): void;
+};
 
 type HanaClientModule = {
-  createConnection(): HanaConnection
-}
+  createConnection(): HanaConnection;
+};
 
 type PreparedSapB1Query = {
-  sql: string
-  params: unknown[]
-}
+  sql: string;
+  params: unknown[];
+};
 
 type SapExternalReconciliationTraceContext = {
-  actorId: number
-  companyErpConfigId: number
-  companyErpConfigName: string
-  endpoint: string
-  endpointPath: string
-  reconciliationId: number | null
-  sapPayload: SapExternalReconciliationPayload
-}
+  actorId: number;
+  companyErpConfigId: number;
+  companyErpConfigName: string;
+  endpoint: string;
+  endpointPath: string;
+  reconciliationId: number | null;
+  sapPayload: SapExternalReconciliationPayload;
+};
 
-type SapB1ComparableValue = string | number | null
+type SapB1ComparableValue = string | number | null;
 
 type SapB1DateMatchResult = {
-  matched: boolean
-  differenceDays: number | null
-}
+  matched: boolean;
+  differenceDays: number | null;
+};
 
 // Roles de columna para el matching. amount = columna unica con signo (compat);
 // debit/credit = columnas separadas (preferido).
 type SapB1MatchColumns = {
-  reference: string | null
-  reference2: string | null
-  date: string | null
-  amount: string | null
-  debit: string | null
-  credit: string | null
-}
+  reference: string | null;
+  reference2: string | null;
+  date: string | null;
+  amount: string | null;
+  debit: string | null;
+  credit: string | null;
+};
 
 type SapB1ComparisonOptions = {
-  allowGroupedSystemMatches?: boolean
+  allowGroupedSystemMatches?: boolean;
+  // Solamente la fachada Dinelco de Irvine habilita el respaldo por fecha/monto.
+  irvineDinelcoDateAmountFallback?: boolean;
   // Solamente la fachada de Pago Credito FG_TARJETA_QA puede habilitarlo.
-  fgCreditCardTransactionFallback?: boolean
+  fgCreditCardTransactionFallback?: boolean;
   // Solamente la fachada de Pago Credito OCHO_A puede exigir igualdad exacta
   // entre Fecha SAP y Fecha de venta del CSV.
-  requireExactDateMatch?: boolean
-}
+  requireExactDateMatch?: boolean;
+};
 
 type SapB1FgCreditFallbackColumns = {
-  systemDate: string
-  bankSaleDate: string
-  bankTransaction: string
-}
+  systemDate: string;
+  bankSaleDate: string;
+  bankTransaction: string;
+};
 
-const SAP_B1_DATE_TOLERANCE_DAYS = 7
+const SAP_B1_DATE_TOLERANCE_DAYS = 7;
 
 @Injectable()
 export class SapErpService {
-  private readonly logger = new Logger(SapErpService.name)
-  private readonly credentialSecret: string
+  private readonly logger = new Logger(SapErpService.name);
+  private readonly credentialSecret: string;
 
   constructor(
     @InjectRepository(User)
@@ -191,186 +203,222 @@ export class SapErpService {
     @InjectRepository(UserErpSession)
     private readonly userErpSessionRepository: Repository<UserErpSession>,
     private readonly configService: ConfigService,
-    private readonly sapB1Service: SapB1Service
+    private readonly sapB1Service: SapB1Service,
   ) {
     this.credentialSecret =
       configService.get<string>("ERP_CREDENTIAL_SECRET")?.trim() ||
-      configService.get<string>("JWT_SECRET", "CHANGE_THIS_FOR_A_LONG_RANDOM_SECRET")
+      configService.get<string>(
+        "JWT_SECRET",
+        "CHANGE_THIS_FOR_A_LONG_RANDOM_SECRET",
+      );
   }
 
-  async loginSapSession(actor: AuthUser, payload: SapLoginDto): Promise<PublicSapErpSession> {
+  async loginSapSession(
+    actor: AuthUser,
+    payload: SapLoginDto,
+  ): Promise<PublicSapErpSession> {
     const [config, user] = await Promise.all([
       this.requireConfigForActor(actor, payload.companyErpConfigId),
-      this.userRepository.findOne({ where: { id: actor.id } })
-    ])
+      this.userRepository.findOne({ where: { id: actor.id } }),
+    ]);
 
     if (!user) {
-      throw new NotFoundException("Usuario no encontrado.")
+      throw new NotFoundException("Usuario no encontrado.");
     }
 
-    ensureSapErpType(config.erpType)
-    validateSapConfig(config, false)
-    this.ensureActiveConfig(config)
+    ensureSapErpType(config.erpType);
+    validateSapConfig(config, false);
+    this.ensureActiveConfig(config);
 
     try {
-      const credentials = this.resolveSapLoginCredentials(config, payload)
+      const credentials = this.resolveSapLoginCredentials(config, payload);
       const loginResult = await this.sapB1Service.login(config, {
         username: credentials.username,
-        password: credentials.password
-      })
+        password: credentials.password,
+      });
 
-      const repository = this.userErpSessionRepository
+      const repository = this.userErpSessionRepository;
       const existing = await repository.findOne({
         where: {
           user: { id: user.id },
-          companyErpConfig: { id: config.id }
+          companyErpConfig: { id: config.id },
         },
         relations: {
           user: true,
-          companyErpConfig: true
-        }
-      })
-      const now = new Date()
-      const session = existing ?? repository.create({ user, companyErpConfig: config })
+          companyErpConfig: true,
+        },
+      });
+      const now = new Date();
+      const session =
+        existing ?? repository.create({ user, companyErpConfig: config });
 
-      session.erpType = config.erpType
-      session.username = credentials.username
-      session.sessionCookieEncrypted = encryptText(loginResult.cookieHeader, this.credentialSecret)
-      session.expiresAt = loginResult.expiresAt
-      session.lastValidatedAt = now
-      session.invalidatedAt = null
+      session.erpType = config.erpType;
+      session.username = credentials.username;
+      session.sessionCookieEncrypted = encryptText(
+        loginResult.cookieHeader,
+        this.credentialSecret,
+      );
+      session.expiresAt = loginResult.expiresAt;
+      session.lastValidatedAt = now;
+      session.invalidatedAt = null;
 
-      const saved = await repository.save(session)
-      saved.companyErpConfig = config
+      const saved = await repository.save(session);
+      saved.companyErpConfig = config;
 
-      return this.toPublicSapSession(saved, "active", now)
+      return this.toPublicSapSession(saved, "active", now);
     } catch (error) {
-      const mapped = this.mapExternalError(error)
-      throw mapped.exception
+      const mapped = this.mapExternalError(error);
+      throw mapped.exception;
     }
   }
 
   async getSapSessionStatus(
     actor: AuthUser,
     companyErpConfigId: number,
-    validateRemote: boolean
+    validateRemote: boolean,
   ): Promise<PublicSapErpSession> {
-    const config = await this.requireConfigForActor(actor, companyErpConfigId)
+    const config = await this.requireConfigForActor(actor, companyErpConfigId);
     const session = await this.userErpSessionRepository.findOne({
       where: {
         user: { id: actor.id },
-        companyErpConfig: { id: config.id }
+        companyErpConfig: { id: config.id },
       },
       relations: {
-        companyErpConfig: true
-      }
-    })
-    const checkedAt = new Date()
+        companyErpConfig: true,
+      },
+    });
+    const checkedAt = new Date();
 
     if (!session) {
-      return this.toPublicSapSessionPlaceholder(config, "not_authenticated", checkedAt)
+      return this.toPublicSapSessionPlaceholder(
+        config,
+        "not_authenticated",
+        checkedAt,
+      );
     }
 
-    session.companyErpConfig = config
+    session.companyErpConfig = config;
 
     if (session.invalidatedAt) {
-      return this.toPublicSapSession(session, "logged_out", checkedAt)
+      return this.toPublicSapSession(session, "logged_out", checkedAt);
     }
 
-    if (session.expiresAt && session.expiresAt.getTime() <= checkedAt.getTime()) {
-      session.invalidatedAt = checkedAt
-      await this.userErpSessionRepository.save(session)
-      return this.toPublicSapSession(session, "expired", checkedAt)
+    if (
+      session.expiresAt &&
+      session.expiresAt.getTime() <= checkedAt.getTime()
+    ) {
+      session.invalidatedAt = checkedAt;
+      await this.userErpSessionRepository.save(session);
+      return this.toPublicSapSession(session, "expired", checkedAt);
     }
 
     if (!validateRemote) {
-      return this.toPublicSapSession(session, "active", checkedAt)
+      return this.toPublicSapSession(session, "active", checkedAt);
     }
 
     try {
-      const cookieHeader = this.decryptSessionCookie(session.sessionCookieEncrypted)
-      await this.sapB1Service.checkSession(config, cookieHeader)
-      session.lastValidatedAt = checkedAt
-      await this.userErpSessionRepository.save(session)
-      return this.toPublicSapSession(session, "active", checkedAt)
+      const cookieHeader = this.decryptSessionCookie(
+        session.sessionCookieEncrypted,
+      );
+      await this.sapB1Service.checkSession(config, cookieHeader);
+      session.lastValidatedAt = checkedAt;
+      await this.userErpSessionRepository.save(session);
+      return this.toPublicSapSession(session, "active", checkedAt);
     } catch {
-      session.invalidatedAt = checkedAt
-      await this.userErpSessionRepository.save(session)
-      return this.toPublicSapSession(session, "invalid", checkedAt)
+      session.invalidatedAt = checkedAt;
+      await this.userErpSessionRepository.save(session);
+      return this.toPublicSapSession(session, "invalid", checkedAt);
     }
   }
 
   async logoutSapSession(
     actor: AuthUser,
-    companyErpConfigId: number
+    companyErpConfigId: number,
   ): Promise<PublicSapErpSession> {
-    const config = await this.requireConfigForActor(actor, companyErpConfigId)
+    const config = await this.requireConfigForActor(actor, companyErpConfigId);
     const session = await this.userErpSessionRepository.findOne({
       where: {
         user: { id: actor.id },
-        companyErpConfig: { id: config.id }
+        companyErpConfig: { id: config.id },
       },
       relations: {
-        companyErpConfig: true
-      }
-    })
-    const checkedAt = new Date()
+        companyErpConfig: true,
+      },
+    });
+    const checkedAt = new Date();
 
     if (!session) {
-      return this.toPublicSapSessionPlaceholder(config, "not_authenticated", checkedAt)
+      return this.toPublicSapSessionPlaceholder(
+        config,
+        "not_authenticated",
+        checkedAt,
+      );
     }
 
-    session.companyErpConfig = config
-    session.invalidatedAt = checkedAt
-    await this.userErpSessionRepository.save(session)
+    session.companyErpConfig = config;
+    session.invalidatedAt = checkedAt;
+    await this.userErpSessionRepository.save(session);
 
-    return this.toPublicSapSession(session, "logged_out", checkedAt)
+    return this.toPublicSapSession(session, "logged_out", checkedAt);
   }
 
   async runSapB1QueryPreview(
     actor: AuthUser,
-    payload: RunSapB1QueryPreviewDto
+    payload: RunSapB1QueryPreviewDto,
   ): Promise<PublicSapB1QueryPreviewResult> {
-    const config = await this.requireConfigForActor(actor, payload.companyErpConfigId)
+    const config = await this.requireConfigForActor(
+      actor,
+      payload.companyErpConfigId,
+    );
     const account = await this.requireCompanyBankAccountForConfig(
       actor,
       config,
-      payload.companyBankAccountId
-    )
+      payload.companyBankAccountId,
+    );
 
-    ensureSapErpType(config.erpType)
-    this.ensureActiveConfig(config)
+    ensureSapErpType(config.erpType);
+    this.ensureActiveConfig(config);
 
-    const companyDb = this.normalizeRequired(config.dbName, "CompanyDB")
+    const companyDb = this.normalizeRequired(config.dbName, "CompanyDB");
     const accountCode = this.normalizeRequired(
       account.majorAccountNumber,
-      "Cuenta Mayor"
-    )
-    const dateFrom = this.normalizeRequired(payload.dateFrom, "Fecha Desde")
-    const dateTo = this.normalizeRequired(payload.dateTo, "Fecha Hasta")
+      "Cuenta Mayor",
+    );
+    const dateFrom = this.normalizeRequired(payload.dateFrom, "Fecha Desde");
+    const dateTo = this.normalizeRequired(payload.dateTo, "Fecha Hasta");
 
     if (new Date(dateFrom).getTime() > new Date(dateTo).getTime()) {
-      throw new BadRequestException("Fecha Desde no puede ser mayor a Fecha Hasta.")
+      throw new BadRequestException(
+        "Fecha Desde no puede ser mayor a Fecha Hasta.",
+      );
     }
 
-    const parameterValues = { accountCode, dateFrom, dateTo }
+    const parameterValues = { accountCode, dateFrom, dateTo };
     const bankQuery = this.prepareSapB1PreviewQuery(
       config.queryBanco,
       companyDb,
       "query_banco",
-      parameterValues
-    )
+      parameterValues,
+    );
     const systemQuery = this.prepareSapB1PreviewQuery(
       config.querySistema,
       companyDb,
       "query_sistema",
-      parameterValues
-    )
-    const connection = await this.connectSapHana(config, companyDb)
+      parameterValues,
+    );
+    const connection = await this.connectSapHana(config, companyDb);
 
     try {
-      const bank = await this.executeSapB1PreviewQuery(connection, bankQuery, "query_banco")
-      const system = await this.executeSapB1PreviewQuery(connection, systemQuery, "query_sistema")
+      const bank = await this.executeSapB1PreviewQuery(
+        connection,
+        bankQuery,
+        "query_banco",
+      );
+      const system = await this.executeSapB1PreviewQuery(
+        connection,
+        systemQuery,
+        "query_sistema",
+      );
 
       return {
         companyErpConfigId: config.id,
@@ -380,8 +428,8 @@ export class SapErpService {
         dateFrom,
         dateTo,
         bank,
-        system
-      }
+        system,
+      };
     } catch (error) {
       this.logger.error(
         this.stringifyLogPayload({
@@ -389,86 +437,100 @@ export class SapErpService {
           actorId: actor.id,
           companyErpConfigId: config.id,
           companyBankAccountId: account.id,
-          error: error instanceof Error ? error.message : String(error)
-        })
-      )
+          error: error instanceof Error ? error.message : String(error),
+        }),
+      );
 
       throw new BadGatewayException(
         error instanceof Error
           ? `No se pudieron ejecutar las consultas SAP_B1. ${error.message}`
-          : "No se pudieron ejecutar las consultas SAP_B1."
-      )
+          : "No se pudieron ejecutar las consultas SAP_B1.",
+      );
     } finally {
-      await this.disconnectSapHana(connection).catch(() => undefined)
+      await this.disconnectSapHana(connection).catch(() => undefined);
     }
   }
 
   async compareSapB1QueryPreview(
     actor: AuthUser,
     payload: CompareSapB1QueryPreviewDto,
-    options?: SapB1ComparisonOptions
+    options?: SapB1ComparisonOptions,
   ): Promise<PublicSapB1QueryComparisonResult> {
-    const config = await this.requireConfigForActor(actor, payload.companyErpConfigId)
+    const config = await this.requireConfigForActor(
+      actor,
+      payload.companyErpConfigId,
+    );
 
-    ensureSapErpType(config.erpType)
-    this.ensureActiveConfig(config)
+    ensureSapErpType(config.erpType);
+    this.ensureActiveConfig(config);
 
-    const columns = this.resolveSapB1ComparisonColumns(payload)
+    const columns = this.resolveSapB1ComparisonColumns(payload);
     if (columns.length === 0) {
-      throw new BadRequestException("No hay columnas disponibles para comparar.")
+      throw new BadRequestException(
+        "No hay columnas disponibles para comparar.",
+      );
     }
 
-    const excludedBankRowIds = new Set(payload.excludedBankRowIds ?? [])
-    const excludedSystemRowIds = new Set(payload.excludedSystemRowIds ?? [])
-    const bankRows = this.convertSapB1TableToPreviewRows(payload.bank)
-      .filter((row) => !excludedBankRowIds.has(row.rowId))
-    const systemRows = this.convertSapB1TableToPreviewRows(payload.system)
-      .filter((row) => !excludedSystemRowIds.has(row.rowId))
+    const excludedBankRowIds = new Set(payload.excludedBankRowIds ?? []);
+    const excludedSystemRowIds = new Set(payload.excludedSystemRowIds ?? []);
+    const bankRows = this.convertSapB1TableToPreviewRows(payload.bank).filter(
+      (row) => !excludedBankRowIds.has(row.rowId),
+    );
+    const systemRows = this.convertSapB1TableToPreviewRows(
+      payload.system,
+    ).filter((row) => !excludedSystemRowIds.has(row.rowId));
     const matchColumns = this.classifySapB1MatchColumns(columns, [
       ...payload.bank.columns,
-      ...payload.system.columns
-    ])
-    const referenceMatchMode = payload.referenceMatchMode ?? "exact"
-    const strictReferenceAmountMatch = payload.strictReferenceAmountMatch === true
-    const requireExactDateMatch = options?.requireExactDateMatch === true
+      ...payload.system.columns,
+    ]);
+    const referenceMatchMode = payload.referenceMatchMode ?? "exact";
+    const strictReferenceAmountMatch =
+      payload.strictReferenceAmountMatch === true;
+    const requireExactDateMatch = options?.requireExactDateMatch === true;
+    const useIrvineDinelcoDateAmountFallback =
+      options?.irvineDinelcoDateAmountFallback === true &&
+      actor.companyCode.trim().toUpperCase() === "IRVINE";
     const useFgCreditCardTransactionFallback =
       options?.fgCreditCardTransactionFallback === true &&
-      actor.companyCode.trim().toUpperCase() === "FG_TARJETA_QA"
+      actor.companyCode.trim().toUpperCase() === "FG_TARJETA_QA";
     const fgCreditFallbackColumns = useFgCreditCardTransactionFallback
       ? this.resolveFgCreditCardFallbackColumns(payload)
-      : null
+      : null;
     // La capacidad de agrupar varias lineas de sistema contra una bancaria se
     // limita a las fachadas especializadas de OCHO_A y FG QA, aunque otro
     // cliente intente enviar el flag a la ruta generica.
-    const groupedCompanyCodes = new Set(["OCHO_A", "5629621_QA", "5629621"])
+    const groupedCompanyCodes = new Set(["OCHO_A", "5629621_QA", "5629621"]);
     const groupSystemMatches =
       options?.allowGroupedSystemMatches === true &&
       payload.groupSystemMatches === true &&
-      groupedCompanyCodes.has(actor.companyCode.trim().toUpperCase())
+      groupedCompanyCodes.has(actor.companyCode.trim().toUpperCase());
     const hasAmount = Boolean(
-      matchColumns.amount || matchColumns.debit || matchColumns.credit
-    )
+      matchColumns.amount || matchColumns.debit || matchColumns.credit,
+    );
     if (strictReferenceAmountMatch && (!matchColumns.reference || !hasAmount)) {
       throw new BadRequestException(
-        "El matching estricto de tarjetas requiere las columnas Referencia e Importe."
-      )
+        "El matching estricto de tarjetas requiere las columnas Referencia e Importe.",
+      );
     }
     if (requireExactDateMatch && !matchColumns.date) {
       throw new BadRequestException(
-        "El matching de credito requiere Fecha SAP y Fecha de venta del CSV."
-      )
+        "El matching de credito requiere Fecha SAP y Fecha de venta del CSV.",
+      );
     }
-    if (groupSystemMatches && (!matchColumns.reference || !matchColumns.date || !hasAmount)) {
+    if (
+      groupSystemMatches &&
+      (!matchColumns.reference || !matchColumns.date || !hasAmount)
+    ) {
       throw new BadRequestException(
-        "El matching agrupado requiere las columnas Referencia, Fecha e Importe."
-      )
+        "El matching agrupado requiere las columnas Referencia, Fecha e Importe.",
+      );
     }
     let matches = groupSystemMatches
       ? this.calculateSapB1GroupedSystemMatches(
           systemRows,
           bankRows,
           matchColumns,
-          referenceMatchMode
+          referenceMatchMode,
         )
       : this.calculateSapB1SmartMatches(
           systemRows,
@@ -476,28 +538,58 @@ export class SapErpService {
           matchColumns,
           referenceMatchMode,
           strictReferenceAmountMatch,
-          requireExactDateMatch
-        )
+          requireExactDateMatch,
+        );
 
     // Nunca altera una coincidencia de la primera pasada. El respaldo se aplica
     // solamente a filas de ambos lados que todavia estan libres.
     if (fgCreditFallbackColumns) {
-      const matchedBankRowIds = new Set(matches.map((match) => match.bankRow.rowId))
-      const matchedSystemRowIds = new Set(matches.map((match) => match.systemRow.rowId))
-      const fallbackMatches = this.calculateFgCreditCardTransactionFallbackMatches(
-        systemRows.filter((row) => !matchedSystemRowIds.has(row.rowId)),
-        bankRows.filter((row) => !matchedBankRowIds.has(row.rowId)),
-        matchColumns,
-        fgCreditFallbackColumns
-      )
-      matches = [...matches, ...fallbackMatches]
+      const matchedBankRowIds = new Set(
+        matches.map((match) => match.bankRow.rowId),
+      );
+      const matchedSystemRowIds = new Set(
+        matches.map((match) => match.systemRow.rowId),
+      );
+      const fallbackMatches =
+        this.calculateFgCreditCardTransactionFallbackMatches(
+          systemRows.filter((row) => !matchedSystemRowIds.has(row.rowId)),
+          bankRows.filter((row) => !matchedBankRowIds.has(row.rowId)),
+          matchColumns,
+          fgCreditFallbackColumns,
+        );
+      matches = [...matches, ...fallbackMatches];
     }
 
-    const matchedBankRowIds = new Set(matches.map((match) => match.bankRow.rowId))
-    const matchedSystemRowIds = new Set(matches.map((match) => match.systemRow.rowId))
-    const unmatchedBankRows = bankRows.filter((row) => !matchedBankRowIds.has(row.rowId))
-    const unmatchedSystemRows = systemRows.filter((row) => !matchedSystemRowIds.has(row.rowId))
-    const totalRows = systemRows.length + bankRows.length
+    if (useIrvineDinelcoDateAmountFallback) {
+      const matchedBankRowIds = new Set(
+        matches.map((match) => match.bankRow.rowId),
+      );
+      const matchedSystemRowIds = new Set(
+        matches.map((match) => match.systemRow.rowId),
+      );
+      matches = [
+        ...matches,
+        ...this.calculateIrvineDinelcoDateAmountFallbackMatches(
+          systemRows.filter((row) => !matchedSystemRowIds.has(row.rowId)),
+          bankRows.filter((row) => !matchedBankRowIds.has(row.rowId)),
+          matchColumns,
+        ),
+      ];
+    }
+
+    const matchedBankRowIds = new Set(
+      matches.map((match) => match.bankRow.rowId),
+    );
+    const matchedSystemRowIds = new Set(
+      matches.map((match) => match.systemRow.rowId),
+    );
+    const unmatchedBankRows = bankRows.filter(
+      (row) => !matchedBankRowIds.has(row.rowId),
+    );
+    const unmatchedSystemRows = systemRows.filter(
+      (row) => !matchedSystemRowIds.has(row.rowId),
+    );
+    const totalRows = systemRows.length + bankRows.length;
 
     return {
       columns,
@@ -513,11 +605,13 @@ export class SapErpService {
         matchPercentage:
           totalRows > 0
             ? Math.round(
-                ((matchedSystemRowIds.size + matchedBankRowIds.size) / totalRows) * 10000
+                ((matchedSystemRowIds.size + matchedBankRowIds.size) /
+                  totalRows) *
+                  10000,
               ) / 100
-            : 0
-      }
-    }
+            : 0,
+      },
+    };
   }
 
   // === SAP_TARJETAS (conciliacion de tarjetas de credito) ==================
@@ -529,50 +623,58 @@ export class SapErpService {
   async runSapTarjetasSystemQuery(
     actor: AuthUser,
     payload: RunSapTarjetasQueryDto,
-    options?: SapTarjetasSystemQueryOptions
+    options?: SapTarjetasSystemQueryOptions,
   ): Promise<PublicSapTarjetasSystemQueryResult> {
-    const config = await this.requireConfigForActor(actor, payload.companyErpConfigId)
+    const config = await this.requireConfigForActor(
+      actor,
+      payload.companyErpConfigId,
+    );
 
-    ensureSapErpType(config.erpType)
-    ensureSapTarjetasConfig(config)
-    this.ensureActiveConfig(config)
+    ensureSapErpType(config.erpType);
+    ensureSapTarjetasConfig(config);
+    this.ensureActiveConfig(config);
 
-    const companyDb = this.normalizeRequired(config.dbName, "CompanyDB")
-    const dateFrom = this.normalizeRequired(payload.dateFrom, "Fecha Desde")
-    const dateTo = this.normalizeRequired(payload.dateTo, "Fecha Hasta")
+    const companyDb = this.normalizeRequired(config.dbName, "CompanyDB");
+    const dateFrom = this.normalizeRequired(payload.dateFrom, "Fecha Desde");
+    const dateTo = this.normalizeRequired(payload.dateTo, "Fecha Hasta");
 
     if (new Date(dateFrom).getTime() > new Date(dateTo).getTime()) {
-      throw new BadRequestException("Fecha Desde no puede ser mayor a Fecha Hasta.")
+      throw new BadRequestException(
+        "Fecha Desde no puede ser mayor a Fecha Hasta.",
+      );
     }
 
-    let accountCode: string | null = null
-    let paymentAccountCode: string | null = null
-    let bankName: string | null = null
-    let bankBranch: string | null = null
+    let accountCode: string | null = null;
+    let paymentAccountCode: string | null = null;
+    let bankName: string | null = null;
+    let bankBranch: string | null = null;
     if (payload.companyBankAccountId) {
       const account = await this.requireCompanyBankAccountForConfig(
         actor,
         config,
-        payload.companyBankAccountId
-      )
-      accountCode = this.normalizeRequired(account.majorAccountNumber, "Cuenta Mayor")
+        payload.companyBankAccountId,
+      );
+      accountCode = this.normalizeRequired(
+        account.majorAccountNumber,
+        "Cuenta Mayor",
+      );
       // Cabeceras del deposito de tarjetas: el front las manda al crear el
       // deposito. BankAccountNum = "Cuenta Pago ERP"; Bank = descripcion del
       // banco (cae al nombre si no tiene); BankBranch = sucursal de la CUENTA.
-      paymentAccountCode = this.normalizeOptional(account.paymentAccountNumber)
+      paymentAccountCode = this.normalizeOptional(account.paymentAccountNumber);
       bankName =
         this.normalizeOptional(account.bank?.description) ??
-        this.normalizeOptional(account.bank?.name)
-      bankBranch = this.normalizeOptional(account.branchName)
+        this.normalizeOptional(account.bank?.name);
+      bankBranch = this.normalizeOptional(account.branchName);
     }
 
     const systemQuery = this.prepareSapB1PreviewQuery(
       config.querySistema,
       companyDb,
       "query_sistema",
-      { accountCode: accountCode ?? "", dateFrom, dateTo }
-    )
-    const connection = await this.connectSapHana(config, companyDb)
+      { accountCode: accountCode ?? "", dateFrom, dateTo },
+    );
+    const connection = await this.connectSapHana(config, companyDb);
 
     try {
       // El query OCRH devuelve columnas crudas de SAP (VoucherNum/PayDate/CreditSum);
@@ -580,14 +682,20 @@ export class SapErpService {
       // alinee con el CSV de la procesadora (compara por nombre identico). El gate
       // duro del match es el Importe (CreditSum): si no coincide, no hay match.
       const system = aliasSapTarjetasSystemTable(
-        await this.executeSapB1PreviewQuery(connection, systemQuery, "query_sistema")
-      )
+        await this.executeSapB1PreviewQuery(
+          connection,
+          systemQuery,
+          "query_sistema",
+        ),
+      );
       const includeCreditVoucherAccount =
         options?.includeCreditVoucherAccount === true &&
-        actor.companyCode.trim().toUpperCase() === "FG_TARJETA_QA"
+        new Set(["FG_TARJETA_QA", "IRVINE"]).has(
+          actor.companyCode.trim().toUpperCase(),
+        );
       const enrichedSystem = includeCreditVoucherAccount
         ? await this.addSapTarjetasVoucherAccounts(connection, system)
-        : system
+        : system;
 
       return {
         companyErpConfigId: config.id,
@@ -599,25 +707,25 @@ export class SapErpService {
         bankBranch,
         dateFrom,
         dateTo,
-        system: enrichedSystem
-      }
+        system: enrichedSystem,
+      };
     } catch (error) {
       this.logger.error(
         this.stringifyLogPayload({
           event: "sap_tarjetas_system_query_failed",
           actorId: actor.id,
           companyErpConfigId: config.id,
-          error: error instanceof Error ? error.message : String(error)
-        })
-      )
+          error: error instanceof Error ? error.message : String(error),
+        }),
+      );
 
       throw new BadGatewayException(
         error instanceof Error
           ? `No se pudo ejecutar la consulta del sistema. ${error.message}`
-          : "No se pudo ejecutar la consulta del sistema."
-      )
+          : "No se pudo ejecutar la consulta del sistema.",
+      );
     } finally {
-      await this.disconnectSapHana(connection).catch(() => undefined)
+      await this.disconnectSapHana(connection).catch(() => undefined);
     }
   }
 
@@ -625,26 +733,28 @@ export class SapErpService {
     actor: AuthUser,
     companyErpConfigId: number,
     file: SapTarjetasUploadFile | undefined,
-    options?: SapTarjetasCsvParseOptions
+    options?: SapTarjetasCsvParseOptions,
   ): Promise<PublicSapTarjetasCsvParseResult> {
-    const config = await this.requireConfigForActor(actor, companyErpConfigId)
+    const config = await this.requireConfigForActor(actor, companyErpConfigId);
 
-    ensureSapErpType(config.erpType)
-    ensureSapTarjetasConfig(config)
-    this.ensureActiveConfig(config)
+    ensureSapErpType(config.erpType);
+    ensureSapTarjetasConfig(config);
+    this.ensureActiveConfig(config);
 
     if (!file?.buffer || file.buffer.length === 0) {
-      throw new BadRequestException("No se recibio el archivo CSV de tarjetas.")
+      throw new BadRequestException(
+        "No se recibio el archivo CSV de tarjetas.",
+      );
     }
 
-    const parsed = parseSapTarjetasCsv(file.buffer, options)
+    const parsed = parseSapTarjetasCsv(file.buffer, options);
 
     return {
       fileName: file.originalname ?? "tarjetas.csv",
       totalRows: parsed.totalRows,
       includedRows: parsed.rows.length,
-      bank: { columns: parsed.columns, rows: parsed.rows }
-    }
+      bank: { columns: parsed.columns, rows: parsed.rows },
+    };
   }
 
   // Cada lote recibido genera UN solo deposito en SAP: todos sus AbsId viajan
@@ -653,29 +763,35 @@ export class SapErpService {
   async createSapTarjetasDeposit(
     actor: AuthUser,
     payload: SendSapTarjetasDepositDto,
-    options?: SapTarjetasDepositOptions
+    options?: SapTarjetasDepositOptions,
   ): Promise<PublicSapTarjetasBulkDepositResult> {
-    ensureSapWriteAllowedForActor(actor, this.configService)
-    this.ensureCanRunExternalReconciliation(actor)
+    ensureSapWriteAllowedForActor(actor, this.configService);
+    this.ensureCanRunExternalReconciliation(actor);
 
-    const config = await this.requireConfigForActor(actor, payload.companyErpConfigId)
+    const config = await this.requireConfigForActor(
+      actor,
+      payload.companyErpConfigId,
+    );
 
-    ensureSapErpType(config.erpType)
-    ensureSapTarjetasConfig(config)
-    validateSapConfig(config, false)
-    this.ensureActiveConfig(config)
+    ensureSapErpType(config.erpType);
+    ensureSapTarjetasConfig(config);
+    validateSapConfig(config, false);
+    this.ensureActiveConfig(config);
 
-    const session = await this.requireActiveSapSession(actor, config)
+    const session = await this.requireActiveSapSession(actor, config);
     const endpointPath =
       this.getSettingsString(config, [
         "sapTarjetasDepositEndpoint",
         "tarjetasDepositEndpoint",
-        "sapDepositEndpoint"
-      ]) ?? "Deposits"
-    const endpoint = this.sapB1Service.joinUrl(config.serviceLayerUrl, endpointPath)
-    const sapPayload = this.buildSapTarjetasDepositPayload(payload, options)
-    const creditLines = sapPayload.CreditLines
-    const absIds = creditLines.map((line) => line.AbsId)
+        "sapDepositEndpoint",
+      ]) ?? "Deposits";
+    const endpoint = this.sapB1Service.joinUrl(
+      config.serviceLayerUrl,
+      endpointPath,
+    );
+    const sapPayload = this.buildSapTarjetasDepositPayload(payload, options);
+    const creditLines = sapPayload.CreditLines;
+    const absIds = creditLines.map((line) => line.AbsId);
 
     const batchRequestLog = {
       event: "sap_tarjetas_bulk_deposit_request",
@@ -685,36 +801,41 @@ export class SapErpService {
       companyErpConfigName: config.name,
       endpoint,
       absIds,
-      requestPayload: sapPayload
-    }
-    this.logger.log(this.stringifyLogPayload(batchRequestLog))
-    await this.persistSapTarjetasDepositLog(batchRequestLog)
+      requestPayload: sapPayload,
+    };
+    this.logger.log(this.stringifyLogPayload(batchRequestLog));
+    await this.persistSapTarjetasDepositLog(batchRequestLog);
 
-    const cookieHeader = this.decryptSessionCookie(session.sessionCookieEncrypted)
-    let results: PublicSapTarjetasDepositItemResult[]
+    const cookieHeader = this.decryptSessionCookie(
+      session.sessionCookieEncrypted,
+    );
+    let results: PublicSapTarjetasDepositItemResult[];
 
     try {
       const sapResponse = await this.sapB1Service.createDeposit(
         config,
         cookieHeader,
         sapPayload,
-        endpointPath
-      )
-      const externalReference = this.extractExternalReference(sapResponse.bodyJson, [
-        "DepositNumber",
-        "DeposNum",
-        "AbsEntry",
-        "AbsoluteEntry",
-        "DocEntry",
-        "Number"
-      ])
+        endpointPath,
+      );
+      const externalReference = this.extractExternalReference(
+        sapResponse.bodyJson,
+        [
+          "DepositNumber",
+          "DeposNum",
+          "AbsEntry",
+          "AbsoluteEntry",
+          "DocEntry",
+          "Number",
+        ],
+      );
       results = creditLines.map((line) => ({
         absId: line.AbsId,
         status: "success",
         httpStatus: sapResponse.statusCode,
         externalReference,
-        errorMessage: null
-      }))
+        errorMessage: null,
+      }));
 
       const successLog = {
         event: "sap_tarjetas_bulk_deposit_success",
@@ -725,27 +846,28 @@ export class SapErpService {
         absIds,
         httpStatus: sapResponse.statusCode,
         externalReference,
-        responsePayload: sapResponse.bodyJson
-      }
-      this.logger.log(this.stringifyLogPayload(successLog))
-      await this.persistSapTarjetasDepositLog(successLog)
-      session.lastValidatedAt = new Date()
-      await this.userErpSessionRepository.save(session)
+        responsePayload: sapResponse.bodyJson,
+      };
+      this.logger.log(this.stringifyLogPayload(successLog));
+      await this.persistSapTarjetasDepositLog(successLog);
+      session.lastValidatedAt = new Date();
+      await this.userErpSessionRepository.save(session);
     } catch (error) {
-      const mapped = this.mapExternalError(error)
+      const mapped = this.mapExternalError(error);
       const sessionInvalidated =
-        error instanceof ExternalRequestError && [401, 403].includes(error.statusCode ?? 0)
+        error instanceof ExternalRequestError &&
+        [401, 403].includes(error.statusCode ?? 0);
       const errorMessage = sessionInvalidated
         ? `Sesion ERP invalida: ${mapped.message}`
-        : mapped.message
+        : mapped.message;
 
       results = creditLines.map((line) => ({
         absId: line.AbsId,
         status: "error",
         httpStatus: mapped.statusCode ?? null,
         externalReference: null,
-        errorMessage
-      }))
+        errorMessage,
+      }));
 
       const failureLog = {
         event: "sap_tarjetas_bulk_deposit_failed",
@@ -757,21 +879,23 @@ export class SapErpService {
         httpStatus: mapped.statusCode ?? null,
         error: mapped.message,
         requestPayload: sapPayload,
-        responsePayload: mapped.responsePayload
-      }
-      this.logger.error(this.stringifyLogPayload(failureLog))
-      await this.persistSapTarjetasDepositLog(failureLog)
+        responsePayload: mapped.responsePayload,
+      };
+      this.logger.error(this.stringifyLogPayload(failureLog));
+      await this.persistSapTarjetasDepositLog(failureLog);
 
       if (sessionInvalidated) {
-        session.invalidatedAt = new Date()
+        session.invalidatedAt = new Date();
       } else {
-        session.lastValidatedAt = new Date()
+        session.lastValidatedAt = new Date();
       }
-      await this.userErpSessionRepository.save(session)
+      await this.userErpSessionRepository.save(session);
     }
 
-    const succeeded = results.filter((item) => item.status === "success").length
-    const failed = results.length - succeeded
+    const succeeded = results.filter(
+      (item) => item.status === "success",
+    ).length;
+    const failed = results.length - succeeded;
 
     const batchResultLog = {
       event: "sap_tarjetas_bulk_deposit_result",
@@ -783,10 +907,10 @@ export class SapErpService {
       total: results.length,
       succeeded,
       failed,
-      results
-    }
-    this.logger.log(this.stringifyLogPayload(batchResultLog))
-    await this.persistSapTarjetasDepositLog(batchResultLog)
+      results,
+    };
+    this.logger.log(this.stringifyLogPayload(batchResultLog));
+    await this.persistSapTarjetasDepositLog(batchResultLog);
 
     return {
       companyErpConfigId: config.id,
@@ -795,65 +919,358 @@ export class SapErpService {
       total: results.length,
       succeeded,
       failed,
-      results
+      results,
+    };
+  }
+
+  async parseIrvineDinelco(
+    actor: AuthUser,
+    companyErpConfigId: number,
+    file: SapTarjetasUploadFile | undefined,
+  ): Promise<PublicSapTarjetasCsvParseResult> {
+    this.ensureIrvineDinelcoActor(actor);
+    const config = await this.requireConfigForActor(actor, companyErpConfigId);
+    if (config.company.id !== actor.companyId) {
+      throw new ForbiddenException(
+        "Dinelco requiere una configuracion ERP de Irvine.",
+      );
+    }
+    ensureSapErpType(config.erpType);
+    ensureSapTarjetasConfig(config);
+    this.ensureActiveConfig(config);
+    if (!file?.buffer?.length)
+      throw new BadRequestException("Selecciona un Excel Dinelco.");
+    const parsed = parseDinelcoTarjetas(file.buffer);
+    return {
+      fileName: file.originalname ?? "dinelco.xlsx",
+      totalRows: parsed.totalRows,
+      includedRows: parsed.rows.length,
+      bank: { columns: parsed.columns, rows: parsed.rows },
+    };
+  }
+
+  async runIrvineDinelcoSystemQuery(
+    actor: AuthUser,
+    payload: RunSapTarjetasQueryDto,
+  ) {
+    this.ensureIrvineDinelcoActor(actor);
+    const config = await this.requireConfigForActor(
+      actor,
+      payload.companyErpConfigId,
+    );
+    if (config.company.id !== actor.companyId) {
+      throw new ForbiddenException(
+        "Dinelco requiere una configuracion ERP de Irvine.",
+      );
+    }
+    if (
+      new Date(payload.dateFrom).getTime() > new Date(payload.dateTo).getTime()
+    ) {
+      throw new BadRequestException(
+        "Fecha Desde no puede ser mayor a Fecha Hasta.",
+      );
+    }
+    if (
+      Boolean(payload.saleDateFrom) !== Boolean(payload.saleDateTo) ||
+      (payload.saleDateFrom &&
+        payload.saleDateTo &&
+        new Date(payload.saleDateFrom).getTime() >
+          new Date(payload.saleDateTo).getTime())
+    ) {
+      throw new BadRequestException(
+        "Dinelco: el rango de Fecha Venta es invalido.",
+      );
+    }
+    // La busqueda del usuario filtra acreditaciones del Excel. Los vouchers
+    // pueden tener PayDate de una venta anterior; consultar ambos rangos sin
+    // separar debito/credito y devolver el rango original para filtrar el Excel.
+    const dateFrom = [payload.dateFrom, payload.saleDateFrom]
+      .filter((date): date is string => Boolean(date))
+      .map((date) => date.slice(0, 10))
+      .sort()[0];
+    const dateTo = [payload.dateTo, payload.saleDateTo]
+      .filter((date): date is string => Boolean(date))
+      .map((date) => date.slice(0, 10))
+      .sort()
+      .at(-1)!;
+    const result = await this.runSapTarjetasSystemQuery(
+      actor,
+      { ...payload, dateFrom, dateTo },
+    );
+    return { ...result, dateFrom: payload.dateFrom, dateTo: payload.dateTo };
+  }
+
+  async compareIrvineDinelcoQueryPreview(
+    actor: AuthUser,
+    payload: CompareSapB1QueryPreviewDto,
+  ) {
+    this.ensureIrvineDinelcoActor(actor);
+    const config = await this.requireConfigForActor(
+      actor,
+      payload.companyErpConfigId,
+    );
+    if (config.company.id !== actor.companyId) {
+      throw new ForbiddenException(
+        "Dinelco requiere una configuracion ERP de Irvine.",
+      );
+    }
+    ensureSapTarjetasConfig(config);
+    if (
+      !payload.bank.columns.includes("Fecha Venta") ||
+      payload.bank.rows.some(
+        (row) =>
+          this.parseSapB1DateDayNumber(String(row["Fecha Venta"] ?? "")) ===
+          null,
+      )
+    ) {
+      throw new BadRequestException(
+        "Dinelco requiere Fecha Venta valida en el Excel para comparar con SAP.",
+      );
+    }
+    if (
+      !payload.bank.columns.includes("Monto") ||
+      payload.bank.rows.some((row) => {
+        const gross = this.parseSapB1AmountValue(String(row.Monto ?? ""));
+        return gross === null || gross <= 0;
+      })
+    ) {
+      throw new BadRequestException(
+        "Dinelco requiere Monto bruto valido en el Excel para comparar con SAP.",
+      );
+    }
+    return this.compareSapB1QueryPreview(
+      actor,
+      {
+        ...payload,
+        bank: {
+          ...payload.bank,
+          columns: [...new Set([...payload.bank.columns, "Fecha", "Importe"])],
+          rows: payload.bank.rows.map((row) => ({
+            ...row,
+            Fecha: row["Fecha Venta"],
+            Importe: row.Monto,
+          })),
+        },
+        columns: ["Referencia", "Fecha", "Importe"],
+        referenceMatchMode: "like",
+        strictReferenceAmountMatch: true,
+        groupSystemMatches: false,
+      },
+      { irvineDinelcoDateAmountFallback: true },
+    );
+  }
+
+  async createIrvineDinelcoDeposit(
+    actor: AuthUser,
+    payload: SendSapTarjetasDepositDto,
+  ) {
+    this.ensureIrvineDinelcoActor(actor);
+    const config = await this.requireConfigForActor(
+      actor,
+      payload.companyErpConfigId,
+    );
+    if (config.company.id !== actor.companyId) {
+      throw new ForbiddenException(
+        "Dinelco requiere una configuracion ERP de Irvine.",
+      );
+    }
+    const branch = this.normalizeRequired(
+      payload.dinelcoBranch,
+      "Sucursal Dinelco",
+    );
+    const presentationGroup = payload.dinelcoPresentationGroup;
+    if (presentationGroup !== "SPI" && presentationGroup !== "OTHER") {
+      throw new BadRequestException(
+        "Dinelco: indica SPI u OTHER como grupo de prestacion.",
+      );
+    }
+    const presentationLabel =
+      presentationGroup === "SPI" ? "TRANSFERENCIA SPI" : "OTRAS PRESTACIONES";
+    const reference = this.normalizeRequired(
+      payload.bankReference,
+      "Referencia Dinelco",
+    );
+    const gross = payload.dinelcoGrossAmount;
+    const net = payload.dinelcoNetAmount;
+    if (
+      gross === undefined ||
+      net === undefined ||
+      !Number.isFinite(gross) ||
+      !Number.isFinite(net) ||
+      gross <= 0 ||
+      net <= 0 ||
+      gross < net
+    ) {
+      throw new BadRequestException(
+        "Dinelco: Monto, Monto Neto y comision no cuadran.",
+      );
+    }
+    const commission = Number((gross - net).toFixed(6));
+    if (
+      payload.commission !== undefined &&
+      (!Number.isFinite(payload.commission) ||
+        payload.commission < 0 ||
+        Math.abs(payload.commission - commission) > 0.0001)
+    ) {
+      throw new BadRequestException(
+        "Dinelco: Monto, Monto Neto y comision no cuadran.",
+      );
+    }
+    // Igual que OCHO A: VoucherAccount usa la cuenta bancaria del depósito.
+    const voucherAccount = this.normalizeRequired(
+      payload.depositAccount,
+      "DepositAccount",
+    );
+    await this.validateIrvineDinelcoVouchers(
+      config,
+      payload,
+      gross,
+    );
+    const journalRemarks = `DINELCO ${branch} | ${presentationLabel}${payload.journalRemarks?.trim() ? ` | ${payload.journalRemarks.trim()}` : ""}`;
+    if (journalRemarks.length > 200) {
+      throw new BadRequestException(
+        "El comentario Dinelco junto con la sucursal y la prestacion supera 200 caracteres.",
+      );
+    }
+    return this.createSapTarjetasDeposit(
+      actor,
+      { ...payload, commission, voucherAccount, journalRemarks },
+      {
+        bankReference: reference,
+        commission: {
+          account: SAP_IRVINE_DINELCO_COMMISSION_ACCOUNT,
+          amount: commission,
+        },
+      },
+    );
+  }
+
+  private ensureIrvineDinelcoActor(actor: AuthUser) {
+    if (actor.companyCode.trim().toUpperCase() !== "IRVINE") {
+      throw new BadRequestException(
+        "Dinelco esta disponible solo para Irvine.",
+      );
+    }
+  }
+
+  private async validateIrvineDinelcoVouchers(
+    config: CompanyErpConfig,
+    payload: SendSapTarjetasDepositDto,
+    expectedGross: number,
+  ): Promise<void> {
+    const ids = payload.creditLines.map((line) =>
+      this.toPositiveInteger(line.absId),
+    );
+    if (
+      ids.length === 0 ||
+      ids.some((id) => id === null) ||
+      new Set(ids).size !== ids.length
+    ) {
+      throw new BadRequestException(
+        "Dinelco: los AbsId deben ser validos y no repetidos.",
+      );
+    }
+    const absIds = ids as number[];
+    const companyDb = this.normalizeRequired(config.dbName, "CompanyDB");
+    const connection = await this.connectSapHana(config, companyDb);
+    try {
+      const placeholders = absIds.map(() => "?").join(", ");
+
+      const rows = await this.executeSapHanaQuery(
+        connection,
+        `SELECT "AbsId", "CreditSum" FROM "OCRH" WHERE "AbsId" IN (${placeholders})`,
+        absIds,
+      );
+      const returnedAbsIds = new Set(
+        rows.map((row) => this.toPositiveInteger(row.AbsId)),
+      );
+      if (
+        rows.length !== absIds.length ||
+        absIds.some((absId) => !returnedAbsIds.has(absId))
+      ) {
+        throw new BadRequestException(
+          "Dinelco: no se encontraron todos los vouchers seleccionados en SAP.",
+        );
+      }
+      const sapGross = rows.reduce(
+        (sum, row) => sum + Number(row.CreditSum),
+        0,
+      );
+      if (
+        !Number.isFinite(sapGross) ||
+        Math.abs(sapGross - expectedGross) > 0.0001
+      ) {
+        throw new BadRequestException(
+          "Dinelco: la suma bruta de los vouchers SAP no coincide con Monto del Excel.",
+        );
+      }
+    } finally {
+      await this.disconnectSapHana(connection).catch(() => undefined);
     }
   }
 
   async reconcileExternal(
     actor: AuthUser,
-    payload: SendSapExternalReconciliationDto
+    payload: SendSapExternalReconciliationDto,
   ): Promise<PublicSapExternalReconciliationResult> {
-    ensureSapWriteAllowedForActor(actor, this.configService)
-    this.ensureCanRunExternalReconciliation(actor)
+    ensureSapWriteAllowedForActor(actor, this.configService);
+    this.ensureCanRunExternalReconciliation(actor);
 
-    const config = await this.requireConfigForActor(actor, payload.companyErpConfigId)
-    let reconciliation: Reconciliation | null = null
+    const config = await this.requireConfigForActor(
+      actor,
+      payload.companyErpConfigId,
+    );
+    let reconciliation: Reconciliation | null = null;
 
     if (payload.reconciliationId) {
       reconciliation = await this.reconciliationRepository.findOne({
         where: { id: payload.reconciliationId },
         relations: {
           user: {
-            company: true
+            company: true,
           },
           userBank: true,
           layout: true,
           companyBankAccount: {
             company: true,
-            bank: true
-          }
-        }
-      })
+            bank: true,
+          },
+        },
+      });
 
       if (!reconciliation) {
-        throw new NotFoundException("Conciliacion no encontrada.")
+        throw new NotFoundException("Conciliacion no encontrada.");
       }
 
-      this.ensureActorCanAccessReconciliation(actor, reconciliation)
+      this.ensureActorCanAccessReconciliation(actor, reconciliation);
 
       if (config.company.id !== reconciliation.user.company.id) {
         throw new BadRequestException(
-          "La configuracion ERP no pertenece a la misma empresa de la conciliacion."
-        )
+          "La configuracion ERP no pertenece a la misma empresa de la conciliacion.",
+        );
       }
     }
 
-    ensureSapErpType(config.erpType)
-    validateSapConfig(config, false)
-    this.ensureActiveConfig(config)
+    ensureSapErpType(config.erpType);
+    validateSapConfig(config, false);
+    this.ensureActiveConfig(config);
 
-    const session = await this.requireActiveSapSession(actor, config)
-    const endpointPath = this.getSettingsString(config, [
-      "sapExternalReconciliationEndpoint",
-      "externalReconciliationEndpoint"
-    ]) ?? "ExternalReconciliationsService_Reconcile"
-    const endpoint = this.sapB1Service.joinUrl(config.serviceLayerUrl, endpointPath)
+    const session = await this.requireActiveSapSession(actor, config);
+    const endpointPath =
+      this.getSettingsString(config, [
+        "sapExternalReconciliationEndpoint",
+        "externalReconciliationEndpoint",
+      ]) ?? "ExternalReconciliationsService_Reconcile";
+    const endpoint = this.sapB1Service.joinUrl(
+      config.serviceLayerUrl,
+      endpointPath,
+    );
     const sapPayload = await this.resolveSapExternalReconciliationPayload(
       actor,
       config,
       payload,
-      reconciliation
-    )
+      reconciliation,
+    );
     const traceContext: SapExternalReconciliationTraceContext = {
       actorId: actor.id,
       companyErpConfigId: config.id,
@@ -861,26 +1278,28 @@ export class SapErpService {
       endpoint,
       endpointPath,
       reconciliationId: reconciliation?.id ?? null,
-      sapPayload
-    }
+      sapPayload,
+    };
 
     try {
-      await this.logSapExternalReconciliationRequest(traceContext)
-      const cookieHeader = this.decryptSessionCookie(session.sessionCookieEncrypted)
+      await this.logSapExternalReconciliationRequest(traceContext);
+      const cookieHeader = this.decryptSessionCookie(
+        session.sessionCookieEncrypted,
+      );
       const sapResponse = await this.sapB1Service.reconcileExternal(
         config,
         cookieHeader,
         sapPayload,
-        endpointPath
-      )
-      const now = new Date()
-      session.lastValidatedAt = now
-      await this.userErpSessionRepository.save(session)
+        endpointPath,
+      );
+      const now = new Date();
+      session.lastValidatedAt = now;
+      await this.userErpSessionRepository.save(session);
       await this.logSapExternalReconciliationSuccess({
         ...traceContext,
         sapStatusCode: sapResponse.statusCode,
-        sapResponsePayload: sapResponse.bodyJson
-      })
+        sapResponsePayload: sapResponse.bodyJson,
+      });
 
       return {
         id: 0,
@@ -895,136 +1314,177 @@ export class SapErpService {
         errorMessage: null,
         externalReconciliationNo: this.extractExternalReference(
           sapResponse.bodyJson,
-          ["ReconciliationNo", "ReconciliationNumber", "ReconNum", "ExternalReconNo"]
+          [
+            "ReconciliationNo",
+            "ReconciliationNumber",
+            "ReconNum",
+            "ExternalReconNo",
+          ],
         ),
-        externalReference: this.extractExternalReference(
-          sapResponse.bodyJson,
-          ["AccountCode", "AbsEntry", "AbsoluteEntry", "Number"]
-        ),
+        externalReference: this.extractExternalReference(sapResponse.bodyJson, [
+          "AccountCode",
+          "AbsEntry",
+          "AbsoluteEntry",
+          "Number",
+        ]),
         createdAt: now,
-        updatedAt: now
-      }
+        updatedAt: now,
+      };
     } catch (error) {
-      if (error instanceof ExternalRequestError && [401, 403].includes(error.statusCode ?? 0)) {
-        session.invalidatedAt = new Date()
-        await this.userErpSessionRepository.save(session)
+      if (
+        error instanceof ExternalRequestError &&
+        [401, 403].includes(error.statusCode ?? 0)
+      ) {
+        session.invalidatedAt = new Date();
+        await this.userErpSessionRepository.save(session);
       }
 
-      await this.logSapExternalReconciliationError(error, traceContext)
-      const mapped = this.mapExternalError(error)
-      throw mapped.exception
+      await this.logSapExternalReconciliationError(error, traceContext);
+      const mapped = this.mapExternalError(error);
+      throw mapped.exception;
     }
   }
 
-  private resolveSapB1ComparisonColumns(payload: CompareSapB1QueryPreviewDto): string[] {
+  private resolveSapB1ComparisonColumns(
+    payload: CompareSapB1QueryPreviewDto,
+  ): string[] {
     const systemColumnsByKey = new Map(
-      payload.system.columns.map((column) => [this.normalizeLookupKey(column), column])
-    )
+      payload.system.columns.map((column) => [
+        this.normalizeLookupKey(column),
+        column,
+      ]),
+    );
     const bankColumnsByKey = new Map(
-      payload.bank.columns.map((column) => [this.normalizeLookupKey(column), column])
-    )
+      payload.bank.columns.map((column) => [
+        this.normalizeLookupKey(column),
+        column,
+      ]),
+    );
     const resolveColumn = (column: string) => {
-      const key = this.normalizeLookupKey(column)
-      return bankColumnsByKey.get(key) ?? systemColumnsByKey.get(key) ?? null
-    }
-    const uniqueColumns: string[] = []
-    const seenKeys = new Set<string>()
+      const key = this.normalizeLookupKey(column);
+      return bankColumnsByKey.get(key) ?? systemColumnsByKey.get(key) ?? null;
+    };
+    const uniqueColumns: string[] = [];
+    const seenKeys = new Set<string>();
 
     for (const requestedColumn of payload.columns ?? []) {
-      const column = resolveColumn(requestedColumn)
-      if (!column) continue
+      const column = resolveColumn(requestedColumn);
+      if (!column) continue;
 
-      const key = this.normalizeLookupKey(column)
-      if (seenKeys.has(key)) continue
-      seenKeys.add(key)
-      uniqueColumns.push(column)
+      const key = this.normalizeLookupKey(column);
+      if (seenKeys.has(key)) continue;
+      seenKeys.add(key);
+      uniqueColumns.push(column);
     }
 
     if (uniqueColumns.length > 0) {
-      return uniqueColumns.slice(0, 4)
+      return uniqueColumns.slice(0, 4);
     }
 
     const lookup = (...keys: string[]): string | null => {
       for (const key of keys) {
-        const found = bankColumnsByKey.get(key) ?? systemColumnsByKey.get(key)
-        if (found) return found
+        const found = bankColumnsByKey.get(key) ?? systemColumnsByKey.get(key);
+        if (found) return found;
       }
-      return null
-    }
-    const reference = lookup("referencia", "reference", "ref")
-    const fecha = lookup("fecha", "date")
-    const debito = lookup("debito", "debitos", "debe", "debit", "importedebito")
-    const credito = lookup("credito", "creditos", "haber", "credit", "importecredito")
-    const monto = lookup("monto", "importe", "amount")
+      return null;
+    };
+    const reference = lookup("referencia", "reference", "ref");
+    const fecha = lookup("fecha", "date");
+    const debito = lookup(
+      "debito",
+      "debitos",
+      "debe",
+      "debit",
+      "importedebito",
+    );
+    const credito = lookup(
+      "credito",
+      "creditos",
+      "haber",
+      "credit",
+      "importecredito",
+    );
+    const monto = lookup("monto", "importe", "amount");
 
-    const preferredColumns: Array<string | null> = [reference, fecha]
+    const preferredColumns: Array<string | null> = [reference, fecha];
     if (debito || credito) {
-      preferredColumns.push(debito, credito)
+      preferredColumns.push(debito, credito);
     } else if (monto) {
-      preferredColumns.push(monto)
+      preferredColumns.push(monto);
     }
-    const cleanedPreferred = preferredColumns.filter((column): column is string => Boolean(column))
+    const cleanedPreferred = preferredColumns.filter(
+      (column): column is string => Boolean(column),
+    );
 
     if (cleanedPreferred.length >= 3) {
-      return cleanedPreferred
+      return cleanedPreferred;
     }
 
     const commonColumns = payload.bank.columns.filter((column) =>
-      systemColumnsByKey.has(this.normalizeLookupKey(column))
-    )
+      systemColumnsByKey.has(this.normalizeLookupKey(column)),
+    );
 
-    return (commonColumns.length > 0 ? commonColumns : payload.bank.columns).slice(0, 4)
+    return (
+      commonColumns.length > 0 ? commonColumns : payload.bank.columns
+    ).slice(0, 4);
   }
 
   private resolveFgCreditCardFallbackColumns(
-    payload: CompareSapB1QueryPreviewDto
+    payload: CompareSapB1QueryPreviewDto,
   ): SapB1FgCreditFallbackColumns {
-    const systemDate = this.findSapB1Column(payload.system.columns, ["fecha", "date"])
+    const systemDate = this.findSapB1Column(payload.system.columns, [
+      "fecha",
+      "date",
+    ]);
     const bankSaleDate = this.findSapB1Column(payload.bank.columns, [
       "fechadeventa",
-      "saledate"
-    ])
+      "saledate",
+    ]);
     const bankTransaction = this.findSapB1Column(payload.bank.columns, [
       "nrotransaccion",
       "numerotransaccion",
-      "transactionnumber"
-    ])
+      "transactionnumber",
+    ]);
 
     if (!systemDate || !bankSaleDate || !bankTransaction) {
       throw new BadRequestException(
-        "El matching de credito FG requiere Fecha SAP, Fecha de venta y Nro. transaccion del CSV."
-      )
+        "El matching de credito FG requiere Fecha SAP, Fecha de venta y Nro. transaccion del CSV.",
+      );
     }
 
-    return { systemDate, bankSaleDate, bankTransaction }
+    return { systemDate, bankSaleDate, bankTransaction };
   }
 
   private findSapB1Column(columns: string[], keys: string[]): string | null {
-    const wanted = new Set(keys.map((key) => this.normalizeLookupKey(key)))
-    return columns.find((column) => wanted.has(this.normalizeLookupKey(column))) ?? null
+    const wanted = new Set(keys.map((key) => this.normalizeLookupKey(key)));
+    return (
+      columns.find((column) => wanted.has(this.normalizeLookupKey(column))) ??
+      null
+    );
   }
 
   private convertSapB1TableToPreviewRows(
-    table: PublicSapB1QueryTable
+    table: PublicSapB1QueryTable,
   ): ConciliationPreviewRow[] {
     return table.rows.map((row, index) => {
-      const values: Record<string, string | null> = {}
-      const normalized: Record<string, string | number | null> = {}
+      const values: Record<string, string | null> = {};
+      const normalized: Record<string, string | number | null> = {};
 
       for (const column of table.columns) {
-        const raw = row[column]
-        const text = raw === undefined || raw === null ? null : String(raw)
-        values[column] = text
-        normalized[column] = text === null ? null : this.normalizeSapB1ComparableText(text)
+        const raw = row[column];
+        const text = raw === undefined || raw === null ? null : String(raw);
+        values[column] = text;
+        normalized[column] =
+          text === null ? null : this.normalizeSapB1ComparableText(text);
       }
 
       return {
         rowId: `sap-b1-${index}`,
         rowNumber: index + 1,
         values,
-        normalized
-      }
-    })
+        normalized,
+      };
+    });
   }
 
   private calculateSapB1SmartMatches(
@@ -1033,16 +1493,18 @@ export class SapErpService {
     columns: SapB1MatchColumns,
     referenceMatchMode: "exact" | "like" = "exact",
     strictReferenceAmountMatch = false,
-    requireExactDateMatch = false
+    requireExactDateMatch = false,
   ): PublicSapB1SmartMatch[] {
-    const hasAmount = Boolean(columns.amount || columns.debit || columns.credit)
-    if (!columns.reference && !columns.date && !hasAmount) return []
+    const hasAmount = Boolean(
+      columns.amount || columns.debit || columns.credit,
+    );
+    if (!columns.reference && !columns.date && !hasAmount) return [];
 
-    const matches: PublicSapB1SmartMatch[] = []
-    const usedBankRows = new Set<string>()
+    const matches: PublicSapB1SmartMatch[] = [];
+    const usedBankRows = new Set<string>();
 
     for (const systemRow of systemRows) {
-      const systemNet = this.sapB1RowNet(systemRow, columns, "system")
+      const systemNet = this.sapB1RowNet(systemRow, columns, "system");
       const candidates = bankRows
         .filter((bankRow) => !usedBankRows.has(bankRow.rowId))
         .map((bankRow) => {
@@ -1050,36 +1512,39 @@ export class SapErpService {
             ? this.sapB1ReferenceMatch(
                 this.readSapB1PreviewRowValue(systemRow, columns.reference),
                 this.readSapB1PreviewRowValue(bankRow, columns.reference),
-                referenceMatchMode
+                referenceMatchMode,
               )
-            : false
+            : false;
           const dateResult = columns.date
             ? this.sapB1DateMatchWithinDays(
                 this.readSapB1PreviewRowRawValue(systemRow, columns.date),
                 this.readSapB1PreviewRowRawValue(bankRow, columns.date),
-                requireExactDateMatch ? 0 : SAP_B1_DATE_TOLERANCE_DAYS
+                requireExactDateMatch ? 0 : SAP_B1_DATE_TOLERANCE_DAYS,
               )
-            : { matched: false, differenceDays: null }
-          const bankNet = this.sapB1RowNet(bankRow, columns, "bank")
+            : { matched: false, differenceDays: null };
+          const bankNet = this.sapB1RowNet(bankRow, columns, "bank");
           const amountMatched =
             systemNet !== null &&
             bankNet !== null &&
             Math.abs(systemNet) > 0.0001 &&
             (strictReferenceAmountMatch
               ? systemNet === bankNet
-              : Math.abs(systemNet - bankNet) < 0.0001)
+              : Math.abs(systemNet - bankNet) < 0.0001);
 
           // Pagos de tarjeta de OCHO A: no hay match automatico si falta Referencia,
           // alguno de los importes no se puede leer o los importes difieren.
-          if (strictReferenceAmountMatch && (!referenceMatched || !amountMatched)) {
-            return null
+          if (
+            strictReferenceAmountMatch &&
+            (!referenceMatched || !amountMatched)
+          ) {
+            return null;
           }
 
           // En Pago Tarjeta Crédito de OCHO_A se exige adicionalmente que la
           // Fecha SAP sea exactamente la Fecha de venta del CSV. La fecha de
           // crédito del comercio se conserva para la posterior liquidación.
           if (requireExactDateMatch && !dateResult.matched) {
-            return null
+            return null;
           }
 
           // El monto debe coincidir SIEMPRE: si hay columna(s) de importe y
@@ -1092,16 +1557,17 @@ export class SapErpService {
             bankNet !== null &&
             Math.abs(systemNet - bankNet) >= 0.0001
           ) {
-            return null
+            return null;
           }
 
-          const matchReason: PublicSapB1SmartMatch["matchReason"] | null = referenceMatched
-            ? "reference"
-            : dateResult.matched && amountMatched
-              ? "date_amount"
-              : null
+          const matchReason: PublicSapB1SmartMatch["matchReason"] | null =
+            referenceMatched
+              ? "reference"
+              : dateResult.matched && amountMatched
+                ? "date_amount"
+                : null;
 
-          if (!matchReason) return null
+          if (!matchReason) return null;
 
           return {
             bankRow,
@@ -1110,25 +1576,27 @@ export class SapErpService {
             column2Match: dateResult.matched,
             column3Match: amountMatched,
             matchReason,
-            dateDifferenceDays: dateResult.differenceDays
-          }
+            dateDifferenceDays: dateResult.differenceDays,
+          };
         })
         .filter((item): item is NonNullable<typeof item> => item !== null)
         .sort((left, right) => {
           if (left.matchReason !== right.matchReason) {
-            return left.matchReason === "reference" ? -1 : 1
+            return left.matchReason === "reference" ? -1 : 1;
           }
-          if (left.score !== right.score) return right.score - left.score
+          if (left.score !== right.score) return right.score - left.score;
 
-          const leftDateDiff = left.dateDifferenceDays ?? Number.MAX_SAFE_INTEGER
-          const rightDateDiff = right.dateDifferenceDays ?? Number.MAX_SAFE_INTEGER
-          return leftDateDiff - rightDateDiff
-        })
+          const leftDateDiff =
+            left.dateDifferenceDays ?? Number.MAX_SAFE_INTEGER;
+          const rightDateDiff =
+            right.dateDifferenceDays ?? Number.MAX_SAFE_INTEGER;
+          return leftDateDiff - rightDateDiff;
+        });
 
-      const chosen = candidates[0]
-      if (!chosen) continue
+      const chosen = candidates[0];
+      if (!chosen) continue;
 
-      usedBankRows.add(chosen.bankRow.rowId)
+      usedBankRows.add(chosen.bankRow.rowId);
       matches.push({
         systemRow,
         bankRow: chosen.bankRow,
@@ -1137,11 +1605,143 @@ export class SapErpService {
         column2Match: chosen.column2Match,
         column3Match: chosen.column3Match,
         matchReason: chosen.matchReason,
-        dateDifferenceDays: chosen.dateDifferenceDays
-      })
+        dateDifferenceDays: chosen.dateDifferenceDays,
+      });
     }
 
-    return matches
+    return matches;
+  }
+
+  // Dinelco conserva primero los cruces por referencia e importe. Solo las
+  // filas pendientes pueden cruzarse por fecha de venta e importe bruto exactos.
+  // Si se repite ese par, un error de un caracter en la referencia identifica
+  // el voucher antes de evaluar la unicidad de las filas restantes.
+  private calculateIrvineDinelcoDateAmountFallbackMatches(
+    systemRows: ConciliationPreviewRow[],
+    bankRows: ConciliationPreviewRow[],
+    columns: SapB1MatchColumns,
+  ): PublicSapB1SmartMatch[] {
+    if (!columns.date || !(columns.amount || columns.debit || columns.credit))
+      return [];
+    const dateColumn = columns.date;
+    const groupRows = (
+      rows: ConciliationPreviewRow[],
+      side: "system" | "bank",
+    ) => {
+      const groups = new Map<string, ConciliationPreviewRow[]>();
+      for (const row of rows) {
+        const day = this.parseSapB1DateDayNumber(
+          this.readSapB1PreviewRowRawValue(row, dateColumn),
+        );
+        const amount = this.sapB1RowNet(row, columns, side);
+        if (day === null || amount === null || amount <= 0.0001) continue;
+        const key = `${day}\u0000${amount}`;
+        const group = groups.get(key) ?? [];
+        group.push(row);
+        groups.set(key, group);
+      }
+      return groups;
+    };
+    const systemGroups = groupRows(systemRows, "system");
+    const bankGroups = groupRows(bankRows, "bank");
+    const matches: PublicSapB1SmartMatch[] = [];
+    const registerMatch = (
+      systemRow: ConciliationPreviewRow,
+      bankRow: ConciliationPreviewRow,
+    ) => {
+      matches.push({
+        systemRow,
+        bankRow,
+        score: 0.95,
+        column1Match: false,
+        column2Match: true,
+        column3Match: true,
+        matchReason: "date_amount",
+        dateDifferenceDays: 0,
+      });
+    };
+    for (const [key, bankGroup] of bankGroups) {
+      const systemGroup = systemGroups.get(key);
+      if (!systemGroup) continue;
+      const usedSystemRows = new Set<string>();
+      const usedBankRows = new Set<string>();
+      if (
+        columns.reference &&
+        (bankGroup.length > 1 || systemGroup.length > 1)
+      ) {
+        const referenceColumn = columns.reference;
+        const candidates: Array<{
+          systemRow: ConciliationPreviewRow;
+          bankRow: ConciliationPreviewRow;
+        }> = [];
+        const systemCounts = new Map<string, number>();
+        const bankCounts = new Map<string, number>();
+        for (const systemRow of systemGroup) {
+          for (const bankRow of bankGroup) {
+            if (
+              !this.irvineDinelcoReferenceHasSingleTypo(
+                this.readSapB1PreviewRowRawValue(systemRow, referenceColumn),
+                this.readSapB1PreviewRowRawValue(bankRow, referenceColumn),
+              )
+            )
+              continue;
+            candidates.push({ systemRow, bankRow });
+            systemCounts.set(
+              systemRow.rowId,
+              (systemCounts.get(systemRow.rowId) ?? 0) + 1,
+            );
+            bankCounts.set(
+              bankRow.rowId,
+              (bankCounts.get(bankRow.rowId) ?? 0) + 1,
+            );
+          }
+        }
+        for (const { systemRow, bankRow } of candidates) {
+          if (
+            systemCounts.get(systemRow.rowId) !== 1 ||
+            bankCounts.get(bankRow.rowId) !== 1
+          )
+            continue;
+          registerMatch(systemRow, bankRow);
+          usedSystemRows.add(systemRow.rowId);
+          usedBankRows.add(bankRow.rowId);
+        }
+      }
+      const remainingSystemRows = systemGroup.filter(
+        (row) => !usedSystemRows.has(row.rowId),
+      );
+      const remainingBankRows = bankGroup.filter(
+        (row) => !usedBankRows.has(row.rowId),
+      );
+      if (remainingSystemRows.length === 1 && remainingBankRows.length === 1) {
+        registerMatch(remainingSystemRows[0], remainingBankRows[0]);
+      }
+    }
+    return matches;
+  }
+
+  private irvineDinelcoReferenceHasSingleTypo(
+    left: SapB1ComparableValue,
+    right: SapB1ComparableValue,
+  ): boolean {
+    const a = this.normalizeSapB1Reference(left);
+    const b = this.normalizeSapB1Reference(right);
+    if (!a || !b || a === b || Math.abs(a.length - b.length) > 1) return false;
+    let i = 0;
+    let j = 0;
+    let differences = 0;
+    while (i < a.length && j < b.length) {
+      if (a[i] === b[j]) {
+        i += 1;
+        j += 1;
+        continue;
+      }
+      differences += 1;
+      if (differences > 1) return false;
+      if (a.length >= b.length) i += 1;
+      if (b.length >= a.length) j += 1;
+    }
+    return differences + (a.length - i) + (b.length - j) === 1;
   }
 
   // Respaldo exclusivo de Pago Credito FG_TARJETA_QA. SAP guarda en Referencia
@@ -1152,62 +1752,77 @@ export class SapErpService {
     systemRows: ConciliationPreviewRow[],
     bankRows: ConciliationPreviewRow[],
     columns: SapB1MatchColumns,
-    fallbackColumns: SapB1FgCreditFallbackColumns
+    fallbackColumns: SapB1FgCreditFallbackColumns,
   ): PublicSapB1SmartMatch[] {
-    if (!columns.reference || !(columns.amount || columns.debit || columns.credit)) {
-      return []
+    if (
+      !columns.reference ||
+      !(columns.amount || columns.debit || columns.credit)
+    ) {
+      return [];
     }
 
     const candidatePairs: Array<{
-      systemRow: ConciliationPreviewRow
-      bankRow: ConciliationPreviewRow
-    }> = []
+      systemRow: ConciliationPreviewRow;
+      bankRow: ConciliationPreviewRow;
+    }> = [];
 
     for (const systemRow of systemRows) {
-      const systemAmount = this.sapB1RowNet(systemRow, columns, "system")
-      if (systemAmount === null || Math.abs(systemAmount) <= 0.0001) continue
+      const systemAmount = this.sapB1RowNet(systemRow, columns, "system");
+      if (systemAmount === null || Math.abs(systemAmount) <= 0.0001) continue;
 
-      const systemReference = this.readSapB1PreviewRowValue(systemRow, columns.reference)
+      const systemReference = this.readSapB1PreviewRowValue(
+        systemRow,
+        columns.reference,
+      );
       for (const bankRow of bankRows) {
-        const bankAmount = this.sapB1RowNet(bankRow, columns, "bank")
-        if (bankAmount === null || systemAmount !== bankAmount) continue
+        const bankAmount = this.sapB1RowNet(bankRow, columns, "bank");
+        if (bankAmount === null || systemAmount !== bankAmount) continue;
 
         const referenceMatched = this.sapB1ReferenceContains(
           systemReference,
-          this.readSapB1PreviewRowValue(bankRow, fallbackColumns.bankTransaction),
-          4
-        )
-        if (!referenceMatched) continue
+          this.readSapB1PreviewRowValue(
+            bankRow,
+            fallbackColumns.bankTransaction,
+          ),
+          4,
+        );
+        if (!referenceMatched) continue;
 
         const dateMatched = this.sapB1DateMatchWithinDays(
-          this.readSapB1PreviewRowRawValue(systemRow, fallbackColumns.systemDate),
-          this.readSapB1PreviewRowRawValue(bankRow, fallbackColumns.bankSaleDate),
-          0
-        ).matched
-        if (!dateMatched) continue
+          this.readSapB1PreviewRowRawValue(
+            systemRow,
+            fallbackColumns.systemDate,
+          ),
+          this.readSapB1PreviewRowRawValue(
+            bankRow,
+            fallbackColumns.bankSaleDate,
+          ),
+          0,
+        ).matched;
+        if (!dateMatched) continue;
 
-        candidatePairs.push({ systemRow, bankRow })
+        candidatePairs.push({ systemRow, bankRow });
       }
     }
 
-    const systemCandidateCounts = new Map<string, number>()
-    const bankCandidateCounts = new Map<string, number>()
+    const systemCandidateCounts = new Map<string, number>();
+    const bankCandidateCounts = new Map<string, number>();
     for (const candidate of candidatePairs) {
       systemCandidateCounts.set(
         candidate.systemRow.rowId,
-        (systemCandidateCounts.get(candidate.systemRow.rowId) ?? 0) + 1
-      )
+        (systemCandidateCounts.get(candidate.systemRow.rowId) ?? 0) + 1,
+      );
       bankCandidateCounts.set(
         candidate.bankRow.rowId,
-        (bankCandidateCounts.get(candidate.bankRow.rowId) ?? 0) + 1
-      )
+        (bankCandidateCounts.get(candidate.bankRow.rowId) ?? 0) + 1,
+      );
     }
 
     return candidatePairs
       .filter(
         (candidate) =>
           systemCandidateCounts.get(candidate.systemRow.rowId) === 1 &&
-          bankCandidateCounts.get(candidate.bankRow.rowId) === 1
+          bankCandidateCounts.get(candidate.bankRow.rowId) === 1,
       )
       .map(({ systemRow, bankRow }) => ({
         systemRow,
@@ -1217,8 +1832,8 @@ export class SapErpService {
         column2Match: true,
         column3Match: true,
         matchReason: "reference",
-        dateDifferenceDays: 0
-      }))
+        dateDifferenceDays: 0,
+      }));
   }
 
   // OCHO A puede tener un movimiento bancario que representa varias lineas de
@@ -1234,25 +1849,25 @@ export class SapErpService {
     systemRows: ConciliationPreviewRow[],
     bankRows: ConciliationPreviewRow[],
     columns: SapB1MatchColumns,
-    referenceMatchMode: "exact" | "like"
+    referenceMatchMode: "exact" | "like",
   ): PublicSapB1SmartMatch[] {
-    const referenceColumn = columns.reference
-    const dateColumn = columns.date
-    if (!referenceColumn || !dateColumn) return []
+    const referenceColumn = columns.reference;
+    const dateColumn = columns.date;
+    if (!referenceColumn || !dateColumn) return [];
 
-    const matches: PublicSapB1SmartMatch[] = []
-    const usedSystemRows = new Set<string>()
-    const matchedBankRows = new Set<string>()
-    type GroupedCandidate = { row: ConciliationPreviewRow; amount: number }
+    const matches: PublicSapB1SmartMatch[] = [];
+    const usedSystemRows = new Set<string>();
+    const matchedBankRows = new Set<string>();
+    type GroupedCandidate = { row: ConciliationPreviewRow; amount: number };
 
     const registerGroupedMatch = (
       bankRow: ConciliationPreviewRow,
       chosen: GroupedCandidate[],
-      matchReason: PublicSapB1SmartMatch["matchReason"]
+      matchReason: PublicSapB1SmartMatch["matchReason"],
     ): boolean => {
-      matchedBankRows.add(bankRow.rowId)
+      matchedBankRows.add(bankRow.rowId);
       for (const item of chosen) {
-        usedSystemRows.add(item.row.rowId)
+        usedSystemRows.add(item.row.rowId);
         matches.push({
           systemRow: item.row,
           bankRow,
@@ -1261,66 +1876,80 @@ export class SapErpService {
           column2Match: true,
           column3Match: true,
           matchReason,
-          dateDifferenceDays: 0
-        })
+          dateDifferenceDays: 0,
+        });
       }
 
-      return true
-    }
+      return true;
+    };
 
     const tryMatchBankRow = (
       bankRow: ConciliationPreviewRow,
-      matchMode: "exact" | "like"
+      matchMode: "exact" | "like",
     ): boolean => {
-      if (matchedBankRows.has(bankRow.rowId)) return false
+      if (matchedBankRows.has(bankRow.rowId)) return false;
 
-      const bankNet = this.sapB1RowNet(bankRow, columns, "bank")
-      const bankReference = this.readSapB1PreviewRowValue(bankRow, referenceColumn)
-      if (bankNet === null || Math.abs(bankNet) <= 0.0001 || bankReference === null) {
-        return false
+      const bankNet = this.sapB1RowNet(bankRow, columns, "bank");
+      const bankReference = this.readSapB1PreviewRowValue(
+        bankRow,
+        referenceColumn,
+      );
+      if (
+        bankNet === null ||
+        Math.abs(bankNet) <= 0.0001 ||
+        bankReference === null
+      ) {
+        return false;
       }
 
-      const directCandidates: GroupedCandidate[] = []
-      const reference2Candidates: GroupedCandidate[] = []
+      const directCandidates: GroupedCandidate[] = [];
+      const reference2Candidates: GroupedCandidate[] = [];
 
       for (const systemRow of systemRows) {
-        if (usedSystemRows.has(systemRow.rowId)) continue
+        if (usedSystemRows.has(systemRow.rowId)) continue;
 
-        const systemNet = this.sapB1RowNet(systemRow, columns, "system")
-        if (systemNet === null) continue
+        const systemNet = this.sapB1RowNet(systemRow, columns, "system");
+        if (systemNet === null) continue;
 
         // Los grupos por referencia tambien deben corresponder a la misma fecha
         // exacta; OCHO A no usa tolerancia de dias en este flujo.
         const dateMatched = this.sapB1DateMatchWithinDays(
           this.readSapB1PreviewRowRawValue(systemRow, dateColumn),
           this.readSapB1PreviewRowRawValue(bankRow, dateColumn),
-          0
-        ).matched
-        if (!dateMatched) continue
+          0,
+        ).matched;
+        if (!dateMatched) continue;
 
-        const primaryReference = this.readSapB1PreviewRowValue(systemRow, referenceColumn)
+        const primaryReference = this.readSapB1PreviewRowValue(
+          systemRow,
+          referenceColumn,
+        );
         const reference2 = columns.reference2
           ? this.readSapB1PreviewRowValue(systemRow, columns.reference2)
-          : null
-        const primaryReferenceExact = this.sapB1ExactMatch(primaryReference, bankReference)
-        const reference2Exact = this.sapB1ExactMatch(reference2, bankReference)
+          : null;
+        const primaryReferenceExact = this.sapB1ExactMatch(
+          primaryReference,
+          bankReference,
+        );
+        const reference2Exact = this.sapB1ExactMatch(reference2, bankReference);
         const primaryReferenceMatched =
           matchMode === "exact"
             ? primaryReferenceExact
             : !primaryReferenceExact &&
-              this.sapB1ReferenceMatch(primaryReference, bankReference, "like")
+              this.sapB1ReferenceMatch(primaryReference, bankReference, "like");
         const reference2Matched =
           matchMode === "exact"
             ? reference2Exact
-            : !reference2Exact && this.sapB1ReferenceMatch(reference2, bankReference, "like")
+            : !reference2Exact &&
+              this.sapB1ReferenceMatch(reference2, bankReference, "like");
 
         // Una linea puede pertenecer a ambos grupos; no la excluimos del grupo
         // Ref. 2 solo porque su Referencia principal tambien coincida.
         if (primaryReferenceMatched) {
-          directCandidates.push({ row: systemRow, amount: systemNet })
+          directCandidates.push({ row: systemRow, amount: systemNet });
         }
         if (reference2Matched) {
-          reference2Candidates.push({ row: systemRow, amount: systemNet })
+          reference2Candidates.push({ row: systemRow, amount: systemNet });
         }
       }
 
@@ -1332,42 +1961,47 @@ export class SapErpService {
       const completeDirectReferenceGroup =
         matchMode === "exact"
           ? this.findSapB1CompleteSystemGroupForBank(directCandidates, bankNet)
-          : null
+          : null;
       const completeReference2Group =
         matchMode === "exact"
-          ? this.findSapB1CompleteSystemGroupForBank(reference2Candidates, bankNet)
-          : null
+          ? this.findSapB1CompleteSystemGroupForBank(
+              reference2Candidates,
+              bankNet,
+            )
+          : null;
       const chosen =
         completeReference2Group ??
         completeDirectReferenceGroup ??
         this.findSapB1SystemGroupForBank(directCandidates, bankNet) ??
-        this.findSapB1SystemGroupForBank(reference2Candidates, bankNet)
-      if (!chosen) return false
+        this.findSapB1SystemGroupForBank(reference2Candidates, bankNet);
+      if (!chosen) return false;
 
-      return registerGroupedMatch(bankRow, chosen, "reference")
-    }
+      return registerGroupedMatch(bankRow, chosen, "reference");
+    };
 
-    const tryMatchBankRowByDateAndAmount = (bankRow: ConciliationPreviewRow): boolean => {
-      if (matchedBankRows.has(bankRow.rowId)) return false
+    const tryMatchBankRowByDateAndAmount = (
+      bankRow: ConciliationPreviewRow,
+    ): boolean => {
+      if (matchedBankRows.has(bankRow.rowId)) return false;
 
-      const bankNet = this.sapB1RowNet(bankRow, columns, "bank")
-      if (bankNet === null || Math.abs(bankNet) <= 0.0001) return false
+      const bankNet = this.sapB1RowNet(bankRow, columns, "bank");
+      if (bankNet === null || Math.abs(bankNet) <= 0.0001) return false;
 
-      const candidates: GroupedCandidate[] = []
+      const candidates: GroupedCandidate[] = [];
       for (const systemRow of systemRows) {
-        if (usedSystemRows.has(systemRow.rowId)) continue
+        if (usedSystemRows.has(systemRow.rowId)) continue;
 
-        const systemNet = this.sapB1RowNet(systemRow, columns, "system")
-        if (systemNet === null) continue
+        const systemNet = this.sapB1RowNet(systemRow, columns, "system");
+        if (systemNet === null) continue;
 
         const dateMatched = this.sapB1DateMatchWithinDays(
           this.readSapB1PreviewRowRawValue(systemRow, dateColumn),
           this.readSapB1PreviewRowRawValue(bankRow, dateColumn),
-          0
-        ).matched
-        if (!dateMatched) continue
+          0,
+        ).matched;
+        if (!dateMatched) continue;
 
-        candidates.push({ row: systemRow, amount: systemNet })
+        candidates.push({ row: systemRow, amount: systemNet });
       }
 
       // Si todas las filas pendientes de la fecha forman exactamente el monto
@@ -1375,34 +2009,34 @@ export class SapErpService {
       // exacto que el usuario antes tenia que seleccionar manualmente.
       const chosen =
         this.findSapB1CompleteSystemGroupForBank(candidates, bankNet) ??
-        this.findSapB1SystemGroupForBank(candidates, bankNet)
-      if (!chosen) return false
+        this.findSapB1SystemGroupForBank(candidates, bankNet);
+      if (!chosen) return false;
 
-      return registerGroupedMatch(bankRow, chosen, "date_amount")
-    }
+      return registerGroupedMatch(bankRow, chosen, "date_amount");
+    };
 
     // Primero resolver todas las referencias exactas. Esto impide que una
     // referencia parecida consuma lineas de un grupo exacto que aparece despues
     // en el extracto bancario.
     for (const bankRow of bankRows) {
-      tryMatchBankRow(bankRow, "exact")
+      tryMatchBankRow(bankRow, "exact");
     }
 
     // Conserva la tolerancia existente para referencias con ceros/padding o
     // texto adicional, pero solo si la igualdad exacta no resolvio la fila.
     if (referenceMatchMode === "like") {
       for (const bankRow of bankRows) {
-        tryMatchBankRow(bankRow, "like")
+        tryMatchBankRow(bankRow, "like");
       }
     }
 
     // Ultimo respaldo exclusivo de OCHO A: misma fecha exacta y mismo importe
     // neto, aunque Referencia y Referencia 2 sean distintas.
     for (const bankRow of bankRows) {
-      tryMatchBankRowByDateAndAmount(bankRow)
+      tryMatchBankRowByDateAndAmount(bankRow);
     }
 
-    return matches
+    return matches;
   }
 
   // A diferencia de findSapB1SystemGroupForBank, aqui no se permiten
@@ -1414,17 +2048,17 @@ export class SapErpService {
   // mismo grupo.
   private findSapB1CompleteSystemGroupForBank<T extends { amount: number }>(
     candidates: T[],
-    bankNet: number
+    bankNet: number,
   ): T[] | null {
-    if (candidates.length === 0) return null
+    if (candidates.length === 0) return null;
 
-    const target = Math.round(bankNet * 10000)
+    const target = Math.round(bankNet * 10000);
     const fullTotal = candidates.reduce(
       (total, item) => total + Math.round(item.amount * 10000),
-      0
-    )
+      0,
+    );
 
-    return fullTotal === target ? candidates : null
+    return fullTotal === target ? candidates : null;
   }
 
   // Encuentra una combinacion exacta de lineas del sistema para una linea del
@@ -1433,43 +2067,45 @@ export class SapErpService {
   // una referencia con miles de filas degrade el proceso de comparacion.
   private findSapB1SystemGroupForBank<T extends { amount: number }>(
     candidates: T[],
-    bankNet: number
+    bankNet: number,
   ): T[] | null {
-    if (candidates.length === 0) return null
+    if (candidates.length === 0) return null;
 
-    const target = Math.round(bankNet * 10000)
-    const amounts = candidates.map((item) => Math.round(item.amount * 10000))
-    const exactIndex = amounts.findIndex((amount) => amount === target)
-    if (exactIndex >= 0) return [candidates[exactIndex]]
+    const target = Math.round(bankNet * 10000);
+    const amounts = candidates.map((item) => Math.round(item.amount * 10000));
+    const exactIndex = amounts.findIndex((amount) => amount === target);
+    if (exactIndex >= 0) return [candidates[exactIndex]];
 
-    const fullTotal = amounts.reduce((total, amount) => total + amount, 0)
-    if (fullTotal === target) return candidates
+    const fullTotal = amounts.reduce((total, amount) => total + amount, 0);
+    if (fullTotal === target) return candidates;
 
-    const combinations = new Map<number, number[]>()
-    combinations.set(0, [])
-    const maxCombinations = 12000
+    const combinations = new Map<number, number[]>();
+    combinations.set(0, []);
+    const maxCombinations = 12000;
 
     for (let index = 0; index < amounts.length; index += 1) {
-      const amount = amounts[index]
-      const currentCombinations = [...combinations.entries()]
+      const amount = amounts[index];
+      const currentCombinations = [...combinations.entries()];
       for (const [sum, indexes] of currentCombinations) {
-        const nextSum = sum + amount
-        if (combinations.has(nextSum)) continue
+        const nextSum = sum + amount;
+        if (combinations.has(nextSum)) continue;
 
-        const nextIndexes = [...indexes, index]
+        const nextIndexes = [...indexes, index];
         if (nextSum === target) {
-          return nextIndexes.map((candidateIndex) => candidates[candidateIndex])
+          return nextIndexes.map(
+            (candidateIndex) => candidates[candidateIndex],
+          );
         }
 
         if (combinations.size < maxCombinations) {
-          combinations.set(nextSum, nextIndexes)
+          combinations.set(nextSum, nextIndexes);
         }
       }
 
-      if (combinations.size >= maxCombinations) break
+      if (combinations.size >= maxCombinations) break;
     }
 
-    return null
+    return null;
   }
 
   // Clasifica las columnas de comparacion en roles (referencia/fecha/importe).
@@ -1477,34 +2113,42 @@ export class SapErpService {
   // Debito/Credito si la lista de comparacion truncada dejo solo uno.
   private classifySapB1MatchColumns(
     columns: string[],
-    availableColumns: string[] = columns
+    availableColumns: string[] = columns,
   ): SapB1MatchColumns {
-    const DEBIT_KEYS = ["debito", "debitos", "debe", "debit", "importedebito"]
-    const CREDIT_KEYS = ["credito", "creditos", "haber", "credit", "importecredito"]
+    const DEBIT_KEYS = ["debito", "debitos", "debe", "debit", "importedebito"];
+    const CREDIT_KEYS = [
+      "credito",
+      "creditos",
+      "haber",
+      "credit",
+      "importecredito",
+    ];
     const makeFinder = (cols: string[]) => {
-      const byKey = new Map(cols.map((column) => [this.normalizeLookupKey(column), column]))
+      const byKey = new Map(
+        cols.map((column) => [this.normalizeLookupKey(column), column]),
+      );
       return (...keys: string[]): string | null => {
         for (const key of keys) {
-          const found = byKey.get(key)
-          if (found) return found
+          const found = byKey.get(key);
+          if (found) return found;
         }
-        return null
-      }
-    }
-    const find = makeFinder(columns)
-    const findAvailable = makeFinder(availableColumns)
+        return null;
+      };
+    };
+    const find = makeFinder(columns);
+    const findAvailable = makeFinder(availableColumns);
 
-    const reference = find("referencia", "reference", "ref")
-    const reference2 = findAvailable("referencia2", "reference2", "ref2")
-    const date = find("fecha", "date")
-    let debit = find(...DEBIT_KEYS)
-    let credit = find(...CREDIT_KEYS)
-    let amount = find("monto", "importe", "amount")
+    const reference = find("referencia", "reference", "ref");
+    const reference2 = findAvailable("referencia2", "reference2", "ref2");
+    const date = find("fecha", "date");
+    let debit = find(...DEBIT_KEYS);
+    let credit = find(...CREDIT_KEYS);
+    let amount = find("monto", "importe", "amount");
 
     // Si solo sobrevivio uno del par Debito/Credito, completar con el otro desde
     // el set completo de columnas (la convencion de signo necesita ambos).
-    if (debit && !credit) credit = findAvailable(...CREDIT_KEYS)
-    if (credit && !debit) debit = findAvailable(...DEBIT_KEYS)
+    if (debit && !credit) credit = findAvailable(...CREDIT_KEYS);
+    if (credit && !debit) debit = findAvailable(...DEBIT_KEYS);
 
     // Compat: si no hay columna de importe reconocida, usar la primera columna
     // de comparacion que no sea referencia ni fecha.
@@ -1512,12 +2156,14 @@ export class SapErpService {
       const used = new Set(
         [reference, reference2, date]
           .filter((column): column is string => Boolean(column))
-          .map((column) => this.normalizeLookupKey(column))
-      )
-      amount = columns.find((column) => !used.has(this.normalizeLookupKey(column))) ?? null
+          .map((column) => this.normalizeLookupKey(column)),
+      );
+      amount =
+        columns.find((column) => !used.has(this.normalizeLookupKey(column))) ??
+        null;
     }
 
-    return { reference, reference2, date, amount, debit, credit }
+    return { reference, reference2, date, amount, debit, credit };
   }
 
   // Importe neto con signo de una fila. La convencion de signo (que invierte por
@@ -1528,67 +2174,73 @@ export class SapErpService {
   private sapB1RowNet(
     row: ConciliationPreviewRow,
     columns: SapB1MatchColumns,
-    side: "bank" | "system"
+    side: "bank" | "system",
   ): number | null {
     if (columns.debit && columns.credit) {
       const debit = this.parseSapB1AmountValue(
-        this.readSapB1PreviewRowRawValue(row, columns.debit)
-      )
+        this.readSapB1PreviewRowRawValue(row, columns.debit),
+      );
       const credit = this.parseSapB1AmountValue(
-        this.readSapB1PreviewRowRawValue(row, columns.credit)
-      )
-      if (debit === null && credit === null) return null
-      const debitValue = Math.abs(debit ?? 0)
-      const creditValue = Math.abs(credit ?? 0)
-      return side === "bank" ? creditValue - debitValue : debitValue - creditValue
+        this.readSapB1PreviewRowRawValue(row, columns.credit),
+      );
+      if (debit === null && credit === null) return null;
+      const debitValue = Math.abs(debit ?? 0);
+      const creditValue = Math.abs(credit ?? 0);
+      return side === "bank"
+        ? creditValue - debitValue
+        : debitValue - creditValue;
     }
 
     // Columna unica (importe con signo, o solo debito, o solo credito): se toma
     // tal cual, sin invertir por lado (no asumimos convencion de signo).
-    const singleColumn = columns.amount ?? columns.debit ?? columns.credit
+    const singleColumn = columns.amount ?? columns.debit ?? columns.credit;
     if (singleColumn) {
-      return this.parseSapB1AmountValue(this.readSapB1PreviewRowRawValue(row, singleColumn))
+      return this.parseSapB1AmountValue(
+        this.readSapB1PreviewRowRawValue(row, singleColumn),
+      );
     }
 
-    return null
+    return null;
   }
 
   private readSapB1PreviewRowValue(
     row: ConciliationPreviewRow,
-    fieldKey: string | undefined
+    fieldKey: string | undefined,
   ): SapB1ComparableValue {
-    if (!fieldKey) return null
-    return row.normalized[fieldKey] ?? row.values[fieldKey] ?? null
+    if (!fieldKey) return null;
+    return row.normalized[fieldKey] ?? row.values[fieldKey] ?? null;
   }
 
   private readSapB1PreviewRowRawValue(
     row: ConciliationPreviewRow,
-    fieldKey: string | undefined
+    fieldKey: string | undefined,
   ): SapB1ComparableValue {
-    if (!fieldKey) return null
-    return row.values[fieldKey] ?? row.normalized[fieldKey] ?? null
+    if (!fieldKey) return null;
+    return row.values[fieldKey] ?? row.normalized[fieldKey] ?? null;
   }
 
-  private normalizeSapB1ComparableText(value: SapB1ComparableValue): string | null {
-    if (value == null) return null
+  private normalizeSapB1ComparableText(
+    value: SapB1ComparableValue,
+  ): string | null {
+    if (value == null) return null;
 
     const text = String(value)
       .normalize("NFD")
       .replace(/[\u0300-\u036f]/g, "")
       .toLowerCase()
-      .trim()
+      .trim();
 
-    return text || null
+    return text || null;
   }
 
   private sapB1ExactMatch(
     left: SapB1ComparableValue,
-    right: SapB1ComparableValue
+    right: SapB1ComparableValue,
   ): boolean {
-    const normalizedLeft = this.normalizeSapB1ComparableText(left)
-    const normalizedRight = this.normalizeSapB1ComparableText(right)
-    if (!normalizedLeft || !normalizedRight) return false
-    return normalizedLeft === normalizedRight
+    const normalizedLeft = this.normalizeSapB1ComparableText(left);
+    const normalizedRight = this.normalizeSapB1ComparableText(right);
+    if (!normalizedLeft || !normalizedRight) return false;
+    return normalizedLeft === normalizedRight;
   }
 
   // Match de la columna de referencia. "exact" = igualdad normalizada (default,
@@ -1600,241 +2252,270 @@ export class SapErpService {
   private sapB1ReferenceMatch(
     left: SapB1ComparableValue,
     right: SapB1ComparableValue,
-    mode: "exact" | "like"
+    mode: "exact" | "like",
   ): boolean {
-    if (mode !== "like") return this.sapB1ExactMatch(left, right)
-    return this.sapB1ReferenceContains(left, right)
+    if (mode !== "like") return this.sapB1ExactMatch(left, right);
+    return this.sapB1ReferenceContains(left, right);
   }
 
   private sapB1ReferenceContains(
     left: SapB1ComparableValue,
     right: SapB1ComparableValue,
-    minimumLength = 1
+    minimumLength = 1,
   ): boolean {
-    const normalizedLeft = this.normalizeSapB1Reference(left)
-    const normalizedRight = this.normalizeSapB1Reference(right)
-    if (!normalizedLeft || !normalizedRight) return false
+    const normalizedLeft = this.normalizeSapB1Reference(left);
+    const normalizedRight = this.normalizeSapB1Reference(right);
+    if (!normalizedLeft || !normalizedRight) return false;
     if (
       normalizedLeft.length < minimumLength ||
       normalizedRight.length < minimumLength
     ) {
-      return false
+      return false;
     }
     return (
       normalizedLeft === normalizedRight ||
       normalizedLeft.includes(normalizedRight) ||
       normalizedRight.includes(normalizedLeft)
-    )
+    );
   }
 
   // La referencia es un identificador, no texto libre: se quitan espacios y
   // separadores para que "Voucher # 000123" y "123" puedan compararse por
   // contencion sin importar donde este el codigo dentro de la cadena.
   private normalizeSapB1Reference(value: SapB1ComparableValue): string | null {
-    const normalized = this.normalizeSapB1ComparableText(value)
-    if (!normalized) return null
-    const reference = normalized.replace(/[^a-z0-9]/g, "")
-    return reference || null
+    const normalized = this.normalizeSapB1ComparableText(value);
+    if (!normalized) return null;
+    const reference = normalized.replace(/[^a-z0-9]/g, "");
+    return reference || null;
   }
 
   private parseSapB1AmountValue(value: SapB1ComparableValue): number | null {
-    if (typeof value === "number" && Number.isFinite(value)) return value
-    if (value == null) return null
+    if (typeof value === "number" && Number.isFinite(value)) return value;
+    if (value == null) return null;
 
-    const text = String(value).trim()
-    if (!text || text === "-") return null
+    const text = String(value).trim();
+    if (!text || text === "-") return null;
 
     const cleaned = text
       .replace(/[A-Za-z$%]/g, "")
       .replace(/\s+/g, "")
-      .replace(/[^\d,.\-+]/g, "")
-    const normalized = this.normalizeSapB1NumericText(cleaned)
-    if (!normalized || !/^[-+]?\d+(\.\d+)?$/.test(normalized)) return null
+      .replace(/[^\d,.\-+]/g, "");
+    const normalized = this.normalizeSapB1NumericText(cleaned);
+    if (!normalized || !/^[-+]?\d+(\.\d+)?$/.test(normalized)) return null;
 
-    const parsed = Number(normalized)
-    return Number.isFinite(parsed) ? parsed : null
+    const parsed = Number(normalized);
+    return Number.isFinite(parsed) ? parsed : null;
   }
 
   private normalizeSapB1NumericText(value: string): string | null {
-    if (!value) return null
+    if (!value) return null;
 
-    const sign = value.startsWith("-") ? "-" : value.startsWith("+") ? "+" : ""
-    const unsigned = value.replace(/^[-+]/, "")
-    const lastDot = unsigned.lastIndexOf(".")
-    const lastComma = unsigned.lastIndexOf(",")
+    const sign = value.startsWith("-") ? "-" : value.startsWith("+") ? "+" : "";
+    const unsigned = value.replace(/^[-+]/, "");
+    const lastDot = unsigned.lastIndexOf(".");
+    const lastComma = unsigned.lastIndexOf(",");
 
     if (lastDot >= 0 && lastComma >= 0) {
-      const decimalSeparator = lastDot > lastComma ? "." : ","
-      const thousandsSeparator = decimalSeparator === "." ? "," : "."
+      const decimalSeparator = lastDot > lastComma ? "." : ",";
+      const thousandsSeparator = decimalSeparator === "." ? "," : ".";
       return `${sign}${unsigned
         .replace(new RegExp(`\\${thousandsSeparator}`, "g"), "")
-        .replace(decimalSeparator, ".")}`
+        .replace(decimalSeparator, ".")}`;
     }
 
     if (lastComma >= 0) {
-      const groups = unsigned.split(",")
+      const groups = unsigned.split(",");
       const isThousandsOnly =
-        groups.length > 1 && groups.slice(1).every((group) => group.length === 3)
-      return `${sign}${isThousandsOnly ? groups.join("") : unsigned.replace(",", ".")}`
+        groups.length > 1 &&
+        groups.slice(1).every((group) => group.length === 3);
+      return `${sign}${isThousandsOnly ? groups.join("") : unsigned.replace(",", ".")}`;
     }
 
     if (lastDot >= 0) {
-      const groups = unsigned.split(".")
+      const groups = unsigned.split(".");
       const isThousandsOnly =
-        groups.length > 1 && groups.slice(1).every((group) => group.length === 3)
-      return `${sign}${isThousandsOnly ? groups.join("") : unsigned}`
+        groups.length > 1 &&
+        groups.slice(1).every((group) => group.length === 3);
+      return `${sign}${isThousandsOnly ? groups.join("") : unsigned}`;
     }
 
-    return `${sign}${unsigned}`
+    return `${sign}${unsigned}`;
   }
 
   private sapB1DateMatchWithinDays(
     left: SapB1ComparableValue,
     right: SapB1ComparableValue,
-    toleranceDays: number
+    toleranceDays: number,
   ): SapB1DateMatchResult {
-    const leftDay = this.parseSapB1DateDayNumber(left)
-    const rightDay = this.parseSapB1DateDayNumber(right)
+    const leftDay = this.parseSapB1DateDayNumber(left);
+    const rightDay = this.parseSapB1DateDayNumber(right);
     if (leftDay === null || rightDay === null) {
       return {
         matched: this.sapB1ExactMatch(left, right),
-        differenceDays: null
-      }
+        differenceDays: null,
+      };
     }
 
-    const differenceDays = Math.abs(leftDay - rightDay)
+    const differenceDays = Math.abs(leftDay - rightDay);
     return {
       matched: differenceDays <= toleranceDays,
-      differenceDays
-    }
+      differenceDays,
+    };
   }
 
   private parseSapB1DateDayNumber(value: SapB1ComparableValue): number | null {
-    if (value == null) return null
+    if (value == null) return null;
 
-    const raw = String(value).trim()
-    if (!raw) return null
+    const raw = String(value).trim();
+    if (!raw) return null;
 
-    const isoMatch = raw.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/)
+    const isoMatch = raw.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
     if (isoMatch) {
       return this.buildSapB1UtcDayNumber(
         Number(isoMatch[1]),
         Number(isoMatch[2]),
-        Number(isoMatch[3])
-      )
+        Number(isoMatch[3]),
+      );
     }
 
-    const slashMatch = raw.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2}|\d{4})$/)
+    const slashMatch = raw.match(
+      /^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2}|\d{4})$/,
+    );
     if (slashMatch) {
-      let year = Number(slashMatch[3])
-      if (year < 100) year += year >= 70 ? 1900 : 2000
-      return this.buildSapB1UtcDayNumber(year, Number(slashMatch[2]), Number(slashMatch[1]))
+      let year = Number(slashMatch[3]);
+      if (year < 100) year += year >= 70 ? 1900 : 2000;
+      return this.buildSapB1UtcDayNumber(
+        year,
+        Number(slashMatch[2]),
+        Number(slashMatch[1]),
+      );
     }
 
-    const parsed = Date.parse(raw)
-    return Number.isNaN(parsed) ? null : Math.floor(parsed / 86400000)
+    const parsed = Date.parse(raw);
+    return Number.isNaN(parsed) ? null : Math.floor(parsed / 86400000);
   }
 
   private buildSapB1UtcDayNumber(
     year: number,
     month: number,
-    day: number
+    day: number,
   ): number | null {
-    if (!Number.isInteger(year) || !Number.isInteger(month) || !Number.isInteger(day)) {
-      return null
+    if (
+      !Number.isInteger(year) ||
+      !Number.isInteger(month) ||
+      !Number.isInteger(day)
+    ) {
+      return null;
     }
 
-    const date = new Date(Date.UTC(year, month - 1, day))
+    const date = new Date(Date.UTC(year, month - 1, day));
     if (
       date.getUTCFullYear() !== year ||
       date.getUTCMonth() !== month - 1 ||
       date.getUTCDate() !== day
     ) {
-      return null
+      return null;
     }
 
-    return Math.floor(date.getTime() / 86400000)
+    return Math.floor(date.getTime() / 86400000);
   }
 
   private async requireConfigForActor(
     actor: AuthUser,
-    companyErpConfigId: number
+    companyErpConfigId: number,
   ): Promise<CompanyErpConfig> {
     const config = await this.companyErpConfigRepository.findOne({
       where: { id: companyErpConfigId },
-      relations: { company: true }
-    })
+      relations: { company: true },
+    });
 
     if (!config) {
-      throw new NotFoundException("Configuracion ERP no encontrada.")
+      throw new NotFoundException("Configuracion ERP no encontrada.");
     }
 
-    if (!isSuperAdminRole(actor.roleCode) && config.company.id !== actor.companyId) {
-      throw new ForbiddenException("No podes usar configuraciones ERP de otra empresa.")
+    if (
+      !isSuperAdminRole(actor.roleCode) &&
+      config.company.id !== actor.companyId
+    ) {
+      throw new ForbiddenException(
+        "No podes usar configuraciones ERP de otra empresa.",
+      );
     }
 
-    return config
+    return config;
   }
 
   private ensureActiveConfig(config: CompanyErpConfig) {
     if (!config.active) {
-      throw new BadRequestException("La configuracion ERP seleccionada esta inactiva.")
+      throw new BadRequestException(
+        "La configuracion ERP seleccionada esta inactiva.",
+      );
     }
   }
 
   private async requireCompanyBankAccountForConfig(
     actor: AuthUser,
     config: CompanyErpConfig,
-    companyBankAccountId: number
+    companyBankAccountId: number,
   ): Promise<CompanyBankAccount> {
     const account = await this.companyBankAccountRepository.findOne({
       where: { id: companyBankAccountId },
-      relations: { company: true, bank: true }
-    })
+      relations: { company: true, bank: true },
+    });
 
     if (!account) {
-      throw new NotFoundException("Cuenta bancaria no encontrada.")
+      throw new NotFoundException("Cuenta bancaria no encontrada.");
     }
 
-    if (!isSuperAdminRole(actor.roleCode) && account.company.id !== actor.companyId) {
-      throw new ForbiddenException("No podes consultar cuentas bancarias de otra empresa.")
+    if (
+      !isSuperAdminRole(actor.roleCode) &&
+      account.company.id !== actor.companyId
+    ) {
+      throw new ForbiddenException(
+        "No podes consultar cuentas bancarias de otra empresa.",
+      );
     }
 
     if (account.company.id !== config.company.id) {
       throw new BadRequestException(
-        "La cuenta bancaria no pertenece a la empresa de la configuracion ERP."
-      )
+        "La cuenta bancaria no pertenece a la empresa de la configuracion ERP.",
+      );
     }
 
-    return account
+    return account;
   }
 
   private async connectSapHana(
     config: CompanyErpConfig,
-    companyDb: string
+    companyDb: string,
   ): Promise<HanaConnection> {
-    const serverNode = this.normalizeRequired(config.serverNode, "Server Node")
-    const dbUser = this.normalizeRequired(config.dbUser, "DB user")
+    const serverNode = this.normalizeRequired(config.serverNode, "Server Node");
+    const dbUser = this.normalizeRequired(config.dbUser, "DB user");
 
     if (!config.dbPasswordEncrypted) {
-      throw new BadRequestException("DB password es obligatorio para ejecutar consultas SAP_B1.")
+      throw new BadRequestException(
+        "DB password es obligatorio para ejecutar consultas SAP_B1.",
+      );
     }
 
-    const password = decryptText(config.dbPasswordEncrypted, this.credentialSecret)
-    const hana = this.requireSapHanaClient()
-    const connection = hana.createConnection()
+    const password = decryptText(
+      config.dbPasswordEncrypted,
+      this.credentialSecret,
+    );
+    const hana = this.requireSapHanaClient();
+    const connection = hana.createConnection();
     const connectionParams = {
       serverNode,
       uid: dbUser,
-      pwd: password
-    }
+      pwd: password,
+    };
 
     console.log("[SAP_HANA] Conexion preparada", {
       serverNode,
       uid: dbUser,
       schema: companyDb,
-      hasPassword: Boolean(password)
-    })
+      hasPassword: Boolean(password),
+    });
 
     await new Promise<void>((resolve, reject) => {
       connection.connect(connectionParams, (error) => {
@@ -1843,30 +2524,37 @@ export class SapErpService {
             serverNode,
             uid: dbUser,
             schema: companyDb,
-            error: error.message
-          })
-          reject(error)
-          return
+            error: error.message,
+          });
+          reject(error);
+          return;
         }
 
-        console.log("[SAP_HANA] Conectado", { serverNode, uid: dbUser, schema: companyDb })
-        resolve()
-      })
-    })
+        console.log("[SAP_HANA] Conectado", {
+          serverNode,
+          uid: dbUser,
+          schema: companyDb,
+        });
+        resolve();
+      });
+    });
 
-    await this.executeSapHanaCommand(connection, `SET SCHEMA "${companyDb.replace(/"/g, '""')}"`)
-    console.log("[SAP_HANA] Schema activo", { schema: companyDb })
+    await this.executeSapHanaCommand(
+      connection,
+      `SET SCHEMA "${companyDb.replace(/"/g, '""')}"`,
+    );
+    console.log("[SAP_HANA] Schema activo", { schema: companyDb });
 
-    return connection
+    return connection;
   }
 
   private requireSapHanaClient(): HanaClientModule {
     try {
-      return require("@sap/hana-client") as HanaClientModule
+      return require("@sap/hana-client") as HanaClientModule;
     } catch {
       throw new BadRequestException(
-        "No esta instalado @sap/hana-client. Ejecuta npm install @sap/hana-client en QonciliaBack."
-      )
+        "No esta instalado @sap/hana-client. Ejecuta npm install @sap/hana-client en QonciliaBack.",
+      );
     }
   }
 
@@ -1874,74 +2562,85 @@ export class SapErpService {
     await new Promise<void>((resolve, reject) => {
       connection.disconnect((error) => {
         if (error) {
-          reject(error)
-          return
+          reject(error);
+          return;
         }
 
-        resolve()
-      })
-    })
+        resolve();
+      });
+    });
   }
 
   private prepareSapB1PreviewQuery(
     rawQuery: string | null,
     companyDb: string,
     field: string,
-    values: { accountCode: string; dateFrom: string; dateTo: string }
+    values: { accountCode: string; dateFrom: string; dateTo: string },
   ): PreparedSapB1Query {
-    const normalized = this.normalizeRequired(rawQuery, field)
-    const withoutTrailingSemicolon = normalized.replace(/;\s*$/, "")
+    const normalized = this.normalizeRequired(rawQuery, field);
+    const withoutTrailingSemicolon = normalized.replace(/;\s*$/, "");
 
     if (withoutTrailingSemicolon.includes(";")) {
-      throw new BadRequestException(`${field} no puede contener multiples sentencias.`)
+      throw new BadRequestException(
+        `${field} no puede contener multiples sentencias.`,
+      );
     }
 
     if (!/^select\b/i.test(withoutTrailingSemicolon)) {
-      throw new BadRequestException(`${field} debe ser una consulta SELECT.`)
+      throw new BadRequestException(`${field} debe ser una consulta SELECT.`);
     }
 
     const forbidden =
-      /\b(insert|update|delete|drop|alter|truncate|create|grant|revoke|call|do|execute)\b/i
+      /\b(insert|update|delete|drop|alter|truncate|create|grant|revoke|call|do|execute)\b/i;
     if (forbidden.test(withoutTrailingSemicolon)) {
-      throw new BadRequestException(`${field} contiene una operacion no permitida.`)
+      throw new BadRequestException(
+        `${field} contiene una operacion no permitida.`,
+      );
     }
 
     const sqlWithSchema = withoutTrailingSemicolon.replace(
       /\$\{CompanyDB\}/g,
-      companyDb.replace(/"/g, '""')
-    )
-    const params: unknown[] = []
-    const sql = sqlWithSchema.replace(/\$(1|2|3)\b/g, (_match, index: string) => {
-      const valueByIndex: Record<string, unknown> = {
-        "1": values.accountCode,
-        "2": values.dateFrom,
-        "3": values.dateTo
-      }
-      params.push(valueByIndex[index])
-      return "?"
-    })
+      companyDb.replace(/"/g, '""'),
+    );
+    const params: unknown[] = [];
+    const sql = sqlWithSchema.replace(
+      /\$(1|2|3)\b/g,
+      (_match, index: string) => {
+        const valueByIndex: Record<string, unknown> = {
+          "1": values.accountCode,
+          "2": values.dateFrom,
+          "3": values.dateTo,
+        };
+        params.push(valueByIndex[index]);
+        return "?";
+      },
+    );
 
     console.log("[SAP_HANA] Query armado", {
       field,
       sql,
-      params
-    })
+      params,
+    });
 
-    return { sql, params }
+    return { sql, params };
   }
 
   private async executeSapB1PreviewQuery(
     connection: HanaConnection,
     query: PreparedSapB1Query,
-    label: string
+    label: string,
   ): Promise<PublicSapB1QueryTable> {
     console.log("[SAP_HANA] Ejecutando query", {
       label,
       sql: query.sql,
-      params: query.params
-    })
-    const rows = await this.executeSapHanaQuery(connection, query.sql, query.params)
-    const columns = this.resolveQueryColumns(rows)
+      params: query.params,
+    });
+    const rows = await this.executeSapHanaQuery(
+      connection,
+      query.sql,
+      query.params,
+    );
+    const columns = this.resolveQueryColumns(rows);
 
     // Diagnostico: conserva los valores crudos devueltos por HANA, antes de
     // normalizarlos para la respuesta que consume el frontend.
@@ -1949,67 +2648,72 @@ export class SapErpService {
       label,
       rowCount: rows.length,
       columns,
-      rows
-    })
+      rows,
+    });
 
     return {
       columns,
-      rows: rows.map((row) => this.toPublicQueryRow(row))
-    }
+      rows: rows.map((row) => this.toPublicQueryRow(row)),
+    };
   }
 
-  private async executeSapHanaCommand(connection: HanaConnection, sql: string): Promise<void> {
+  private async executeSapHanaCommand(
+    connection: HanaConnection,
+    sql: string,
+  ): Promise<void> {
     await new Promise<void>((resolve, reject) => {
       connection.exec(sql, (error) => {
         if (error) {
-          reject(error)
-          return
+          reject(error);
+          return;
         }
 
-        resolve()
-      })
-    })
+        resolve();
+      });
+    });
   }
 
   private async executeSapHanaQuery(
     connection: HanaConnection,
     sql: string,
-    params: unknown[]
+    params: unknown[],
   ): Promise<Record<string, unknown>[]> {
     return new Promise<Record<string, unknown>[]>((resolve, reject) => {
       connection.exec(sql, params, (error, rows) => {
         if (error) {
-          reject(error)
-          return
+          reject(error);
+          return;
         }
 
-        resolve(rows ?? [])
-      })
-    })
+        resolve(rows ?? []);
+      });
+    });
   }
 
   private resolveQueryColumns(rows: Record<string, unknown>[]): string[] {
-    const columns = new Set<string>()
+    const columns = new Set<string>();
     rows.forEach((row) => {
-      Object.keys(row).forEach((key) => columns.add(key))
-    })
-    return [...columns]
+      Object.keys(row).forEach((key) => columns.add(key));
+    });
+    return [...columns];
   }
 
-  private toPublicQueryRow(row: Record<string, unknown>): Record<string, unknown> {
+  private toPublicQueryRow(
+    row: Record<string, unknown>,
+  ): Record<string, unknown> {
     return Object.fromEntries(
       Object.entries(row).map(([key, value]) => {
         if (value instanceof Date) {
-          return [key, value.toISOString()]
+          return [key, value.toISOString()];
         }
 
         if (typeof value === "bigint") {
-          return [key, value.toString()]
+          return [key, value.toString()];
         }
 
-        return [key, value]
-      })
-    )
+        return [key, value];
+      }),
+    );
   }
 
   private ensureCanRunExternalReconciliation(actor: AuthUser) {
@@ -2018,152 +2722,184 @@ export class SapErpService {
       actor.roleCode === Role.ADMIN ||
       actor.roleCode === Role.GESTOR_COBRANZA
     ) {
-      return
+      return;
     }
 
     throw new ForbiddenException(
-      "Solo usuarios admin, superadmin o gestor de cobranzas pueden enviar conciliaciones externas al ERP."
-    )
+      "Solo usuarios admin, superadmin o gestor de cobranzas pueden enviar conciliaciones externas al ERP.",
+    );
   }
 
   private async requireActiveSapSession(
     actor: AuthUser,
-    config: CompanyErpConfig
+    config: CompanyErpConfig,
   ): Promise<UserErpSession> {
     const session = await this.userErpSessionRepository.findOne({
       where: {
         user: { id: actor.id },
-        companyErpConfig: { id: config.id }
+        companyErpConfig: { id: config.id },
       },
       relations: {
-        companyErpConfig: true
-      }
-    })
-    const now = new Date()
+        companyErpConfig: true,
+      },
+    });
+    const now = new Date();
 
     if (!session || session.invalidatedAt) {
-      throw new BadRequestException("Debes iniciar sesion en SAP antes de conciliar en el ERP.")
+      throw new BadRequestException(
+        "Debes iniciar sesion en SAP antes de conciliar en el ERP.",
+      );
     }
 
     if (session.expiresAt && session.expiresAt.getTime() <= now.getTime()) {
-      session.invalidatedAt = now
-      await this.userErpSessionRepository.save(session)
-      throw new BadRequestException("La sesion de SAP expiro. Volve a iniciar sesion.")
+      session.invalidatedAt = now;
+      await this.userErpSessionRepository.save(session);
+      throw new BadRequestException(
+        "La sesion de SAP expiro. Volve a iniciar sesion.",
+      );
     }
 
-    session.companyErpConfig = config
-    return session
+    session.companyErpConfig = config;
+    return session;
   }
 
-  private ensureActorCanAccessReconciliation(actor: AuthUser, reconciliation: Reconciliation) {
+  private ensureActorCanAccessReconciliation(
+    actor: AuthUser,
+    reconciliation: Reconciliation,
+  ) {
     if (isSuperAdminRole(actor.roleCode)) {
-      return
+      return;
     }
 
-    if (actor.roleCode === Role.ADMIN && reconciliation.user.company.id === actor.companyId) {
-      return
+    if (
+      actor.roleCode === Role.ADMIN &&
+      reconciliation.user.company.id === actor.companyId
+    ) {
+      return;
     }
 
     if (
       actor.roleCode === Role.GESTOR_COBRANZA &&
       reconciliation.user.company.id === actor.companyId
     ) {
-      return
+      return;
     }
 
-    throw new ForbiddenException("No tenes permisos para enviar esta conciliacion al ERP.")
+    throw new ForbiddenException(
+      "No tenes permisos para enviar esta conciliacion al ERP.",
+    );
   }
 
   private async resolveSapExternalReconciliationPayload(
     actor: AuthUser,
     config: CompanyErpConfig,
     payload: SendSapExternalReconciliationDto,
-    reconciliation: Reconciliation | null
+    reconciliation: Reconciliation | null,
   ): Promise<SapExternalReconciliationPayload> {
     if (payload.payload) {
-      return this.normalizeRawSapExternalReconciliationPayload(payload.payload, config)
+      return this.normalizeRawSapExternalReconciliationPayload(
+        payload.payload,
+        config,
+      );
     }
 
-    return this.buildSapExternalReconciliationPayload(actor, config, payload, reconciliation)
+    return this.buildSapExternalReconciliationPayload(
+      actor,
+      config,
+      payload,
+      reconciliation,
+    );
   }
 
   private normalizeRawSapExternalReconciliationPayload(
     payload: Record<string, unknown>,
-    config: CompanyErpConfig
+    config: CompanyErpConfig,
   ): SapExternalReconciliationPayload {
-    const wrappedExternal = this.asRecord(payload.ExternalReconciliation)
-    const external = wrappedExternal ?? payload
-    const bankLines = external.ReconciliationBankStatementLines
-    const journalLines = external.ReconciliationJournalEntryLines
+    const wrappedExternal = this.asRecord(payload.ExternalReconciliation);
+    const external = wrappedExternal ?? payload;
+    const bankLines = external.ReconciliationBankStatementLines;
+    const journalLines = external.ReconciliationJournalEntryLines;
 
     if (!Array.isArray(bankLines) || bankLines.length === 0) {
       throw new BadRequestException(
-        "La conciliacion externa SAP debe tener ReconciliationBankStatementLines."
-      )
+        "La conciliacion externa SAP debe tener ReconciliationBankStatementLines.",
+      );
     }
 
     if (!Array.isArray(journalLines) || journalLines.length === 0) {
       throw new BadRequestException(
-        "La conciliacion externa SAP debe tener ReconciliationJournalEntryLines."
-      )
+        "La conciliacion externa SAP debe tener ReconciliationJournalEntryLines.",
+      );
     }
 
     const normalizedExternal = {
       ...external,
       ReconciliationAccountType: this.resolveExternalReconciliationAccountType(
         external.ReconciliationAccountType,
-        config
+        config,
       ),
       ReconciliationBankStatementLines: bankLines.map((line, index) =>
-        this.normalizeRawBankStatementLine(line, index)
+        this.normalizeRawBankStatementLine(line, index),
       ),
       ReconciliationJournalEntryLines: journalLines.map((line, index) =>
-        this.normalizeRawJournalEntryLine(line, index)
-      )
-    }
+        this.normalizeRawJournalEntryLine(line, index),
+      ),
+    };
 
     return {
-      ExternalReconciliation: normalizedExternal
-    } as SapExternalReconciliationPayload
+      ExternalReconciliation: normalizedExternal,
+    } as SapExternalReconciliationPayload;
   }
 
   private buildSapTarjetasDepositPayload(
     payload: SendSapTarjetasDepositDto,
-    options?: SapTarjetasDepositOptions
+    options?: SapTarjetasDepositOptions,
   ): SapTarjetasDepositPayload {
-    const depositAccount = this.normalizeRequired(payload.depositAccount, "DepositAccount")
-    const voucherAccount = this.normalizeOptional(payload.voucherAccount) ?? depositAccount
+    const depositAccount = this.normalizeRequired(
+      payload.depositAccount,
+      "DepositAccount",
+    );
+    const voucherAccount =
+      this.normalizeOptional(payload.voucherAccount) ?? depositAccount;
     // Fecha del deposito (obligatoria): llega YYYY-MM-DD (o ISO) del front y el
     // Service Layer la recibe como medianoche UTC.
-    const depositDateRaw = this.normalizeRequired(payload.depositDate, "DepositDate")
-    const depositDateMatch = /^(\d{4}-\d{2}-\d{2})/.exec(depositDateRaw)
+    const depositDateRaw = this.normalizeRequired(
+      payload.depositDate,
+      "DepositDate",
+    );
+    const depositDateMatch = /^(\d{4}-\d{2}-\d{2})/.exec(depositDateRaw);
     if (!depositDateMatch) {
-      throw new BadRequestException("DepositDate invalida: usa el formato YYYY-MM-DD.")
+      throw new BadRequestException(
+        "DepositDate invalida: usa el formato YYYY-MM-DD.",
+      );
     }
-    const depositDate = `${depositDateMatch[1]}T00:00:00Z`
+    const depositDate = `${depositDateMatch[1]}T00:00:00Z`;
     // Comentario del asiento: el usuario puede editarlo/ampliarlo; si viene vacio
     // se aplica el default del flujo BANCARD.
     const journalRemarks =
-      this.normalizeOptional(payload.journalRemarks) ?? SAP_TARJETAS_DEFAULT_JOURNAL_REMARKS
-    const bankReference = this.normalizeOptional(options?.bankReference)
-    const reconcileAfterDeposit = options?.reconcileAfterDeposit ?? "tYES"
+      this.normalizeOptional(payload.journalRemarks) ??
+      SAP_TARJETAS_DEFAULT_JOURNAL_REMARKS;
+    const bankReference = this.normalizeOptional(options?.bankReference);
+    const reconcileAfterDeposit = options?.reconcileAfterDeposit ?? "tYES";
     // Cabeceras con datos de la cuenta bancaria: BankAccountNum = "Cuenta Pago
     // ERP", Bank = descripcion del banco, BankBranch = sucursal de la cuenta.
-    const bankAccountNum = this.normalizeOptional(payload.bankAccountNum)
-    const bank = this.normalizeOptional(payload.bank)
-    const bankBranch = this.normalizeOptional(payload.bankBranch)
-    const seenAbsIds = new Set<number>()
+    const bankAccountNum = this.normalizeOptional(payload.bankAccountNum);
+    const bank = this.normalizeOptional(payload.bank);
+    const bankBranch = this.normalizeOptional(payload.bankBranch);
+    const seenAbsIds = new Set<number>();
     const creditLines = payload.creditLines
       .map((line) => this.toPositiveInteger(line.absId))
       .filter((absId): absId is number => {
-        if (!absId || seenAbsIds.has(absId)) return false
-        seenAbsIds.add(absId)
-        return true
+        if (!absId || seenAbsIds.has(absId)) return false;
+        seenAbsIds.add(absId);
+        return true;
       })
-      .map((absId) => ({ AbsId: absId }))
+      .map((absId) => ({ AbsId: absId }));
 
     if (creditLines.length === 0) {
-      throw new BadRequestException("Debes enviar al menos un AbsId valido para depositar.")
+      throw new BadRequestException(
+        "Debes enviar al menos un AbsId valido para depositar.",
+      );
     }
 
     return {
@@ -2186,10 +2922,10 @@ export class SapErpService {
             Commission: options.commission.amount,
             CommissionDate: depositDate,
             TaxCode: "",
-            DepositAccountType: "datBankAccount" as const
+            DepositAccountType: "datBankAccount" as const,
           }
-        : {})
-    }
+        : {}),
+    };
   }
 
   // OCRH.CreditAcct es la cuenta contable en la que nacieron los vouchers de
@@ -2197,76 +2933,83 @@ export class SapErpService {
   // bancaria destino: SAP necesita reconciliar contra este origen.
   private async addSapTarjetasVoucherAccounts(
     connection: HanaConnection,
-    system: PublicSapB1QueryTable
+    system: PublicSapB1QueryTable,
   ): Promise<PublicSapB1QueryTable> {
-    const absIds = [...new Set(
-      system.rows
-        .map((row) => this.toPositiveInteger(row.AbsId))
-        .filter((absId): absId is number => Boolean(absId))
-    )]
-    if (absIds.length === 0) return system
+    const absIds = [
+      ...new Set(
+        system.rows
+          .map((row) => this.toPositiveInteger(row.AbsId))
+          .filter((absId): absId is number => Boolean(absId)),
+      ),
+    ];
+    if (absIds.length === 0) return system;
 
-    const placeholders = absIds.map(() => "?").join(", ")
+    const placeholders = absIds.map(() => "?").join(", ");
     const rows = await this.executeSapHanaQuery(
       connection,
       `SELECT "AbsId", "CreditAcct" FROM "OCRH" WHERE "AbsId" IN (${placeholders})`,
-      absIds
-    )
-    const accountsByAbsId = new Map<number, string>()
+      absIds,
+    );
+    const accountsByAbsId = new Map<number, string>();
     for (const row of rows) {
-      const absId = this.toPositiveInteger(row.AbsId)
-      const account = this.normalizeOptional(row.CreditAcct)
-      if (absId && account) accountsByAbsId.set(absId, account)
+      const absId = this.toPositiveInteger(row.AbsId);
+      const account = this.normalizeOptional(row.CreditAcct);
+      if (absId && account) accountsByAbsId.set(absId, account);
     }
 
-    const voucherAccountColumn = "Cuenta vouchers SAP"
+    const voucherAccountColumn = "Cuenta vouchers SAP";
     const columns = system.columns.includes(voucherAccountColumn)
       ? system.columns
-      : [...system.columns, voucherAccountColumn]
+      : [...system.columns, voucherAccountColumn];
     const enrichedRows = system.rows.map((row) => {
-      const absId = this.toPositiveInteger(row.AbsId)
+      const absId = this.toPositiveInteger(row.AbsId);
       return {
         ...row,
-        [voucherAccountColumn]: absId ? accountsByAbsId.get(absId) ?? null : null
-      }
-    })
+        [voucherAccountColumn]: absId
+          ? (accountsByAbsId.get(absId) ?? null)
+          : null,
+      };
+    });
 
     this.logger.log(
       this.stringifyLogPayload({
         event: "sap_tarjetas_credit_voucher_accounts_loaded",
         requestedAbsIds: absIds.length,
-        resolvedVoucherAccounts: accountsByAbsId.size
-      })
-    )
+        resolvedVoucherAccounts: accountsByAbsId.size,
+      }),
+    );
 
-    return { columns, rows: enrichedRows }
+    return { columns, rows: enrichedRows };
   }
 
   private async buildSapExternalReconciliationPayload(
     actor: AuthUser,
     config: CompanyErpConfig,
     payload: SendSapExternalReconciliationDto,
-    reconciliation: Reconciliation | null
+    reconciliation: Reconciliation | null,
   ): Promise<SapExternalReconciliationPayload> {
     const statement = payload.bankStatementId
       ? await this.requireBankStatementForExternalReconciliation(
           actor,
           config,
-          payload.bankStatementId
+          payload.bankStatementId,
         )
-      : null
-    const account = statement?.companyBankAccount ?? reconciliation?.companyBankAccount ?? null
+      : null;
+    const account =
+      statement?.companyBankAccount ??
+      reconciliation?.companyBankAccount ??
+      null;
 
     if (!account && !payload.accountCode) {
       throw new BadRequestException(
-        "Para conciliar en SAP debes enviar accountCode, bankStatementId o reconciliationId."
-      )
+        "Para conciliar en SAP debes enviar accountCode, bankStatementId o reconciliationId.",
+      );
     }
 
     if (account && config.company.id !== account.company.id) {
       throw new BadRequestException(
-        "La configuracion ERP no pertenece a la empresa de la cuenta bancaria."
-      )
+        "La configuracion ERP no pertenece a la empresa de la cuenta bancaria.",
+      );
     }
 
     const fallbackAccountCode =
@@ -2275,42 +3018,47 @@ export class SapErpService {
         "sapBankStatementAccountCode",
         "bankStatementAccountCode",
         "sapExternalReconciliationAccountCode",
-        "externalReconciliationAccountCode"
+        "externalReconciliationAccountCode",
       ]) ??
       this.normalizeOptional(account?.majorAccountNumber) ??
       this.normalizeOptional(account?.bankErpId) ??
-      this.normalizeOptional(account?.accountNumber)
+      this.normalizeOptional(account?.accountNumber);
     const allowRowNumberAsSequence = this.getSettingsBoolean(config, [
       "sapExternalReconciliationUseRowNumberAsSequence",
-      "useRowNumberAsSequence"
-    ])
+      "useRowNumberAsSequence",
+    ]);
     const bankStatementLines = this.buildBankStatementLines(
       payload.bankStatementLines,
       payload.matches,
       statement,
       fallbackAccountCode,
-      allowRowNumberAsSequence
-    )
-    const journalEntryLines = this.buildJournalEntryLines(payload.journalEntryLines, payload.matches)
-    const resolvedAccountCode = fallbackAccountCode ?? bankStatementLines[0]?.BankStatementAccountCode
+      allowRowNumberAsSequence,
+    );
+    const journalEntryLines = this.buildJournalEntryLines(
+      payload.journalEntryLines,
+      payload.matches,
+    );
+    const resolvedAccountCode =
+      fallbackAccountCode ?? bankStatementLines[0]?.BankStatementAccountCode;
 
     if (!resolvedAccountCode) {
       throw new BadRequestException(
-        "No se pudo resolver AccountCode para la conciliacion externa SAP."
-      )
+        "No se pudo resolver AccountCode para la conciliacion externa SAP.",
+      );
     }
 
     return {
       ExternalReconciliation: {
-        ReconciliationAccountType: this.resolveExternalReconciliationAccountType(
-          payload.reconciliationAccountType,
-          config
-        ),
+        ReconciliationAccountType:
+          this.resolveExternalReconciliationAccountType(
+            payload.reconciliationAccountType,
+            config,
+          ),
         AccountCode: resolvedAccountCode,
         ReconciliationBankStatementLines: bankStatementLines,
-        ReconciliationJournalEntryLines: journalEntryLines
-      }
-    }
+        ReconciliationJournalEntryLines: journalEntryLines,
+      },
+    };
   }
 
   private buildBankStatementLines(
@@ -2318,52 +3066,60 @@ export class SapErpService {
     matches: SapExternalReconciliationMatchDto[] | undefined,
     statement: BankStatement | null,
     fallbackAccountCode: string | null,
-    allowRowNumberAsSequence: boolean
+    allowRowNumberAsSequence: boolean,
   ): SapExternalReconciliationBankStatementLinePayload[] {
     if (inputLines?.length) {
       return inputLines.map((line, index) => {
-        const sequence = this.toPositiveInteger(line.sequence ?? line.bankStatementLineSequence)
-        const accountCode = this.normalizeOptional(line.bankStatementAccountCode) ?? fallbackAccountCode
+        const sequence = this.toPositiveInteger(
+          line.sequence ?? line.bankStatementLineSequence,
+        );
+        const accountCode =
+          this.normalizeOptional(line.bankStatementAccountCode) ??
+          fallbackAccountCode;
 
         if (!sequence) {
           throw new BadRequestException(
-            `No se encontro Sequence para la linea bancaria ${index + 1}.`
-          )
+            `No se encontro Sequence para la linea bancaria ${index + 1}.`,
+          );
         }
 
         if (!accountCode) {
           throw new BadRequestException(
-            `No se encontro BankStatementAccountCode para la linea bancaria ${index + 1}.`
-          )
+            `No se encontro BankStatementAccountCode para la linea bancaria ${index + 1}.`,
+          );
         }
 
         return {
           BankStatementAccountCode: accountCode,
-          Sequence: sequence
-        }
-      })
+          Sequence: sequence,
+        };
+      });
     }
 
     if (!matches?.length) {
       throw new BadRequestException(
-        "Debes enviar bankStatementLines o matches para construir la conciliacion externa SAP."
-      )
+        "Debes enviar bankStatementLines o matches para construir la conciliacion externa SAP.",
+      );
     }
 
-    const rowsBySourceId = new Map<string, BankStatementRow>()
-    const rowsByDbId = new Map<number, BankStatementRow>()
+    const rowsBySourceId = new Map<string, BankStatementRow>();
+    const rowsByDbId = new Map<number, BankStatementRow>();
     for (const row of statement?.rows ?? []) {
-      rowsBySourceId.set(row.sourceRowId, row)
-      rowsByDbId.set(row.id, row)
+      rowsBySourceId.set(row.sourceRowId, row);
+      rowsByDbId.set(row.id, row);
     }
 
     return matches.map((match, index) => {
       const bankRow =
-        (match.bankStatementRowId ? rowsByDbId.get(match.bankStatementRowId) : null) ??
+        (match.bankStatementRowId
+          ? rowsByDbId.get(match.bankStatementRowId)
+          : null) ??
         (match.bankRowId ? rowsBySourceId.get(match.bankRowId) : null) ??
-        null
+        null;
       const sequence =
-        this.toPositiveInteger(match.sequence ?? match.bankStatementLineSequence) ??
+        this.toPositiveInteger(
+          match.sequence ?? match.bankStatementLineSequence,
+        ) ??
         this.readRowNumber(bankRow, [
           "Sequence",
           "sequence",
@@ -2373,11 +3129,11 @@ export class SapErpService {
           "secuencia",
           "lineaBanco",
           "nroLineaBanco",
-          "linea"
+          "linea",
         ]) ??
         (allowRowNumberAsSequence && bankRow?.rowNumber && bankRow.rowNumber > 0
           ? bankRow.rowNumber
-          : null)
+          : null);
       const accountCode =
         this.normalizeOptional(match.bankStatementAccountCode) ??
         this.readRowText(bankRow, [
@@ -2388,205 +3144,229 @@ export class SapErpService {
           "cuentaSap",
           "cuentaSAP",
           "codigoCuenta",
-          "codigoCuentaBanco"
+          "codigoCuentaBanco",
         ]) ??
-        fallbackAccountCode
+        fallbackAccountCode;
 
       if (!sequence) {
         throw new BadRequestException(
-          `No se encontro Sequence para el match ${index + 1}. Mapea o envia la secuencia OBNK de SAP.`
-        )
+          `No se encontro Sequence para el match ${index + 1}. Mapea o envia la secuencia OBNK de SAP.`,
+        );
       }
 
       if (!accountCode) {
         throw new BadRequestException(
-          `No se encontro BankStatementAccountCode para el match ${index + 1}. Configuralo en la cuenta bancaria o en settings del ERP.`
-        )
+          `No se encontro BankStatementAccountCode para el match ${index + 1}. Configuralo en la cuenta bancaria o en settings del ERP.`,
+        );
       }
 
       return {
         BankStatementAccountCode: accountCode,
-        Sequence: sequence
-      }
-    })
+        Sequence: sequence,
+      };
+    });
   }
 
   private buildJournalEntryLines(
     inputLines: SendSapExternalReconciliationDto["journalEntryLines"],
-    matches: SapExternalReconciliationMatchDto[] | undefined
+    matches: SapExternalReconciliationMatchDto[] | undefined,
   ): SapExternalReconciliationJournalEntryLinePayload[] {
     if (inputLines?.length) {
       return inputLines.map((line, index) => {
-        const transactionNumber = this.toPositiveInteger(line.transactionNumber)
-        const lineNumber = this.toNonNegativeInteger(line.lineNumber)
+        const transactionNumber = this.toPositiveInteger(
+          line.transactionNumber,
+        );
+        const lineNumber = this.toNonNegativeInteger(line.lineNumber);
 
         if (!transactionNumber) {
           throw new BadRequestException(
-            `No se encontro TransactionNumber para la linea contable ${index + 1}.`
-          )
+            `No se encontro TransactionNumber para la linea contable ${index + 1}.`,
+          );
         }
 
         if (lineNumber === null) {
           throw new BadRequestException(
-            `No se encontro LineNumber para la linea contable ${index + 1}.`
-          )
+            `No se encontro LineNumber para la linea contable ${index + 1}.`,
+          );
         }
 
         return {
           TransactionNumber: transactionNumber,
-          LineNumber: lineNumber
-        }
-      })
+          LineNumber: lineNumber,
+        };
+      });
     }
 
     if (!matches?.length) {
       throw new BadRequestException(
-        "Debes enviar journalEntryLines o matches con TransactionNumber y LineNumber."
-      )
+        "Debes enviar journalEntryLines o matches con TransactionNumber y LineNumber.",
+      );
     }
 
     return matches.map((match, index) => {
-      const transactionNumber = this.toPositiveInteger(match.transactionNumber)
-      const lineNumber = this.toNonNegativeInteger(match.lineNumber)
+      const transactionNumber = this.toPositiveInteger(match.transactionNumber);
+      const lineNumber = this.toNonNegativeInteger(match.lineNumber);
 
       if (!transactionNumber) {
         throw new BadRequestException(
-          `No se encontro TransactionNumber para el match ${index + 1}. Mapea ese dato desde las filas del sistema.`
-        )
+          `No se encontro TransactionNumber para el match ${index + 1}. Mapea ese dato desde las filas del sistema.`,
+        );
       }
 
       if (lineNumber === null) {
         throw new BadRequestException(
-          `No se encontro LineNumber para el match ${index + 1}. Mapea ese dato desde las filas del sistema.`
-        )
+          `No se encontro LineNumber para el match ${index + 1}. Mapea ese dato desde las filas del sistema.`,
+        );
       }
 
       return {
         TransactionNumber: transactionNumber,
-        LineNumber: lineNumber
-      }
-    })
+        LineNumber: lineNumber,
+      };
+    });
   }
 
   private normalizeRawBankStatementLine(
     value: unknown,
-    index: number
+    index: number,
   ): SapExternalReconciliationBankStatementLinePayload {
-    const line = this.asRecord(value)
+    const line = this.asRecord(value);
     if (!line) {
-      throw new BadRequestException(`La linea bancaria ${index + 1} no es valida.`)
+      throw new BadRequestException(
+        `La linea bancaria ${index + 1} no es valida.`,
+      );
     }
 
     const accountCode = this.normalizeOptional(
-      line.BankStatementAccountCode ?? line.bankStatementAccountCode ?? line.AccountCode
-    )
+      line.BankStatementAccountCode ??
+        line.bankStatementAccountCode ??
+        line.AccountCode,
+    );
     const sequence = this.toPositiveInteger(
-      line.Sequence ?? line.sequence ?? line.BankStatementLineSequence ?? line.bankStatementLineSequence
-    )
+      line.Sequence ??
+        line.sequence ??
+        line.BankStatementLineSequence ??
+        line.bankStatementLineSequence,
+    );
 
     if (!accountCode) {
       throw new BadRequestException(
-        `No se encontro BankStatementAccountCode para la linea bancaria ${index + 1}.`
-      )
+        `No se encontro BankStatementAccountCode para la linea bancaria ${index + 1}.`,
+      );
     }
 
     if (!sequence) {
       throw new BadRequestException(
-        `No se encontro Sequence para la linea bancaria ${index + 1}.`
-      )
+        `No se encontro Sequence para la linea bancaria ${index + 1}.`,
+      );
     }
 
     return {
       ...line,
       BankStatementAccountCode: accountCode,
-      Sequence: sequence
-    }
+      Sequence: sequence,
+    };
   }
 
   private normalizeRawJournalEntryLine(
     value: unknown,
-    index: number
+    index: number,
   ): SapExternalReconciliationJournalEntryLinePayload {
-    const line = this.asRecord(value)
+    const line = this.asRecord(value);
     if (!line) {
-      throw new BadRequestException(`La linea contable ${index + 1} no es valida.`)
+      throw new BadRequestException(
+        `La linea contable ${index + 1} no es valida.`,
+      );
     }
 
     const transactionNumber = this.toPositiveInteger(
-      line.TransactionNumber ?? line.transactionNumber ?? line.TransId ?? line.transId
-    )
-    const lineNumber = this.toNonNegativeInteger(line.LineNumber ?? line.lineNumber)
+      line.TransactionNumber ??
+        line.transactionNumber ??
+        line.TransId ??
+        line.transId,
+    );
+    const lineNumber = this.toNonNegativeInteger(
+      line.LineNumber ?? line.lineNumber,
+    );
 
     if (!transactionNumber) {
       throw new BadRequestException(
-        `No se encontro TransactionNumber para la linea contable ${index + 1}.`
-      )
+        `No se encontro TransactionNumber para la linea contable ${index + 1}.`,
+      );
     }
 
     if (lineNumber === null) {
       throw new BadRequestException(
-        `No se encontro LineNumber para la linea contable ${index + 1}.`
-      )
+        `No se encontro LineNumber para la linea contable ${index + 1}.`,
+      );
     }
 
     return {
       ...line,
       TransactionNumber: transactionNumber,
-      LineNumber: lineNumber
-    }
+      LineNumber: lineNumber,
+    };
   }
 
   private async requireBankStatementForExternalReconciliation(
     actor: AuthUser,
     config: CompanyErpConfig,
-    bankStatementId: number
+    bankStatementId: number,
   ): Promise<BankStatement> {
     const statement = await this.bankStatementRepository.findOne({
       where: { id: bankStatementId },
       relations: {
         user: {
-          company: true
+          company: true,
         },
         userBank: true,
         companyBankAccount: {
           company: true,
-          bank: true
+          bank: true,
         },
-        rows: true
-      }
-    })
+        rows: true,
+      },
+    });
 
     if (!statement) {
-      throw new NotFoundException("Extracto bancario no encontrado.")
+      throw new NotFoundException("Extracto bancario no encontrado.");
     }
 
-    this.ensureActorCanAccessBankStatement(actor, statement)
+    this.ensureActorCanAccessBankStatement(actor, statement);
 
     if (config.company.id !== statement.companyBankAccount.company.id) {
       throw new BadRequestException(
-        "La configuracion ERP no pertenece a la empresa del extracto bancario."
-      )
+        "La configuracion ERP no pertenece a la empresa del extracto bancario.",
+      );
     }
 
-    return statement
+    return statement;
   }
 
-  private ensureActorCanAccessBankStatement(actor: AuthUser, statement: BankStatement) {
+  private ensureActorCanAccessBankStatement(
+    actor: AuthUser,
+    statement: BankStatement,
+  ) {
     if (isSuperAdminRole(actor.roleCode)) {
-      return
+      return;
     }
 
-    if (actor.roleCode === Role.ADMIN && statement.user.company.id === actor.companyId) {
-      return
+    if (
+      actor.roleCode === Role.ADMIN &&
+      statement.user.company.id === actor.companyId
+    ) {
+      return;
     }
 
-    throw new ForbiddenException("No tenes permisos para enviar este extracto al ERP.")
+    throw new ForbiddenException(
+      "No tenes permisos para enviar este extracto al ERP.",
+    );
   }
 
   private toPublicSapSession(
     session: UserErpSession,
     status: PublicSapSessionStatus,
-    checkedAt: Date
+    checkedAt: Date,
   ): PublicSapErpSession {
     return {
       companyErpConfigId: session.companyErpConfig.id,
@@ -2597,14 +3377,14 @@ export class SapErpService {
       username: session.username,
       expiresAt: session.expiresAt,
       lastValidatedAt: session.lastValidatedAt,
-      checkedAt
-    }
+      checkedAt,
+    };
   }
 
   private toPublicSapSessionPlaceholder(
     config: CompanyErpConfig,
     status: PublicSapSessionStatus,
-    checkedAt: Date
+    checkedAt: Date,
   ): PublicSapErpSession {
     return {
       companyErpConfigId: config.id,
@@ -2615,229 +3395,255 @@ export class SapErpService {
       username: null,
       expiresAt: null,
       lastValidatedAt: null,
-      checkedAt
-    }
+      checkedAt,
+    };
   }
 
   private resolveExternalReconciliationAccountType(
     value: unknown,
-    config: CompanyErpConfig
+    config: CompanyErpConfig,
   ): SapExternalReconciliationAccountType {
     const candidate =
       this.normalizeOptional(value) ??
       this.getSettingsString(config, [
         "sapExternalReconciliationAccountType",
-        "externalReconciliationAccountType"
+        "externalReconciliationAccountType",
       ]) ??
-      "rat_GLAccount"
+      "rat_GLAccount";
 
-    if ((sapExternalReconciliationAccountTypes as readonly string[]).includes(candidate)) {
-      return candidate as SapExternalReconciliationAccountType
+    if (
+      (sapExternalReconciliationAccountTypes as readonly string[]).includes(
+        candidate,
+      )
+    ) {
+      return candidate as SapExternalReconciliationAccountType;
     }
 
     throw new BadRequestException(
-      "ReconciliationAccountType debe ser rat_Account, rat_GLAccount o rat_BusinessPartner."
-    )
+      "ReconciliationAccountType debe ser rat_Account, rat_GLAccount o rat_BusinessPartner.",
+    );
   }
 
   private normalizeRequired(value: unknown, field: string): string {
-    const trimmed = this.normalizeOptional(value)
+    const trimmed = this.normalizeOptional(value);
     if (!trimmed) {
-      throw new BadRequestException(`${field} es obligatorio.`)
+      throw new BadRequestException(`${field} es obligatorio.`);
     }
 
-    return trimmed
+    return trimmed;
   }
 
   private normalizeOptional(value: unknown): string | null {
     if (value === undefined || value === null) {
-      return null
+      return null;
     }
 
-    const trimmed = String(value).trim()
-    return trimmed ? trimmed : null
+    const trimmed = String(value).trim();
+    return trimmed ? trimmed : null;
   }
 
   private resolveSapLoginCredentials(
     config: CompanyErpConfig,
-    payload: SapLoginDto
+    payload: SapLoginDto,
   ): { username: string; password: string } {
-    const username = this.normalizeOptional(payload.username) ?? config.userSystem
+    const username =
+      this.normalizeOptional(payload.username) ?? config.userSystem;
     const password =
       this.normalizeOptional(payload.password) ??
       (config.userPassEncrypted
         ? decryptText(config.userPassEncrypted, this.credentialSecret)
-        : null)
+        : null);
 
     if (!username) {
-      throw new BadRequestException("username es obligatorio.")
+      throw new BadRequestException("username es obligatorio.");
     }
 
     if (!password) {
-      throw new BadRequestException("password es obligatorio.")
+      throw new BadRequestException("password es obligatorio.");
     }
 
     return {
       username,
-      password
-    }
+      password,
+    };
   }
 
-  private readRowText(row: SapReadableRow | null, keys: string[]): string | null {
+  private readRowText(
+    row: SapReadableRow | null,
+    keys: string[],
+  ): string | null {
     if (!row) {
-      return null
+      return null;
     }
 
     for (const key of keys) {
-      const value = this.readRowValue(row, key)
+      const value = this.readRowValue(row, key);
       if (value !== undefined && value !== null && String(value).trim()) {
-        return String(value).trim()
+        return String(value).trim();
       }
     }
 
-    return null
+    return null;
   }
 
-  private readRowNumber(row: SapReadableRow | null, keys: string[]): number | null {
+  private readRowNumber(
+    row: SapReadableRow | null,
+    keys: string[],
+  ): number | null {
     if (!row) {
-      return null
+      return null;
     }
 
     for (const key of keys) {
-      const value = this.readRowValue(row, key)
-      const numberValue = this.toNumber(value)
+      const value = this.readRowValue(row, key);
+      const numberValue = this.toNumber(value);
 
       if (Number.isFinite(numberValue)) {
-        return Math.abs(numberValue)
+        return Math.abs(numberValue);
       }
     }
 
-    return null
+    return null;
   }
 
   private readRowValue(row: SapReadableRow, key: string): unknown {
-    const sources = [row.normalized, row.values]
-    const normalizedKey = this.normalizeLookupKey(key)
+    const sources = [row.normalized, row.values];
+    const normalizedKey = this.normalizeLookupKey(key);
 
     for (const source of sources) {
-      if (!source) continue
+      if (!source) continue;
 
-      const direct = source[key]
-      if (direct !== undefined && direct !== null) return direct
+      const direct = source[key];
+      if (direct !== undefined && direct !== null) return direct;
 
       const found = Object.entries(source).find(
-        ([entryKey]) => this.normalizeLookupKey(entryKey) === normalizedKey
-      )
-      if (found?.[1] !== undefined && found[1] !== null) return found[1]
+        ([entryKey]) => this.normalizeLookupKey(entryKey) === normalizedKey,
+      );
+      if (found?.[1] !== undefined && found[1] !== null) return found[1];
     }
 
-    if (this.normalizeLookupKey("rowNumber") === normalizedKey && row.rowNumber !== undefined) {
-      return row.rowNumber
+    if (
+      this.normalizeLookupKey("rowNumber") === normalizedKey &&
+      row.rowNumber !== undefined
+    ) {
+      return row.rowNumber;
     }
 
-    return undefined
+    return undefined;
   }
 
-  private getSettingsString(config: CompanyErpConfig, keys: string[]): string | null {
+  private getSettingsString(
+    config: CompanyErpConfig,
+    keys: string[],
+  ): string | null {
     for (const key of keys) {
-      const value = this.normalizeOptional(config.settings?.[key])
+      const value = this.normalizeOptional(config.settings?.[key]);
       if (value) {
-        return value
+        return value;
       }
     }
 
-    return null
+    return null;
   }
 
-  private getSettingsBoolean(config: CompanyErpConfig, keys: string[]): boolean {
+  private getSettingsBoolean(
+    config: CompanyErpConfig,
+    keys: string[],
+  ): boolean {
     for (const key of keys) {
-      const value = config.settings?.[key]
+      const value = config.settings?.[key];
       if (typeof value === "boolean") {
-        return value
+        return value;
       }
 
       if (typeof value === "string" && value.trim()) {
-        return ["true", "1", "yes", "y", "si"].includes(value.trim().toLowerCase())
+        return ["true", "1", "yes", "y", "si"].includes(
+          value.trim().toLowerCase(),
+        );
       }
     }
 
-    return false
+    return false;
   }
 
   private toPositiveInteger(value: unknown): number | null {
-    const numberValue = this.toNumber(value)
+    const numberValue = this.toNumber(value);
 
     if (!Number.isInteger(numberValue) || numberValue <= 0) {
-      return null
+      return null;
     }
 
-    return numberValue
+    return numberValue;
   }
 
   private toNonNegativeInteger(value: unknown): number | null {
-    const numberValue = this.toNumber(value)
+    const numberValue = this.toNumber(value);
 
     if (!Number.isInteger(numberValue) || numberValue < 0) {
-      return null
+      return null;
     }
 
-    return numberValue
+    return numberValue;
   }
 
   private toNumber(value: unknown): number {
     if (typeof value === "number") {
-      return value
+      return value;
     }
 
     if (typeof value !== "string" || !value.trim()) {
-      return Number.NaN
+      return Number.NaN;
     }
 
-    return Number(value.trim().replace(/\./g, "").replace(",", "."))
+    return Number(value.trim().replace(/\./g, "").replace(",", "."));
   }
 
   private decryptSessionCookie(value: string | null): string {
     if (!value) {
-      throw new BadRequestException("No hay una sesion SAP guardada para este usuario.")
+      throw new BadRequestException(
+        "No hay una sesion SAP guardada para este usuario.",
+      );
     }
 
     try {
-      return decryptText(value, this.credentialSecret)
+      return decryptText(value, this.credentialSecret);
     } catch {
-      throw new BadRequestException("No se pudo descifrar la sesion SAP guardada.")
+      throw new BadRequestException(
+        "No se pudo descifrar la sesion SAP guardada.",
+      );
     }
   }
 
   private extractExternalReference(
     payload: Record<string, unknown> | null,
-    candidates: string[]
+    candidates: string[],
   ): string | null {
-    if (!payload) return null
+    if (!payload) return null;
 
     for (const source of [
       payload,
       this.asRecord(payload.ExternalReconciliation),
-      this.asRecord(payload.value)
+      this.asRecord(payload.value),
     ]) {
-      if (!source) continue
+      if (!source) continue;
 
       for (const key of candidates) {
-        const value = source[key]
+        const value = source[key];
         if (value !== undefined && value !== null && String(value).trim()) {
-          return String(value).trim()
+          return String(value).trim();
         }
       }
     }
 
-    return null
+    return null;
   }
 
   private asRecord(value: unknown): Record<string, unknown> | null {
     if (!value || typeof value !== "object" || Array.isArray(value)) {
-      return null
+      return null;
     }
 
-    return value as Record<string, unknown>
+    return value as Record<string, unknown>;
   }
 
   private normalizeLookupKey(value: string): string {
@@ -2845,73 +3651,73 @@ export class SapErpService {
       .normalize("NFD")
       .replace(/[\u0300-\u036f]/g, "")
       .replace(/[^a-zA-Z0-9]/g, "")
-      .toLowerCase()
+      .toLowerCase();
   }
 
   private async logSapExternalReconciliationRequest(
-    context: SapExternalReconciliationTraceContext
+    context: SapExternalReconciliationTraceContext,
   ): Promise<void> {
     const logPayload = this.buildSapExternalReconciliationLogPayload(
       "sap_external_reconciliation_request",
-      context
-    )
+      context,
+    );
 
     console.log(
       "[SAP_B1][ExternalReconciliation][REQUEST]",
       JSON.stringify(
         {
           endpoint: context.endpoint,
-          payload: context.sapPayload
+          payload: context.sapPayload,
         },
         null,
-        2
-      )
-    )
-    this.logger.log(this.stringifyLogPayload(logPayload))
-    await this.persistSapExternalReconciliationLog(logPayload)
+        2,
+      ),
+    );
+    this.logger.log(this.stringifyLogPayload(logPayload));
+    await this.persistSapExternalReconciliationLog(logPayload);
   }
 
   private async logSapExternalReconciliationSuccess(
     context: SapExternalReconciliationTraceContext & {
-      sapStatusCode: number
-      sapResponsePayload: Record<string, unknown> | null
-    }
+      sapStatusCode: number;
+      sapResponsePayload: Record<string, unknown> | null;
+    },
   ): Promise<void> {
     const logPayload = this.buildSapExternalReconciliationLogPayload(
       "sap_external_reconciliation_success",
       context,
       {
         sapStatusCode: context.sapStatusCode,
-        sapResponsePayload: context.sapResponsePayload
-      }
-    )
+        sapResponsePayload: context.sapResponsePayload,
+      },
+    );
 
     console.log("[SAP_B1][ExternalReconciliation][RESPONSE]", {
       endpoint: context.endpoint,
       statusCode: context.sapStatusCode,
-      responsePayload: context.sapResponsePayload
-    })
-    this.logger.log(this.stringifyLogPayload(logPayload))
-    await this.persistSapExternalReconciliationLog(logPayload)
+      responsePayload: context.sapResponsePayload,
+    });
+    this.logger.log(this.stringifyLogPayload(logPayload));
+    await this.persistSapExternalReconciliationLog(logPayload);
   }
 
   private async logSapExternalReconciliationError(
     error: unknown,
-    context: SapExternalReconciliationTraceContext
+    context: SapExternalReconciliationTraceContext,
   ): Promise<void> {
     const errorPayload =
       error instanceof ExternalRequestError
         ? {
             message: error.message,
             statusCode: error.statusCode ?? null,
-            responsePayload: error.responsePayload ?? null
+            responsePayload: error.responsePayload ?? null,
           }
         : {
             message: error instanceof Error ? error.message : String(error),
             statusCode: null,
             responsePayload: null,
-            stack: error instanceof Error ? error.stack : null
-          }
+            stack: error instanceof Error ? error.stack : null,
+          };
 
     const logPayload = this.buildSapExternalReconciliationLogPayload(
       "sap_external_reconciliation_failed",
@@ -2920,9 +3726,9 @@ export class SapErpService {
         sapStatusCode: errorPayload.statusCode,
         sapErrorMessage: errorPayload.message,
         sapResponsePayload: errorPayload.responsePayload,
-        stack: "stack" in errorPayload ? errorPayload.stack : null
-      }
-    )
+        stack: "stack" in errorPayload ? errorPayload.stack : null,
+      },
+    );
 
     console.log(
       "[SAP_B1][ExternalReconciliation][ERROR]",
@@ -2932,22 +3738,24 @@ export class SapErpService {
           statusCode: errorPayload.statusCode,
           message: errorPayload.message,
           responsePayload: errorPayload.responsePayload,
-          requestPayload: context.sapPayload
+          requestPayload: context.sapPayload,
         },
         null,
-        2
-      )
-    )
-    this.logger.error(this.stringifyLogPayload(logPayload))
-    await this.persistSapExternalReconciliationLog(logPayload)
+        2,
+      ),
+    );
+    this.logger.error(this.stringifyLogPayload(logPayload));
+    await this.persistSapExternalReconciliationLog(logPayload);
   }
 
   private buildSapExternalReconciliationLogPayload(
     event: string,
     context: SapExternalReconciliationTraceContext,
-    extra: Record<string, unknown> = {}
+    extra: Record<string, unknown> = {},
   ): Record<string, unknown> {
-    const reconciliation = this.resolveExternalReconciliationNode(context.sapPayload)
+    const reconciliation = this.resolveExternalReconciliationNode(
+      context.sapPayload,
+    );
 
     return {
       event,
@@ -2959,95 +3767,101 @@ export class SapErpService {
       endpoint: context.endpoint,
       endpointPath: context.endpointPath,
       requestSummary: {
-        accountCode: reconciliation.AccountCode ?? context.sapPayload.AccountCode ?? null,
+        accountCode:
+          reconciliation.AccountCode ?? context.sapPayload.AccountCode ?? null,
         amount: reconciliation.Amount ?? context.sapPayload.Amount ?? null,
-        currencyType: reconciliation.CurrencyType ?? context.sapPayload.CurrencyType ?? null,
+        currencyType:
+          reconciliation.CurrencyType ??
+          context.sapPayload.CurrencyType ??
+          null,
         reconciliationAccountType: reconciliation.ReconciliationAccountType,
         bankStatementLines:
           reconciliation.ReconciliationBankStatementLines?.length ?? 0,
         journalEntryLines:
-          reconciliation.ReconciliationJournalEntryLines?.length ?? 0
+          reconciliation.ReconciliationJournalEntryLines?.length ?? 0,
       },
       sapRequestPayload: context.sapPayload,
-      ...extra
-    }
+      ...extra,
+    };
   }
 
   private async persistSapExternalReconciliationLog(
-    payload: Record<string, unknown>
+    payload: Record<string, unknown>,
   ): Promise<void> {
-    const logsDir = join(process.cwd(), "logs")
-    const logFile = join(logsDir, "sap-external-reconciliations.log")
+    const logsDir = join(process.cwd(), "logs");
+    const logFile = join(logsDir, "sap-external-reconciliations.log");
 
     try {
-      await mkdir(logsDir, { recursive: true })
-      await appendFile(logFile, `${JSON.stringify(payload)}\n`, "utf8")
+      await mkdir(logsDir, { recursive: true });
+      await appendFile(logFile, `${JSON.stringify(payload)}\n`, "utf8");
     } catch (error) {
       this.logger.warn(
         `No se pudo guardar el log de conciliacion SAP en ${logFile}: ${
           error instanceof Error ? error.message : String(error)
-        }`
-      )
+        }`,
+      );
     }
   }
 
-  private async persistSapTarjetasDepositLog(payload: Record<string, unknown>): Promise<void> {
-    const logsDir = join(process.cwd(), "logs")
-    const logFile = join(logsDir, "sap-credit-card-deposits.log")
+  private async persistSapTarjetasDepositLog(
+    payload: Record<string, unknown>,
+  ): Promise<void> {
+    const logsDir = join(process.cwd(), "logs");
+    const logFile = join(logsDir, "sap-credit-card-deposits.log");
 
     try {
-      await mkdir(logsDir, { recursive: true })
-      await appendFile(logFile, `${JSON.stringify(payload)}\n`, "utf8")
+      await mkdir(logsDir, { recursive: true });
+      await appendFile(logFile, `${JSON.stringify(payload)}\n`, "utf8");
     } catch (error) {
       this.logger.warn(
         `No se pudo guardar el log de depositos de tarjetas SAP en ${logFile}: ${
           error instanceof Error ? error.message : String(error)
-        }`
-      )
+        }`,
+      );
     }
   }
 
   private stringifyLogPayload(payload: Record<string, unknown>): string {
-    const text = JSON.stringify(payload, null, 2)
-    const maxLength = 12000
+    const text = JSON.stringify(payload, null, 2);
+    const maxLength = 12000;
 
     if (text.length <= maxLength) {
-      return text
+      return text;
     }
 
-    return `${text.slice(0, maxLength)}\n... log truncado (${text.length} caracteres totales)`
+    return `${text.slice(0, maxLength)}\n... log truncado (${text.length} caracteres totales)`;
   }
 
   private resolveExternalReconciliationNode(
-    payload: SapExternalReconciliationPayload | Record<string, unknown>
+    payload: SapExternalReconciliationPayload | Record<string, unknown>,
   ): {
-    ReconciliationAccountType?: unknown
-    AccountCode?: unknown
-    Amount?: unknown
-    CurrencyType?: unknown
-    ReconciliationBankStatementLines?: unknown[]
-    ReconciliationJournalEntryLines?: unknown[]
+    ReconciliationAccountType?: unknown;
+    AccountCode?: unknown;
+    Amount?: unknown;
+    CurrencyType?: unknown;
+    ReconciliationBankStatementLines?: unknown[];
+    ReconciliationJournalEntryLines?: unknown[];
   } {
     return (this.asRecord(payload.ExternalReconciliation) ?? payload) as {
-      ReconciliationAccountType?: unknown
-      AccountCode?: unknown
-      Amount?: unknown
-      CurrencyType?: unknown
-      ReconciliationBankStatementLines?: unknown[]
-      ReconciliationJournalEntryLines?: unknown[]
-    }
+      ReconciliationAccountType?: unknown;
+      AccountCode?: unknown;
+      Amount?: unknown;
+      CurrencyType?: unknown;
+      ReconciliationBankStatementLines?: unknown[];
+      ReconciliationJournalEntryLines?: unknown[];
+    };
   }
 
   private mapExternalError(error: unknown): {
-    message: string
-    statusCode?: number
-    responsePayload: Record<string, unknown> | null
-    exception: HttpException
+    message: string;
+    statusCode?: number;
+    responsePayload: Record<string, unknown> | null;
+    exception: HttpException;
   } {
     if (error instanceof ExternalRequestError) {
-      const responsePayload = error.responsePayload ?? null
-      const message = error.message || "No se pudo completar el envio al ERP."
-      const statusCode = error.statusCode
+      const responsePayload = error.responsePayload ?? null;
+      const message = error.message || "No se pudo completar el envio al ERP.";
+      const statusCode = error.statusCode;
 
       // Timeout / sin respuesta del Service Layer -> 504.
       if (message.toLowerCase().includes("tiempo de espera")) {
@@ -3055,21 +3869,27 @@ export class SapErpService {
           message,
           statusCode,
           responsePayload,
-          exception: new GatewayTimeoutException(message)
-        }
+          exception: new GatewayTimeoutException(message),
+        };
       }
 
       // Rechazo de negocio de SAP (4xx, p.ej. -2028 "No matching records"):
       // los datos enviados no se pudieron procesar. Devolvemos 422 con el
       // mensaje real para que el frontend lo muestre, en vez de un 502 opaco
       // que ademas IIS intercepta y deja sin cabeceras CORS.
-      if (typeof statusCode === "number" && statusCode >= 400 && statusCode < 500) {
+      if (
+        typeof statusCode === "number" &&
+        statusCode >= 400 &&
+        statusCode < 500
+      ) {
         return {
           message,
           statusCode,
           responsePayload,
-          exception: new UnprocessableEntityException(`SAP rechazo la operacion: ${message}`)
-        }
+          exception: new UnprocessableEntityException(
+            `SAP rechazo la operacion: ${message}`,
+          ),
+        };
       }
 
       // Error real del Service Layer (5xx) o sin codigo de estado -> 502.
@@ -3077,17 +3897,19 @@ export class SapErpService {
         message,
         statusCode,
         responsePayload,
-        exception: new BadGatewayException(message)
-      }
+        exception: new BadGatewayException(message),
+      };
     }
 
     const fallbackMessage =
-      error instanceof Error ? error.message : "No se pudo completar el envio al ERP."
+      error instanceof Error
+        ? error.message
+        : "No se pudo completar el envio al ERP.";
 
     return {
       message: fallbackMessage,
       responsePayload: null,
-      exception: new BadGatewayException(fallbackMessage)
-    }
+      exception: new BadGatewayException(fallbackMessage),
+    };
   }
 }

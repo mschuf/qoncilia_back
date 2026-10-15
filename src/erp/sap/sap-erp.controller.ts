@@ -103,6 +103,16 @@ export class SapErpController {
     return this.sapErpService.runSapTarjetasSystemQuery(actor, body)
   }
 
+  @Post("credit-cards/dinelco/system-query")
+  @RequiredModule(AppModuleCode.CARD_PAYMENT)
+  @Roles(Role.GESTOR_COBRANZA, Role.GESTOR_PAGOS, Role.ADMIN, Role.IS_SUPER_ADMIN)
+  runIrvineDinelcoSystemQuery(
+    @Body() body: RunSapTarjetasQueryDto,
+    @CurrentUser() actor: AuthUser
+  ) {
+    return this.sapErpService.runIrvineDinelcoSystemQuery(actor, body)
+  }
+
   @Post("credit-cards/parse-csv")
   @RequiredModule(AppModuleCode.CARD_PAYMENT)
   @Roles(Role.GESTOR_COBRANZA, Role.GESTOR_PAGOS, Role.ADMIN, Role.IS_SUPER_ADMIN)
@@ -119,6 +129,38 @@ export class SapErpController {
     @CurrentUser() actor: AuthUser
   ) {
     return this.sapErpService.parseSapTarjetasCsv(actor, body.companyErpConfigId, file)
+  }
+
+  @Post("credit-cards/dinelco/parse")
+  @RequiredModule(AppModuleCode.CARD_PAYMENT)
+  @Roles(Role.GESTOR_COBRANZA, Role.GESTOR_PAGOS, Role.ADMIN, Role.IS_SUPER_ADMIN)
+  @UseInterceptors(FileInterceptor("file", { limits: { fileSize: 10 * 1024 * 1024 } }))
+  parseIrvineDinelco(
+    @Body() body: ParseSapTarjetasCsvDto,
+    @UploadedFile() file: UploadedMemoryFile,
+    @CurrentUser() actor: AuthUser
+  ) {
+    return this.sapErpService.parseIrvineDinelco(actor, body.companyErpConfigId, file)
+  }
+
+  @Post("credit-cards/dinelco/compare")
+  @RequiredModule(AppModuleCode.CARD_PAYMENT)
+  @Roles(Role.GESTOR_COBRANZA, Role.GESTOR_PAGOS, Role.ADMIN, Role.IS_SUPER_ADMIN)
+  compareIrvineDinelcoQueryPreview(
+    @Body() body: CompareSapB1QueryPreviewDto,
+    @CurrentUser() actor: AuthUser
+  ) {
+    return this.sapErpService.compareIrvineDinelcoQueryPreview(actor, body)
+  }
+
+  @Post("credit-cards/dinelco/deposits")
+  @RequiredModule(AppModuleCode.CARD_PAYMENT)
+  @Roles(Role.GESTOR_COBRANZA, Role.ADMIN, Role.IS_SUPER_ADMIN)
+  createIrvineDinelcoDeposit(
+    @Body() body: SendSapTarjetasDepositDto,
+    @CurrentUser() actor: AuthUser
+  ) {
+    return this.sapErpService.createIrvineDinelcoDeposit(actor, body)
   }
 
   @Post("credit-cards/deposits")
