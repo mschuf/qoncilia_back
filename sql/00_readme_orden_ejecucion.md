@@ -88,3 +88,7 @@ La base confirmada para esta migracion es `QONCILIA_BACK`. Los SQL de escritura 
 `64_seed_fg_credit_card_commission_accounts.sql` crea una tabla de configuracion por ERP y agrega un placeholder solo para `FG_TARJETA` y `FG_TARJETA_QA`. El backend rechaza ese placeholder: antes de enviar un deposito de credito hay que actualizar la cuenta real en el bloque comentado del mismo archivo. No afecta bancos, cuentas bancarias, layouts ni configuraciones de otras empresas.
 
 `65_seed_ocho_a_credit_card_commission_account.sql` requiere primero el `64` y guarda la cuenta actual de OCHO_A (`1111000104`) solamente en su ERP `SAP_TARJETAS`. Despues del despliegue, OCHO_A y FG leen la cuenta desde esta tabla por ERP.
+
+### UENO para OCHO_A
+
+`70_seed_ocho_a_ueno_layout_and_card_payment.sql` (manual, atomico e idempotente, solo OCHO_A): crea la plantilla local `OCHO_A UENO vs SAP B1` (funciona con el backend actual) en el banco de la cuenta `6192000372 GS CA` (Cuenta Mayor `1112801010`) para el extracto UENO (hoja `Reporte 1`, datos desde fila 2, Nro. de Comprobante = referencia, Importe Debito/Credito en modo `debit_credit`). No desactiva ni modifica plantillas existentes: si el banco ya tiene otra plantilla activa, aborta. La pestana `Tarjeta UENO` (`/pago-tarjeta-8a/ueno`) no necesita datos nuevos: reutiliza `card_payment_ocho_a`, la ERP `SAP_TARJETAS` de OCHO_A y la cuenta de comision del `65`; el script solo verifica esos requisitos.

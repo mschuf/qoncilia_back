@@ -65,6 +65,7 @@ import {
 import {
   parseSapTarjetasCsv,
   type SapTarjetasCsvParseOptions,
+  type SapTarjetasCsvParseResult,
 } from "./sap-tarjetas-csv.util";
 import { aliasSapTarjetasSystemTable } from "./sap-tarjetas-system.util";
 import { parseDinelcoTarjetas } from "./dinelco-tarjetas.util";
@@ -757,6 +758,35 @@ export class SapErpService {
     };
   }
 
+  // Igual que parseSapTarjetasCsv pero con el parser de una procesadora propia
+  // de una fachada especializada (p. ej. UENO de OCHO_A). No se persiste.
+  async parseSapTarjetasProcessorFile(
+    actor: AuthUser,
+    companyErpConfigId: number,
+    file: SapTarjetasUploadFile | undefined,
+    parse: (buffer: Buffer) => SapTarjetasCsvParseResult,
+    defaultFileName: string,
+  ): Promise<PublicSapTarjetasCsvParseResult> {
+    const config = await this.requireConfigForActor(actor, companyErpConfigId);
+
+    ensureSapErpType(config.erpType);
+    ensureSapTarjetasConfig(config);
+    this.ensureActiveConfig(config);
+
+    if (!file?.buffer || file.buffer.length === 0) {
+      throw new BadRequestException("No se recibio el archivo de tarjetas.");
+    }
+
+    const parsed = parse(file.buffer);
+
+    return {
+      fileName: file.originalname ?? defaultFileName,
+      totalRows: parsed.totalRows,
+      includedRows: parsed.rows.length,
+      bank: { columns: parsed.columns, rows: parsed.rows },
+    };
+  }
+
   // Cada lote recibido genera UN solo deposito en SAP: todos sus AbsId viajan
   // juntos dentro de CreditLines. El flujo estandar envia un lote por tipo; el
   // modulo OCHO_A puede dividir debito por fecha de venta antes de invocarlo.
@@ -1202,6 +1232,69 @@ export class SapErpService {
       ) {
         throw new BadRequestException(
           "Dinelco: la suma bruta de los vouchers SAP no coincide con Monto del Excel.",
+        );
+      }
+    } finally {
+      await this.disconnectSapHana(connection).catch(() => undefined);
+    }
+  }
+
+  // Verifica en OCRH que existan todos los AbsId y que la suma de CreditSum sea
+  // el bruto informado por la procesadora. Lo usan fachadas especializadas
+  // (UENO de OCHO_A) antes de depositar.
+  async validateSapTarjetasVoucherGross(
+    actor: AuthUser,
+    companyErpConfigId: number,
+    absIds: number[],
+    expectedGross: number,
+    label: string,
+  ): Promise<void> {
+    const config = await this.requireConfigForActor(actor, companyErpConfigId);
+    ensureSapErpType(config.erpType);
+    ensureSapTarjetasConfig(config);
+    this.ensureActiveConfig(config);
+
+    const ids = absIds.map((absId) => this.toPositiveInteger(absId));
+    if (
+      ids.length === 0 ||
+      ids.some((id) => id === null) ||
+      new Set(ids).size !== ids.length
+    ) {
+      throw new BadRequestException(
+        `${label}: los AbsId deben ser validos y no repetidos.`,
+      );
+    }
+    const validIds = ids as number[];
+    const companyDb = this.normalizeRequired(config.dbName, "CompanyDB");
+    const connection = await this.connectSapHana(config, companyDb);
+    try {
+      const placeholders = validIds.map(() => "?").join(", ");
+      const rows = await this.executeSapHanaQuery(
+        connection,
+        `SELECT "AbsId", "CreditSum" FROM "OCRH" WHERE "AbsId" IN (${placeholders})`,
+        validIds,
+      );
+      const returnedAbsIds = new Set(
+        rows.map((row) => this.toPositiveInteger(row.AbsId)),
+      );
+      if (
+        rows.length !== validIds.length ||
+        validIds.some((absId) => !returnedAbsIds.has(absId))
+      ) {
+        throw new BadRequestException(
+          `${label}: no se encontraron todos los vouchers seleccionados en SAP.`,
+        );
+      }
+      const sapGross = rows.reduce(
+        (sum, row) => sum + Number(row.CreditSum),
+        0,
+      );
+      if (
+        !Number.isFinite(sapGross) ||
+        Math.abs(sapGross - expectedGross) > 0.0001
+      ) {
+        throw new BadRequestException(
+          `${label}: la suma bruta de los vouchers SAP no coincide con el Monto bruto del Excel.`,
         );
       }
     } finally {

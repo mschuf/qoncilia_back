@@ -24,6 +24,7 @@ import { SapLoginDto } from "./dto/sap-login.dto"
 import { SapLogoutDto } from "./dto/sap-logout.dto"
 import { RunSapTarjetasQueryDto } from "./dto/run-sap-tarjetas-query.dto"
 import { SapSessionStatusQueryDto } from "./dto/sap-session-status-query.dto"
+import { SendOchoAUenoDepositDto } from "./dto/send-ocho-a-ueno-deposit.dto"
 import { SendSapTarjetasDepositDto } from "./dto/send-sap-tarjetas-deposit.dto"
 import { OchoASapTarjetasService } from "./ocho-a-sap-tarjetas.service"
 
@@ -98,5 +99,38 @@ export class OchoASapTarjetasController {
   @Roles(Role.GESTOR_COBRANZA, Role.ADMIN, Role.IS_SUPER_ADMIN)
   createCreditDeposit(@Body() body: SendSapTarjetasDepositDto, @CurrentUser() actor: AuthUser) {
     return this.ochoASapTarjetasService.createCreditDeposit(actor, body)
+  }
+
+  // === Tarjeta UENO (Excel Transacciones_Liquidaciones) ====================
+  @Post("credit-cards/ueno/system-query")
+  @Roles(Role.GESTOR_COBRANZA, Role.GESTOR_PAGOS, Role.ADMIN, Role.IS_SUPER_ADMIN)
+  runUenoSystemQuery(@Body() body: RunSapTarjetasQueryDto, @CurrentUser() actor: AuthUser) {
+    return this.ochoASapTarjetasService.runUenoSystemQuery(actor, body)
+  }
+
+  @Post("credit-cards/ueno/parse")
+  @Roles(Role.GESTOR_COBRANZA, Role.GESTOR_PAGOS, Role.ADMIN, Role.IS_SUPER_ADMIN)
+  @UseInterceptors(FileInterceptor("file", { limits: { fileSize: 10 * 1024 * 1024 } }))
+  parseUeno(
+    @Body() body: ParseSapTarjetasCsvDto,
+    @UploadedFile() file: UploadedMemoryFile,
+    @CurrentUser() actor: AuthUser
+  ) {
+    return this.ochoASapTarjetasService.parseUeno(actor, body.companyErpConfigId, file)
+  }
+
+  @Post("credit-cards/ueno/compare")
+  @Roles(Role.GESTOR_COBRANZA, Role.GESTOR_PAGOS, Role.ADMIN, Role.IS_SUPER_ADMIN)
+  compareUenoQueryPreview(
+    @Body() body: CompareSapB1QueryPreviewDto,
+    @CurrentUser() actor: AuthUser
+  ) {
+    return this.ochoASapTarjetasService.compareUenoQueryPreview(actor, body)
+  }
+
+  @Post("credit-cards/ueno/deposits")
+  @Roles(Role.GESTOR_COBRANZA, Role.ADMIN, Role.IS_SUPER_ADMIN)
+  createUenoDeposit(@Body() body: SendOchoAUenoDepositDto, @CurrentUser() actor: AuthUser) {
+    return this.ochoASapTarjetasService.createUenoDeposit(actor, body)
   }
 }
